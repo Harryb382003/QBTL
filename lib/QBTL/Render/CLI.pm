@@ -26,11 +26,43 @@ sub help ( $self ) {
   say {$out} "Commands:";
   say {$out} "  version    Show QBTL version";
   say {$out} "  qbt info    Show qBittorrent torrents/info request";
+  say {$out} "  qbt refresh Store fake qBittorrent torrents/info rows";
   say {$out} "  qbt version Show qBittorrent version request";
   say {$out} "  setup      Create QBTL runtime directories";
   say {$out} "  status     Show QBTL runtime status";
 
   return 0;
+}
+
+sub qbt_refresh ( $self, $result ) {
+    my $out = $self->{out};
+
+    if ( !$result->{ok} ) {
+        say {$out} "qBT refresh failed.";
+    }
+    else {
+        say {$out} "qBT refresh complete.";
+    }
+
+    say {$out} "  seen:     $result->{seen}";
+    say {$out} "  stored:   $result->{stored}";
+    say {$out} "  problems: " . scalar @{ $result->{problems} };
+
+    if ( @{ $result->{problems} } ) {
+        say {$out} "";
+        say {$out} "Problems:";
+
+        for my $problem ( @{ $result->{problems} } ) {
+            my $hash  = defined $problem->{hash} ? $problem->{hash} : '(unknown)';
+            my $error = $problem->{error} // 'unknown error';
+
+            say {$out} "  $hash: $error";
+        }
+
+        return 1;
+    }
+
+    return 0;
 }
 
 sub qbt_request ($self, $result) {

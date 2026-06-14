@@ -66,4 +66,13 @@ like( $out,
       qr{http://127\.0\.0\.1:9090/api/v2/torrents/info},
       'qbt info command uses configured qBT URL' );
 
+$out = '';
+is( $app->run_cli( 'qbt', 'refresh' ), 0, 'qbt refresh command exits cleanly' );
+like( $out,
+      qr/qBT refresh complete\./,
+      'qbt refresh command renders completion' );
+like( $out, qr/seen:\s+2/,     'qbt refresh command renders seen count' );
+like( $out, qr/stored:\s+2/,   'qbt refresh command renders stored count' );
+like( $out, qr/problems:\s+0/, 'qbt refresh command renders problem count' );
+
 done_testing;

@@ -83,4 +83,24 @@ like( $out, qr/Home: \/tmp\/QBTL/,     'setup output includes home' );
 like( $out, qr/Created:/,         'setup output includes created section' );
 like( $out, qr/Already existed:/, 'setup output includes existing section' );
 
+$out = '';
+is(
+    $render->qbt_refresh(
+                          {
+                           ok       => 1,
+                           action   => 'qbt_refresh',
+                           seen     => 2,
+                           stored   => 2,
+                           problems => [],}
+    ),
+    0,
+    'qbt refresh render exits cleanly' );
+
+like( $out,
+      qr/qBT refresh complete\./,
+      'qbt refresh output includes completion' );
+like( $out, qr/seen:\s+2/,     'qbt refresh output includes seen count' );
+like( $out, qr/stored:\s+2/,   'qbt refresh output includes stored count' );
+like( $out, qr/problems:\s+0/, 'qbt refresh output includes problem count' );
+
 done_testing;

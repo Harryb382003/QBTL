@@ -16,6 +16,26 @@ sub api ( $self ) {
   return $self->{api};
 }
 
+sub refresh_info_rows ( $self, %arg ) {
+    my $db   = $arg{db}   // die 'db is required';
+    my $dbh  = $arg{dbh}  // die 'dbh is required';
+    my $rows = $arg{rows} // die 'rows is required';
+
+    my $store = $self->store_info_rows(
+        dbh  => $dbh,
+        db   => $db,
+        rows => $rows,
+    );
+
+    return {
+        ok       => $store->{ok},
+        action   => 'qbt_refresh',
+        seen     => $store->{seen},
+        stored   => $store->{stored},
+        problems => $store->{problems},
+    };
+}
+
 sub store_info_rows ( $self, %arg ) {
   my $db   = $arg{db}   // die 'db is required';
   my $dbh  = $arg{dbh}  // die 'dbh is required';
