@@ -16,6 +16,25 @@ sub api ( $self ) {
   return $self->{api};
 }
 
+sub store_info_rows ( $self, %arg ) {
+    my $db   = $arg{db}   // die 'db is required';
+    my $dbh  = $arg{dbh}  // die 'dbh is required';
+    my $rows = $arg{rows} // die 'rows is required';
+
+    my $stored = 0;
+
+    for my $row ( @{$rows} ) {
+        my $result = $db->upsert_qbt_info( $dbh, $row );
+
+        $stored++ if $result->{ok};
+    }
+
+    return {
+        ok     => 1,
+        stored => $stored,
+    };
+}
+
 sub torrents_info_request ( $self, %params ) {
   my $request = $self->api->torrents_info( %params );
 
