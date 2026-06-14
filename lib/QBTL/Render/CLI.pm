@@ -25,10 +25,27 @@ sub help ( $self ) {
   say {$out} "";
   say {$out} "Commands:";
   say {$out} "  version    Show QBTL version";
+  say {$out} "  qbt version Show qBittorrent version request";
   say {$out} "  setup      Create QBTL runtime directories";
   say {$out} "  status     Show QBTL runtime status";
 
   return 0;
+}
+
+sub qbt_request ($self, $result) {
+    my $out = $self->{out};
+
+    if ( !$result->{ok} ) {
+        say {$out} "qBT request failed.";
+        return 1;
+    }
+
+    say {$out} "qBT request";
+    say {$out} "Action: $result->{action}";
+    say {$out} "Method: $result->{request}{method}";
+    say {$out} "URL: $result->{request}{url}";
+
+    return 0;
 }
 
 sub setup ( $self, $result ) {

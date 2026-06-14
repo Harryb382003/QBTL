@@ -21,8 +21,7 @@ END {
   remove_tree( $root ) if defined $root && -d $root;
 }
 
-my $db_path = File::Spec->catfile( $root, 'QBTL', 'qbtl.db' );
-
+my $db_path  = File::Spec->catfile( $root, 'QBTL', 'qbtl.db' );
 my $renderer = QBTL::Render::CLI->new( out => $fh );
 my $config   = QBTL::Config->new( db_path => $db_path );
 my $app      = QBTL::App->new( config => $config, renderer => $renderer );
@@ -39,6 +38,11 @@ like( $out, qr/Usage: qbtl <command>/, 'help command renders usage' );
 $out = '';
 is( $app->run_cli(), 0, 'default command exits cleanly' );
 like( $out, qr/Usage: qbtl <command>/, 'default command renders help' );
+
+$out = '';
+is( $app->run_cli( 'qbt', 'version' ), 0, 'qbt version command exits cleanly' );
+like( $out, qr/qBT request/, 'qbt version command renders request' );
+like( $out, qr{app/version}, 'qbt version command renders version endpoint' );
 
 $out = '';
 is( $app->run_cli( 'setup' ), 0, 'setup command exits cleanly' );

@@ -7,6 +7,7 @@ use feature qw( signatures );
 use QBTL;
 use QBTL::Config;
 use QBTL::DB;
+use QBTL::Process::QBT;
 use QBTL::Process::Setup;
 use QBTL::Render::CLI;
 
@@ -31,6 +32,19 @@ sub run_cli ( $self, @argv ) {
   if ( $cmd eq 'version' ) {
     return $self->{renderer}->version( $QBTL::VERSION );
   }
+
+if ( $cmd eq 'qbt' ) {
+    my $subcmd = shift @argv // 'help';
+
+    if ( $subcmd eq 'version' ) {
+        my $process = QBTL::Process::QBT->new;
+        my $result  = $process->version_request;
+
+        return $self->{renderer}->qbt_request($result);
+    }
+
+    return $self->{renderer}->help;
+}
 
   if ( $cmd eq 'setup' ) {
     my $db = QBTL::DB->new( db_path => $self->{config}->db_path );
