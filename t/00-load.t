@@ -14,6 +14,7 @@ use_ok( 'QBTL::Local' );
 use_ok( 'QBTL::Local::Scanner' );
 use_ok( 'QBTL::Process' );
 use_ok( 'QBTL::Process::Inventory' );
+use_ok( 'QBTL::Process::Setup' );
 use_ok( 'QBTL::Render' );
 use_ok( 'QBTL::Render::CLI' );
 use_ok( 'QBTL::Render::Mojo' );
