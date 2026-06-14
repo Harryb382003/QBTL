@@ -38,6 +38,16 @@ eval { $custom_api->endpoint( 'bogus' ) };
 
 like( $@, qr/Unknown qBT endpoint: bogus/, 'unknown endpoint dies clearly' );
 
+my $spec = $default_api->endpoint_spec( 'torrents_recheck' );
+
+is_deeply(
+           $spec,
+           {
+            method => 'POST',
+            path   => 'torrents/recheck',
+           },
+           'endpoint_spec returns method and path' );
+
 my $request = $default_api->request( 'app_version' );
 
 is( $request->{endpoint}, 'app_version', 'request endpoint stored' );

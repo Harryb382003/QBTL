@@ -23,46 +23,70 @@ sub api_url ($self, $path) {
 }
 
 sub endpoint ($self, $name) {
-    my %endpoint = (
-        login                       => 'auth/login',
-        app_version                 => 'app/version',
-        torrents_info               => 'torrents/info',
-        torrents_files              => 'torrents/files',
-        torrents_add                => 'torrents/add',
-        torrents_recheck            => 'torrents/recheck',
-        torrents_pause              => 'torrents/pause',
-        torrents_resume             => 'torrents/resume',
-        torrents_set_location       => 'torrents/setLocation',
-        torrents_set_download_path  => 'torrents/setDownloadPath',
-        torrents_rename_folder      => 'torrents/renameFolder',
+    my $spec = $self->endpoint_spec($name);
+    return $self->api_url( $spec->{path} );
+}
+
+sub endpoint_spec ($self, $name) {
+    my %spec = (
+        login => {
+            method => 'POST',
+            path   => 'auth/login',
+        },
+        app_version => {
+            method => 'GET',
+            path   => 'app/version',
+        },
+        torrents_info => {
+            method => 'GET',
+            path   => 'torrents/info',
+        },
+        torrents_files => {
+            method => 'GET',
+            path   => 'torrents/files',
+        },
+        torrents_add => {
+            method => 'POST',
+            path   => 'torrents/add',
+        },
+        torrents_recheck => {
+            method => 'POST',
+            path   => 'torrents/recheck',
+        },
+        torrents_pause => {
+            method => 'POST',
+            path   => 'torrents/pause',
+        },
+        torrents_resume => {
+            method => 'POST',
+            path   => 'torrents/resume',
+        },
+        torrents_set_location => {
+            method => 'POST',
+            path   => 'torrents/setLocation',
+        },
+        torrents_set_download_path => {
+            method => 'POST',
+            path   => 'torrents/setDownloadPath',
+        },
+        torrents_rename_folder => {
+            method => 'POST',
+            path   => 'torrents/renameFolder',
+        },
     );
 
-    die "Unknown qBT endpoint: $name" if !exists $endpoint{$name};
+    die "Unknown qBT endpoint: $name" if !exists $spec{$name};
 
-    return $self->api_url( $endpoint{$name} );
+    return $spec{$name};
 }
 
 sub request ($self, $name, %arg) {
-    my %method = (
-        login                       => 'POST',
-        app_version                 => 'GET',
-        torrents_info               => 'GET',
-        torrents_files              => 'GET',
-        torrents_add                => 'POST',
-        torrents_recheck            => 'POST',
-        torrents_pause              => 'POST',
-        torrents_resume             => 'POST',
-        torrents_set_location       => 'POST',
-        torrents_set_download_path  => 'POST',
-        torrents_rename_folder      => 'POST',
-    );
-
-    die "Unknown qBT endpoint: $name" if !exists $method{$name};
+    my $spec = $self->endpoint_spec($name);
 
     return {
         endpoint => $name,
-        method   => $method{$name},
-        url      => $self->endpoint($name),
+        method   => $spec->{method},
+        url      => $self->api_url( $spec->{path} ),
         params   => $arg{params} // {},
     };
 }
@@ -74,31 +98,6 @@ sub request ($self, $name, %arg) {
 
 sub app_version ($self) {
     return $self->request('app_version');
-}
-
-sub torrents_info ($self, %params) {
-    return $self->request(
-        'torrents_info',
-        params => \%params,
-    );
-}
-
-sub torrents_files ($self, $hash) {
-    return $self->request(
-        'torrents_files',
-        params => {
-            hash => $hash,
-        },
-    );
-}
-
-sub torrents_recheck ($self, $hashes) {
-    return $self->request(
-        'torrents_recheck',
-        params => {
-            hashes => $hashes,
-        },
-    );
 }
 
 sub login ($self, $username, $password) {
@@ -118,6 +117,22 @@ sub torrents_add ($self, %params) {
     );
 }
 
+sub torrents_files ($self, $hash) {
+    return $self->request(
+        'torrents_files',
+        params => {
+            hash => $hash,
+        },
+    );
+}
+
+sub torrents_info ($self, %params) {
+    return $self->request(
+        'torrents_info',
+        params => \%params,
+    );
+}
+
 sub torrents_pause ($self, $hashes) {
     return $self->request(
         'torrents_pause',
@@ -127,21 +142,31 @@ sub torrents_pause ($self, $hashes) {
     );
 }
 
-sub torrents_resume ($self, $hashes) {
+sub torrents_recheck ($self, $hashes) {
     return $self->request(
-        'torrents_resume',
+        'torrents_recheck',
         params => {
             hashes => $hashes,
         },
     );
 }
 
-sub torrents_set_location ($self, $hashes, $location) {
+sub torrents_rename_folder ($self, $hash, $old_path, $new_path) {
     return $self->request(
-        'torrents_set_location',
+        'torrents_rename_folder',
         params => {
-            hashes   => $hashes,
-            location => $location,
+            hash     => $hash,
+            oldPath  => $old_path,
+            newPath  => $new_path,
+        },
+    );
+}
+
+sub torrents_resume ($self, $hashes) {
+    return $self->request(
+        'torrents_resume',
+        params => {
+            hashes => $hashes,
         },
     );
 }
@@ -156,13 +181,12 @@ sub torrents_set_download_path ($self, $hashes, $path) {
     );
 }
 
-sub torrents_rename_folder ($self, $hash, $old_path, $new_path) {
+sub torrents_set_location ($self, $hashes, $location) {
     return $self->request(
-        'torrents_rename_folder',
+        'torrents_set_location',
         params => {
-            hash     => $hash,
-            oldPath  => $old_path,
-            newPath  => $new_path,
+            hashes   => $hashes,
+            location => $location,
         },
     );
 }
