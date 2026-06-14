@@ -21,13 +21,15 @@ END {
   remove_tree( $root ) if defined $root && -d $root;
 }
 
-my $db_path  = File::Spec->catfile( $root, 'QBTL', 'qbtl.db' );
+my $db_path = File::Spec->catfile( $root, 'QBTL', 'qbtl.db' );
+my $config = QBTL::Config->new( db_path => $db_path,
+                                qbt_url => 'http://127.0.0.1:9090', );
 my $renderer = QBTL::Render::CLI->new( out => $fh );
-my $config   = QBTL::Config->new( db_path => $db_path );
 my $app      = QBTL::App->new( config => $config, renderer => $renderer );
 
 isa_ok( $app, 'QBTL::App' );
 
+$out = '';
 is( $app->run_cli( 'version' ), 0, 'version command exits cleanly' );
 like( $out, qr/\AQBTL 0\.001\n\z/, 'version command renders version' );
 
@@ -40,11 +42,6 @@ is( $app->run_cli(), 0, 'default command exits cleanly' );
 like( $out, qr/Usage: qbtl <command>/, 'default command renders help' );
 
 $out = '';
-is( $app->run_cli( 'qbt', 'version' ), 0, 'qbt version command exits cleanly' );
-like( $out, qr/qBT request/, 'qbt version command renders request' );
-like( $out, qr{app/version}, 'qbt version command renders version endpoint' );
-
-$out = '';
 is( $app->run_cli( 'setup' ), 0, 'setup command exits cleanly' );
 like( $out, qr/QBTL setup complete\./, 'setup command renders completion' );
 ok( -d File::Spec->catdir( $root, 'QBTL' ),
@@ -54,5 +51,12 @@ $out = '';
 is( $app->run_cli( 'status' ), 0, 'status command exits cleanly after setup' );
 like( $out, qr/QBTL status/,          'status command renders status' );
 like( $out, qr/Database path: ready/, 'status command reports ready path' );
+
+$out = '';
+is( $app->run_cli( 'qbt', 'version' ), 0, 'qbt version command exits cleanly' );
+like( $out, qr/qBT request/, 'qbt version command renders request' );
+like( $out,
+      qr{http://127\.0\.0\.1:9090/api/v2/app/version},
+      'qbt version command uses configured qBT URL' );
 
 done_testing;

@@ -5,6 +5,7 @@ use common::sense;
 use feature qw( signatures );
 
 use QBTL;
+use QBTL::QBT::API;
 use QBTL::Config;
 use QBTL::DB;
 use QBTL::Process::QBT;
@@ -33,19 +34,6 @@ sub run_cli ( $self, @argv ) {
     return $self->{renderer}->version( $QBTL::VERSION );
   }
 
-if ( $cmd eq 'qbt' ) {
-    my $subcmd = shift @argv // 'help';
-
-    if ( $subcmd eq 'version' ) {
-        my $process = QBTL::Process::QBT->new;
-        my $result  = $process->version_request;
-
-        return $self->{renderer}->qbt_request($result);
-    }
-
-    return $self->{renderer}->help;
-}
-
   if ( $cmd eq 'setup' ) {
     my $db = QBTL::DB->new( db_path => $self->{config}->db_path );
 
@@ -60,6 +48,7 @@ if ( $cmd eq 'qbt' ) {
 
   if ( $cmd eq 'status' ) {
     my $db = QBTL::DB->new( db_path => $self->{config}->db_path );
+
     my $result = {
                   ok       => 1,
                   db_path  => $self->{config}->db_path,
@@ -68,11 +57,24 @@ if ( $cmd eq 'qbt' ) {
     $result->{ok} = 0 if @{$result->{problems}};
 
     return $self->{renderer}->status( $result );
-
   }
+
+  if ( $cmd eq 'qbt' ) {
+    my $subcmd = shift @argv // 'help';
+
+    if ( $subcmd eq 'version' ) {
+      my $api = QBTL::QBT::API->new( base_url => $self->{config}->qbt_url, );
+
+      my $process = QBTL::Process::QBT->new( api => $api );
+      my $result  = $process->version_request;
+
+      return $self->{renderer}->qbt_request( $result );
+    }
+
+    return $self->{renderer}->help;
+  }
+
   return $self->{renderer}->help;
 }
-
-
 
 1;
