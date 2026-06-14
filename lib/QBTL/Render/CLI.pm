@@ -25,12 +25,13 @@ sub help ( $self ) {
   say {$out} "";
   say {$out} "Commands:";
   say {$out} "  help        Show this help";
+  say {$out} "  info        Fetch qBittorrent torrents/info";
   say {$out} "  setup       Create QBTL runtime directories";
   say {$out} "  status      Show QBTL runtime status";
   say {$out} "  version     Show QBTL version";
   say "";
   say {$out} "  qbt help      Show qBittorrent command help";
-  say {$out} "  qbt info      Show qBittorrent torrents/info request";
+  say {$out} "  info          Fetch qBittorrent torrents/info";
   say {$out} "  qbt refresh   Store fake qBittorrent torrents/info rows";
   say {$out} "  qbt version   Show qBittorrent version request";
 
@@ -38,17 +39,17 @@ sub help ( $self ) {
 }
 
 sub qbt_help ( $self ) {
-    my $out = $self->{out};
+  my $out = $self->{out};
 
-    say {$out} "Usage: qbtl qbt <command>";
-    say {$out} "";
-    say {$out} "Commands:";
-    say {$out} "  help      Show this help";
-    say {$out} "  info      Show qBittorrent torrents/info request";
-    say {$out} "  refresh   Store fake qBittorrent torrents/info rows";
-    say {$out} "  version   Show qBittorrent version request";
+  say {$out} "Usage: qbtl qbt <command>";
+  say {$out} "";
+  say {$out} "Commands:";
+  say {$out} "  help          Show this help";
+  say {$out} "  info       Fetch qBittorrent torrents/info";
+  say {$out} "  refresh       Store fake qBittorrent torrents/info rows";
+  say {$out} "  version       Show qBittorrent version request";
 
-    return 0;
+  return 0;
 }
 
 sub qbt_refresh ( $self, $result ) {
@@ -95,6 +96,25 @@ sub qbt_request ( $self, $result ) {
   say {$out} "URL: $result->{request}{url}";
 
   return 0;
+}
+
+sub qbt_result ( $self, $result ) {
+  my $out = $self->{out};
+
+  say {$out} $result->{ok} ? 'qBT request complete.' : 'qBT request failed.';
+  say {$out} "Action: " . ( $result->{action} // '' );
+
+  if ( $result->{result} ) {
+    say {$out} "Status: " . ( $result->{result}{status} // '' );
+    say {$out} "Code: " .   ( $result->{result}{code}   // '' );
+
+    if ( defined $result->{result}{body} && length $result->{result}{body} ) {
+      say {$out} "Body:";
+      say {$out} $result->{result}{body};
+    }
+  }
+
+  return $result->{ok} ? 0 : 1;
 }
 
 sub setup ( $self, $result ) {

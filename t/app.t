@@ -85,7 +85,7 @@ is( $app->run_cli( 'qbt', 'help' ), 0, 'qbt help command exits cleanly' );
 like( $out, qr/Usage: qbtl qbt <command>/, 'qbt help command renders usage' );
 like( $out, qr/help\s+Show this help/,     'qbt help command is listed' );
 like( $out,
-      qr/info\s+Show qBittorrent torrents\/info request/,
+      qr/info\s+Fetch qBittorrent torrents\/info/,
       'qbt info command is listed' );
 like( $out,
       qr/refresh\s+Store fake qBittorrent torrents\/info rows/,

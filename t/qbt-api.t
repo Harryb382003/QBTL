@@ -8,33 +8,6 @@ use QBTL::QBT::API;
 
 my $default_api = QBTL::QBT::API->new;
 
-{    # package Local::DummyUA;
-
-  package Local::DummyUA;
-
-  use v5.40;
-  use common::sense;
-  use feature qw( signatures );
-
-  sub new ( $class ) {
-    return bless {requests => []}, $class;
-  }
-
-  sub execute ( $self, $request ) {
-    push @{$self->{requests}}, $request;
-
-    return {
-            ok      => 1,
-            status  => 'dummy',
-            request => $request,
-            body    => 'dummy response',};
-  }
-
-  sub requests ( $self ) {
-    return $self->{requests};
-  }
-}
-
 {    # package Local::FakeLWP
 
   package Local::FakeLWP;
@@ -103,20 +76,6 @@ my $default_api = QBTL::QBT::API->new;
     return $self->{body};
   }
 }
-
-my $ua = Local::DummyUA->new;
-my $api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090',
-                               ua       => $ua, );
-
-my $request = $api->app_version;
-my $result  = $api->execute_request( $request );
-
-is( $result->{ok},     1,       'execute request succeeds with dummy ua' );
-is( $result->{status}, 'dummy', 'execute request uses dummy ua' );
-is( scalar @{$ua->requests}, 1, 'dummy ua received one request' );
-is( $ua->requests->[0]{url},
-    'http://127.0.0.1:9090/api/v2/app/version',
-    'dummy ua received request URL' );
 
 isa_ok( $default_api, 'QBTL::QBT::API' );
 is( $default_api->base_url, 'http://localhost:8080', 'default base URL' );

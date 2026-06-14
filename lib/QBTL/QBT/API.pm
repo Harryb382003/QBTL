@@ -33,11 +33,8 @@ sub execute_request ( $self, $request ) {
             ok      => 0,
             status  => 'no_user_agent',
             request => $request,
-            error   => 'No user agent configured',};
-  }
-
-  if ( $self->{ua}->can( 'execute' ) ) {
-    return $self->{ua}->execute( $request );
+            error   => 'No user agent configured',
+    };
   }
 
   return $self->_execute_lwp_request( $request );
