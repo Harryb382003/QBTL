@@ -61,7 +61,14 @@ sub run_cli ( $self, @argv ) {
 
   if ( $cmd eq 'qbt' ) {
     my $subcmd = shift @argv // 'help';
+    if ( $subcmd eq 'info' ) {
+      my $api = QBTL::QBT::API->new( base_url => $self->{config}->qbt_url, );
 
+      my $process = QBTL::Process::QBT->new( api => $api );
+      my $result  = $process->torrents_info_request;
+
+      return $self->{renderer}->qbt_request( $result );
+    }
     if ( $subcmd eq 'version' ) {
       my $api = QBTL::QBT::API->new( base_url => $self->{config}->qbt_url, );
 

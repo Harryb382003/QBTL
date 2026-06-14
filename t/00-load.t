@@ -18,6 +18,7 @@ use_ok( 'QBTL::Local::Scanner' );
 
 use_ok( 'QBTL::Process' );
 use_ok( 'QBTL::Process::Inventory' );
+use_ok( 'QBTL::Process::QBT' );
 use_ok( 'QBTL::Process::Setup' );
 
 use_ok( 'QBTL::Render' );

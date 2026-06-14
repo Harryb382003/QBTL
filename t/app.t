@@ -59,4 +59,11 @@ like( $out,
       qr{http://127\.0\.0\.1:9090/api/v2/app/version},
       'qbt version command uses configured qBT URL' );
 
+$out = '';
+is( $app->run_cli( 'qbt', 'info' ), 0, 'qbt info command exits cleanly' );
+like( $out, qr/qBT request/, 'qbt info command renders request' );
+like( $out,
+      qr{http://127\.0\.0\.1:9090/api/v2/torrents/info},
+      'qbt info command uses configured qBT URL' );
+
 done_testing;

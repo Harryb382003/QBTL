@@ -25,6 +25,7 @@ sub help ( $self ) {
   say {$out} "";
   say {$out} "Commands:";
   say {$out} "  version    Show QBTL version";
+  say {$out} "  qbt info    Show qBittorrent torrents/info request";
   say {$out} "  qbt version Show qBittorrent version request";
   say {$out} "  setup      Create QBTL runtime directories";
   say {$out} "  status     Show QBTL runtime status";
