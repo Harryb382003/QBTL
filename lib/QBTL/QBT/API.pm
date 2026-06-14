@@ -42,4 +42,29 @@ sub endpoint ($self, $name) {
     return $self->api_url( $endpoint{$name} );
 }
 
+sub request ($self, $name, %arg) {
+    my %method = (
+        login                       => 'POST',
+        app_version                 => 'GET',
+        torrents_info               => 'GET',
+        torrents_files              => 'GET',
+        torrents_add                => 'POST',
+        torrents_recheck            => 'POST',
+        torrents_pause              => 'POST',
+        torrents_resume             => 'POST',
+        torrents_set_location       => 'POST',
+        torrents_set_download_path  => 'POST',
+        torrents_rename_folder      => 'POST',
+    );
+
+    die "Unknown qBT endpoint: $name" if !exists $method{$name};
+
+    return {
+        endpoint => $name,
+        method   => $method{$name},
+        url      => $self->endpoint($name),
+        params   => $arg{params} // {},
+    };
+}
+
 1;
