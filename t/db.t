@@ -25,9 +25,9 @@ is( $db->migration_dir,
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 1, 'one migration file discovered' );
-like( $migration_files[0], qr/001_initial\.sql\z/,
-      'initial migration discovered' );
+is( scalar @migration_files, 2, 'two migration files discovered' );
+like( $migration_files[1], qr/002_qbt_info\.sql\z/,
+      'qbt_info migration discovered' );
 
 my @problems = $db->verify_path;
 is_deeply( \@problems, [], 'valid temp DB directory has no path problems' );
@@ -40,12 +40,22 @@ isa_ok( $result->{dbh}, 'DBI::db' );
 my $migration = $db->migrate( $result->{dbh} );
 
 ok( $migration->{ok}, 'migration result ok' );
-is( $migration->{migration_count}, 1, 'one migration ran' );
+is( $migration->{migration_count}, 2, 'two migrations ran' );
 
 my ( $version ) = $result->{dbh}
     ->selectrow_array( 'SELECT version FROM schema_version WHERE id = 1' );
 
-is( $version, 1, 'schema version stored' );
+is( $version, 2, 'schema version stored' );
+my ( $qbt_info_table ) = $result->{dbh}->selectrow_array(
+  q{
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+    AND name = 'qbt_info'
+    }
+);
+
+is( $qbt_info_table, 'qbt_info', 'qbt_info table created' );
 
 $result->{dbh}->do(
      'CREATE TABLE sanity_check (id INTEGER PRIMARY KEY, name TEXT NOT NULL)' );
