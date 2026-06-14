@@ -84,8 +84,6 @@ sub run_cli ( $self, @argv ) {
                                         problems => $connect->{problems},} );
       }
 
-      my $api = QBTL::QBT::API->new( base_url => $self->{config}->qbt_url, );
-      my $process   = QBTL::Process::QBT->new( api => $api );
       my $migration = $db->migrate( $connect->{dbh} );
 
       if ( !$migration->{ok} ) {
@@ -105,6 +103,8 @@ sub run_cli ( $self, @argv ) {
                                      },
                        ],} );
       }
+      my $api = QBTL::QBT::API->new( base_url => $self->{config}->qbt_url, );
+      my $process = QBTL::Process::QBT->new( api => $api );
       my $result =
           $process->refresh_info_rows(
                       dbh  => $connect->{dbh},
