@@ -96,4 +96,70 @@ sub migrate ( $self, $dbh ) {
           migration_count => scalar @files,};
 }
 
+sub upsert_qbt_info ( $self, $dbh, $row ) {
+  die 'qbt info row requires hash' if !defined $row->{hash};
+
+  my @field = qw(
+      hash
+      name
+      state
+      progress
+      save_path
+      content_path
+      category
+      tags
+      amount_left
+      total_size
+      added_on
+      completion_on
+      last_activity
+      tracker
+      ratio
+  );
+
+  my $sql = q{
+        INSERT INTO qbt_info (
+            hash,
+            name,
+            state,
+            progress,
+            save_path,
+            content_path,
+            category,
+            tags,
+            amount_left,
+            total_size,
+            added_on,
+            completion_on,
+            last_activity,
+            tracker,
+            ratio,
+            seen_on
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(hash) DO UPDATE SET
+            name          = excluded.name,
+            state         = excluded.state,
+            progress      = excluded.progress,
+            save_path     = excluded.save_path,
+            content_path  = excluded.content_path,
+            category      = excluded.category,
+            tags          = excluded.tags,
+            amount_left   = excluded.amount_left,
+            total_size    = excluded.total_size,
+            added_on      = excluded.added_on,
+            completion_on = excluded.completion_on,
+            last_activity = excluded.last_activity,
+            tracker       = excluded.tracker,
+            ratio         = excluded.ratio,
+            seen_on       = excluded.seen_on
+    };
+
+  $dbh->do( $sql, undef, map { $row->{$_} } @field, );
+
+  return {
+          ok   => 1,
+          hash => $row->{hash},};
+}
+
 1;

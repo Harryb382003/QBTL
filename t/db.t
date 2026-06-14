@@ -57,6 +57,75 @@ my ( $qbt_info_table ) = $result->{dbh}->selectrow_array(
 
 is( $qbt_info_table, 'qbt_info', 'qbt_info table created' );
 
+my $upsert = $db->upsert_qbt_info(
+                         $result->{dbh},
+                         {
+                          hash          => 'abc123',
+                          name          => 'Example Torrent',
+                          state         => 'pausedUP',
+                          progress      => 1,
+                          save_path     => '/Downloads',
+                          content_path  => '/Downloads/Example Torrent',
+                          category      => 'test',
+                          tags          => 'one,two',
+                          amount_left   => 0,
+                          total_size    => 12345,
+                          added_on      => 1700000000,
+                          completion_on => 1700000100,
+                          last_activity => 1700000200,
+                          tracker => 'https://tracker.example.invalid/announce',
+                          ratio   => 1.5,
+                         }, );
+
+ok( $upsert->{ok}, 'qbt_info upsert result ok' );
+is( $upsert->{hash}, 'abc123', 'qbt_info upsert returns hash' );
+
+my $stored =
+    $result->{dbh}->selectrow_hashref( 'SELECT * FROM qbt_info WHERE hash = ?',
+                                       undef, 'abc123', );
+
+is( $stored->{hash},        'abc123',          'qbt_info hash stored' );
+is( $stored->{name},        'Example Torrent', 'qbt_info name stored' );
+is( $stored->{state},       'pausedUP',        'qbt_info state stored' );
+is( $stored->{save_path},   '/Downloads',      'qbt_info save_path stored' );
+is( $stored->{amount_left}, 0,                 'qbt_info amount_left stored' );
+ok( $stored->{seen_on}, 'qbt_info seen_on stored' );
+
+my $update = $db->upsert_qbt_info(
+                         $result->{dbh},
+                         {
+                          hash          => 'abc123',
+                          name          => 'Example Torrent Renamed',
+                          state         => 'downloading',
+                          progress      => 0.5,
+                          save_path     => '/Downloads',
+                          content_path  => '/Downloads/Example Torrent Renamed',
+                          category      => 'test',
+                          tags          => 'one,two',
+                          amount_left   => 500,
+                          total_size    => 12345,
+                          added_on      => 1700000000,
+                          completion_on => 0,
+                          last_activity => 1700000300,
+                          tracker => 'https://tracker.example.invalid/announce',
+                          ratio   => 0.75,
+                         }, );
+
+ok( $update->{ok}, 'qbt_info update result ok' );
+
+my ( $count ) =
+    $result->{dbh}
+    ->selectrow_array( 'SELECT COUNT(*) FROM qbt_info WHERE hash = ?',
+                       undef, 'abc123', );
+
+is( $count, 1, 'qbt_info upsert keeps one row per hash' );
+
+my ( $updated_name ) =
+    $result->{dbh}->selectrow_array( 'SELECT name FROM qbt_info WHERE hash = ?',
+                                     undef, 'abc123', );
+
+is( $updated_name, 'Example Torrent Renamed', 'qbt_info row updated' );
+
 $result->{dbh}->do(
      'CREATE TABLE sanity_check (id INTEGER PRIMARY KEY, name TEXT NOT NULL)' );
 $result->{dbh}->do( 'INSERT INTO sanity_check (name) VALUES (?)', undef, 'ok' );
