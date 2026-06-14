@@ -1,6 +1,6 @@
-use v5.36;
-use strict;
-use warnings;
+use v5.40;
+use common::sense;
+use feature qw( signatures );
 
 use Test::More;
 
