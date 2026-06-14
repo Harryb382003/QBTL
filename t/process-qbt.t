@@ -119,6 +119,32 @@ is( $version_ua->urls->[0],
     'http://127.0.0.1:9090/api/v2/app/version',
     'qbt version process gets version URL' );
 
+my $exec_info_ua = Local::FakeUA->new(
+                             get_body => '[{"hash":"abc123","name":"Example"}]',
+                             get_code => 200, );
+
+my $exec_info_api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090',
+                                         ua       => $exec_info_ua, );
+
+my $exec_info_process = QBTL::Process::QBT->new( api => $exec_info_api );
+
+my $exec_info_result = $exec_info_process->info( filter => 'all' );
+
+is( $exec_info_result->{ok}, 1, 'qbt info process succeeds' );
+is( $exec_info_result->{action},
+    'qbt_torrents_info', 'qbt info process returns action' );
+is( $exec_info_result->{result}{code},
+    200, 'qbt info process returns response code' );
+like( $exec_info_result->{result}{body},
+      qr/abc123/, 'qbt info process returns body' );
+
+like( $exec_info_ua->urls->[0],
+      qr{\Ahttp://127\.0\.0\.1:9090/api/v2/torrents/info\?},
+      'qbt info process gets torrents info URL with query' );
+
+like( $exec_info_ua->urls->[0],
+      qr/filter=all/, 'qbt info process sends filter param' );
+
 my $login_ua = Local::FakeUA->new( post_body => 'Ok.',
                                    post_code => 200, );
 

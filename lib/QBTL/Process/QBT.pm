@@ -54,6 +54,17 @@ sub fake_info_rows ( $self ) {
            }, ];
 }
 
+sub info ( $self, %params ) {
+  my $request = $self->{api}->torrents_info( %params );
+  my $result  = $self->{api}->execute_request( $request );
+
+  return {
+          ok      => $result->{ok} ? 1 : 0,
+          action  => 'qbt_torrents_info',
+          request => $request,
+          result  => $result,};
+}
+
 sub login ( $self, %arg ) {
   my $username = $arg{username} // 'admin';
   my $password = $arg{password} // 'adminadmin';
