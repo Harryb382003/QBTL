@@ -10,6 +10,10 @@ use QBTL::DB;
 use QBTL::QBT::API;
 use QBTL::Process::QBT;
 
+# ------------------------------
+# Test doubles
+# ------------------------------
+
 {    # package Local::FakeUA;
 
   package Local::FakeUA;
@@ -88,6 +92,9 @@ use QBTL::Process::QBT;
   }
 }
 
+# ------------------------------
+# Basic construction
+# ------------------------------
 my $api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090', );
 
 my $process = QBTL::Process::QBT->new( api => $api );
@@ -96,6 +103,9 @@ isa_ok( $process, 'QBTL::Process::QBT' );
 
 isa_ok( $process->api, 'QBTL::QBT::API' );
 
+# ------------------------------
+# Executable qBT actions
+# ------------------------------
 my $version_ua = Local::FakeUA->new( get_body => 'v5.0.0',
                                      get_code => 200, );
 
@@ -109,9 +119,8 @@ my $version_result = $version_process->version;
 is( $version_result->{ok}, 1, 'qbt version process succeeds' );
 is( $version_result->{action},
     'qbt_version', 'qbt version process returns action' );
-is(
-  $version_result->{result}{code}, 200, 'qbt version process returns response
-code' );
+is( $version_result->{result}{code},
+    200, 'qbt version process returns response code' );
 is( $version_result->{result}{body},
     'v5.0.0', 'qbt version process returns body' );
 
@@ -174,19 +183,25 @@ is( $login_ua->posts->[0]{params}{username},
 is( $login_ua->posts->[0]{params}{password},
     'adminadmin', 'qbt login process sends password' );
 
+# ------------------------------
+# Preview-only qBT request builders
+# ------------------------------
+
 my $info_result = $process->torrents_info_request;
 
 ok( $info_result->{ok}, 'torrents info request result ok' );
 is( $info_result->{action},
     'qbt_torrents_info', 'torrents info request action' );
-is(
-  $info_result->{request}{endpoint}, 'torrents_info', 'torrents info request
-endpoint' );
+is( $info_result->{request}{endpoint},
+    'torrents_info', 'torrents info request endpoint' );
 is( $info_result->{request}{method}, 'GET', 'torrents info request method' );
 is( $info_result->{request}{url},
     'http://127.0.0.1:9090/api/v2/torrents/info',
     'torrents info request URL' );
 
+# ------------------------------
+# qBT info database storage
+# ------------------------------
 my $dir     = tempdir( CLEANUP => 1 );
 my $db_path = File::Spec->catfile( $dir, 'test.sqlite' );
 
@@ -306,6 +321,10 @@ my ( $refresh_name ) =
                        undef, 'ghi789', );
 
 is( $refresh_name, 'Refresh Example', 'refresh info row stored in DB' );
+
+# ------------------------------
+# Fake/offline refresh rows
+# ------------------------------
 
 my $fake_rows = $process->fake_info_rows;
 
