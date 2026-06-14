@@ -6,6 +6,7 @@ use Test::More;
 
 use_ok( 'QBTL' );
 use_ok( 'QBTL::App' );
+use_ok( 'QBTL::Config' );
 use_ok( 'QBTL::DB' );
 use_ok( 'QBTL::QBT' );
 use_ok( 'QBTL::QBT::Client' );
