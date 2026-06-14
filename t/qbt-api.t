@@ -35,6 +35,60 @@ my $default_api = QBTL::QBT::API->new;
   }
 }
 
+{
+
+  package Local::FakeLWP;
+
+  use v5.40;
+  use common::sense;
+  use feature qw( signatures );
+
+  sub new ( $class ) {
+    return bless {urls => []}, $class;
+  }
+
+  sub get ( $self, $uri ) {
+    push @{$self->{urls}}, "$uri";
+
+    return
+        Local::FakeResponse->new( code => 200,
+                                  body => 'v5.0.0', );
+  }
+
+  sub urls ( $self ) {
+    return $self->{urls};
+  }
+}
+
+{
+
+  package Local::FakeResponse;
+
+  use v5.40;
+  use common::sense;
+  use feature qw( signatures );
+
+  sub new ( $class, %arg ) {
+    return bless \%arg, $class;
+  }
+
+  sub is_success ( $self ) {
+    return 1;
+  }
+
+  sub status_line ( $self ) {
+    return '200 OK';
+  }
+
+  sub code ( $self ) {
+    return $self->{code};
+  }
+
+  sub decoded_content ( $self ) {
+    return $self->{body};
+  }
+}
+
 my $ua = Local::DummyUA->new;
 my $api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090',
                                ua       => $ua, );
@@ -237,5 +291,37 @@ is_deeply(
             newPath => 'New Folder',
            },
            'torrents_rename_folder params' );
+
+my $fake_lwp = Local::FakeLWP->new;
+
+my $realish_api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090',
+                                       ua       => $fake_lwp, );
+
+my $get_result = $realish_api->execute_request( $realish_api->app_version );
+
+is( $get_result->{ok},   1,        'execute GET succeeds with LWP-style ua' );
+is( $get_result->{code}, 200,      'execute GET returns response code' );
+is( $get_result->{body}, 'v5.0.0', 'execute GET returns response body' );
+is( $fake_lwp->urls->[0],
+    'http://127.0.0.1:9090/api/v2/app/version',
+    'execute GET calls expected URL' );
+
+$fake_lwp = Local::FakeLWP->new;
+
+$realish_api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090',
+                                    ua       => $fake_lwp, );
+
+$get_result = $realish_api->execute_request(
+         $realish_api->torrents_info( filter => 'all', category => 'movies' ) );
+
+is( $get_result->{ok}, 1, 'execute GET with params succeeds' );
+like( $fake_lwp->urls->[0],
+      qr{\Ahttp://127\.0\.0\.1:9090/api/v2/torrents/info\?},
+      'execute GET with params adds query string' );
+like( $fake_lwp->urls->[0],
+      qr/filter=all/, 'execute GET URL includes filter param' );
+like(
+  $fake_lwp->urls->[0], qr/category=movies/, 'execute GET URL includes category
+param' );
 
 done_testing;
