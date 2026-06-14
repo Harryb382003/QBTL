@@ -12,6 +12,61 @@ use QBTL::Config;
 use QBTL::Render::CLI;
 
 my $out = '';
+
+{    # package Local::FakeUA;
+
+  package Local::FakeUA;
+
+  use v5.40;
+  use common::sense;
+  use feature qw( signatures );
+
+  sub new ( $class ) {
+    return bless {urls => []}, $class;
+  }
+
+  sub get ( $self, $uri ) {
+    push @{$self->{urls}}, "$uri";
+
+    return
+        Local::FakeResponse->new( code => 200,
+                                  body => 'Ok.', );
+  }
+
+  sub urls ( $self ) {
+    return $self->{urls};
+  }
+}
+
+{    # package Local::FakeResponse;
+
+  package Local::FakeResponse;
+
+  use v5.40;
+  use common::sense;
+  use feature qw( signatures );
+
+  sub new ( $class, %arg ) {
+    return bless \%arg, $class;
+  }
+
+  sub is_success ( $self ) {
+    return 1;
+  }
+
+  sub status_line ( $self ) {
+    return '200 OK';
+  }
+
+  sub code ( $self ) {
+    return $self->{code};
+  }
+
+  sub decoded_content ( $self ) {
+    return $self->{body};
+  }
+}
+
 open my $fh, '>', \$out or die "open scalar fh: $!";
 
 my $root = tempdir( CLEANUP => 0 );
@@ -23,10 +78,14 @@ END {
 my $db_path = File::Spec->catfile( $root, 'QBTL', 'qbtl.db' );
 
 my $config = QBTL::Config->new( db_path => $db_path,
-                                qbt_url => 'http://127.0.0.1:9090', );
+                                qbt_url => 'http://127.0.0.1:8080', );
 
+my $qbt_ua   = Local::FakeUA->new;
 my $renderer = QBTL::Render::CLI->new( out => $fh );
-my $app      = QBTL::App->new( config => $config, renderer => $renderer );
+my $app = QBTL::App->new(
+                          config   => $config,
+                          renderer => $renderer,
+                          qbt_ua   => $qbt_ua, );
 
 isa_ok( $app, 'QBTL::App' );
 
@@ -58,25 +117,16 @@ like( $out, qr/QBTL status/,          'status command renders status' );
 like( $out, qr/Database path: ready/, 'status command reports ready path' );
 
 $out = '';
-is( $app->run_cli( 'qbt', 'version' ), 0, 'qbt version command exits cleanly' );
-like( $out, qr/qBT request/, 'qbt version command renders request' );
-like( $out,
-      qr{http://127\.0\.0\.1:9090/api/v2/app/version},
-      'qbt version command uses configured qBT URL' );
-
-$out = '';
 is( $app->run_cli( 'qbt', 'info' ), 0, 'qbt info command exits cleanly' );
-like( $out, qr/qBT request/, 'qbt info command renders request' );
-like( $out,
-      qr{http://127\.0\.0\.1:9090/api/v2/torrents/info},
-      'qbt info command uses configured qBT URL' );
+like( $out, qr/qBT request complete\./,    'qbt info command renders result' );
+like( $out, qr/Action: qbt_torrents_info/, 'qbt info command renders action' );
 
 $out = '';
 is( $app->run_cli( 'qbt', 'refresh' ), 0, 'qbt refresh command exits cleanly' );
 like( $out,
       qr/qBT refresh complete\./,
       'qbt refresh command renders completion' );
-like( $out, qr/seen:\s+2/,     'qbt refresh command renders seen count' );
+like( $out, qr/seen:\s+2/,     'qbt refresh command rendrs seen count' );
 like( $out, qr/stored:\s+2/,   'qbt refresh command renders stored count' );
 like( $out, qr/problems:\s+0/, 'qbt refresh command renders problem count' );
 

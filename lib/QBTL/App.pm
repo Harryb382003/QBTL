@@ -71,11 +71,15 @@ sub run_cli ( $self, @argv ) {
     }
 
     if ( $subcmd eq 'info' ) {
-      my $api = QBTL::QBT::API->new( base_url => $self->{config}->qbt_url, );
-      my $process = QBTL::Process::QBT->new( api => $api );
-      my $result  = $process->torrents_info_request;
+      my $api = QBTL::QBT::API->new(
+                               base_url => $self->{config}->qbt_url,
+                               $self->{qbt_ua} ? ( ua => $self->{qbt_ua} ) : (),
+      );
 
-      return $self->{renderer}->qbt_request( $result );
+      my $process = QBTL::Process::QBT->new( api => $api );
+      my $result  = $process->info;
+
+      return $self->{renderer}->qbt_result( $result );
     }
 
     if ( $subcmd eq 'refresh' ) {
@@ -126,10 +130,11 @@ sub run_cli ( $self, @argv ) {
 
     if ( $subcmd eq 'version' ) {
       my $api = QBTL::QBT::API->new( base_url => $self->{config}->qbt_url, );
-      my $process = QBTL::Process::QBT->new( api => $api );
-      my $result  = $process->version_request;
 
-      return $self->{renderer}->qbt_request( $result );
+      my $process = QBTL::Process::QBT->new( api => $api );
+      my $result  = $process->version;
+
+      return $self->{renderer}->qbt_result( $result );
     }
 
     return $self->{renderer}->qbt_help;
