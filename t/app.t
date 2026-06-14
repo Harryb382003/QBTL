@@ -9,6 +9,8 @@ use File::Path qw( remove_tree );
 
 use QBTL::App;
 use QBTL::Config;
+
+# use QBTL::DB;
 use QBTL::Render::CLI;
 
 my $out = '';
@@ -16,7 +18,7 @@ open my $fh, '>', \$out or die "open scalar fh: $!";
 my $root = tempdir( CLEANUP => 0 );
 
 END {
-	remove_tree($root) if defined $root && -d $root;
+  remove_tree( $root ) if defined $root && -d $root;
 }
 
 my $db_path = File::Spec->catfile( $root, 'QBTL', 'qbtl.db' );
@@ -43,5 +45,10 @@ is( $app->run_cli( 'setup' ), 0, 'setup command exits cleanly' );
 like( $out, qr/QBTL setup complete\./, 'setup command renders completion' );
 ok( -d File::Spec->catdir( $root, 'QBTL' ),
     'setup command creates configured home directory' );
+
+$out = '';
+is( $app->run_cli( 'status' ), 0, 'status command exits cleanly after setup' );
+like( $out, qr/QBTL status/,          'status command renders status' );
+like( $out, qr/Database path: ready/, 'status command reports ready path' );
 
 done_testing;

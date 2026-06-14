@@ -28,6 +28,36 @@ my $result = {
     existing => ['/tmp/QBTL/logs'],
 };
 
+$out = '';
+is(
+    $render->status(
+        {
+            ok       => 1,
+            db_path  => '/tmp/QBTL/qbtl.db',
+            problems => [],
+        }
+    ),
+   0,
+   'status render exits cleanly when ready'
+);
+like( $out, qr/QBTL status/, 'status output includes title' );
+like( $out, qr/Database path: ready/, 'status output says ready' );
+
+$out = '';
+is(
+    $render->status(
+        {
+            ok       => 0,
+            db_path  => '/tmp/QBTL/qbtl.db',
+            problems => ['DB directory does not exist: /tmp/QBTL'],
+        }
+    ),
+   1,
+   'status render returns failure when not ready'
+);
+like( $out, qr/Database path: not ready/, 'status output says not ready' );
+like( $out, qr/qbtl setup/, 'status output suggests setup' );
+
 is( $render->setup($result), 0, 'setup render exits cleanly' );
 like( $out, qr/QBTL setup complete\./, 'setup output includes completion' );
 like( $out, qr/Home: \/tmp\/QBTL/, 'setup output includes home' );
