@@ -24,61 +24,61 @@ sub help ( $self ) {
   say {$out} "Usage: qbtl <command>";
   say {$out} "";
   say {$out} "Commands:";
-  say {$out} "  version    Show QBTL version";
-  say {$out} "  qbt info    Show qBittorrent torrents/info request";
-  say {$out} "  qbt refresh Store fake qBittorrent torrents/info rows";
-  say {$out} "  qbt version Show qBittorrent version request";
-  say {$out} "  setup      Create QBTL runtime directories";
-  say {$out} "  status     Show QBTL runtime status";
+  say {$out} "  setup       Create QBTL runtime directories";
+  say {$out} "  status      Show QBTL runtime status";
+  say {$out} "  version     Show QBTL version";
+  say "";
+  say {$out} "  qbt info      Show qBittorrent torrents/info request";
+  say {$out} "  qbt refresh   Store fake qBittorrent torrents/info rows";
+  say {$out} "  qbt version   Show qBittorrent version request";
 
   return 0;
 }
 
 sub qbt_refresh ( $self, $result ) {
-    my $out = $self->{out};
+  my $out = $self->{out};
 
-    if ( !$result->{ok} ) {
-        say {$out} "qBT refresh failed.";
-    }
-    else {
-        say {$out} "qBT refresh complete.";
-    }
+  if ( !$result->{ok} ) {
+    say {$out} "qBT refresh failed.";
+  } else {
+    say {$out} "qBT refresh complete.";
+  }
 
-    say {$out} "  seen:     $result->{seen}";
-    say {$out} "  stored:   $result->{stored}";
-    say {$out} "  problems: " . scalar @{ $result->{problems} };
+  say {$out} "  seen:     $result->{seen}";
+  say {$out} "  stored:   $result->{stored}";
+  say {$out} "  problems: " . scalar @{$result->{problems}};
 
-    if ( @{ $result->{problems} } ) {
-        say {$out} "";
-        say {$out} "Problems:";
+  if ( @{$result->{problems}} ) {
+    say {$out} "";
+    say {$out} "Problems:";
 
-        for my $problem ( @{ $result->{problems} } ) {
-            my $hash  = defined $problem->{hash} ? $problem->{hash} : '(unknown)';
-            my $error = $problem->{error} // 'unknown error';
+    for my $problem ( @{$result->{problems}} ) {
+      my $hash  = defined $problem->{hash} ? $problem->{hash} : '(unknown)';
+      my $error = $problem->{error} // 'unknown error';
 
-            say {$out} "  $hash: $error";
-        }
-
-        return 1;
+      say {$out} "  $hash: $error";
     }
 
-    return 0;
+    return 1;
+  }
+
+  return 0;
 }
 
-sub qbt_request ($self, $result) {
-    my $out = $self->{out};
+sub qbt_request ( $self, $result ) {
+  my $out = $self->{out};
 
-    if ( !$result->{ok} ) {
-        say {$out} "qBT request failed.";
-        return 1;
-    }
+  if ( !$result->{ok} ) {
+    say {$out} "qBT request failed.";
+    return 1;
+  }
 
-    say {$out} "qBT request";
-    say {$out} "Action: $result->{action}";
-    say {$out} "Method: $result->{request}{method}";
-    say {$out} "URL: $result->{request}{url}";
+  say {$out} "qBT request";
+  say {$out} "Action: $result->{action}";
+  say {$out} "Method: $result->{request}{method}";
+  say {$out} "URL: $result->{request}{url}";
 
-    return 0;
+  return 0;
 }
 
 sub setup ( $self, $result ) {
