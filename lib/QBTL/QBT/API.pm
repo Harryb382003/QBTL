@@ -6,10 +6,13 @@ use feature qw( signatures );
 
 sub new ($class, %arg) {
     $arg{base_url} //= 'http://localhost:8080';
-
     $arg{base_url} =~ s{/+\z}{};
 
     return bless \%arg, $class;
+}
+
+sub ua ($self) {
+    return $self->{ua};
 }
 
 sub base_url ($self) {
@@ -25,6 +28,19 @@ sub api_url ($self, $path) {
 sub endpoint ($self, $name) {
     my $spec = $self->endpoint_spec($name);
     return $self->api_url( $spec->{path} );
+}
+
+sub execute_request ( $self, $request ) {
+    if ( !$self->{ua} ) {
+        return {
+            ok      => 0,
+            status  => 'no_user_agent',
+            request => $request,
+            error   => 'No user agent configured',
+        };
+    }
+
+    return $self->{ua}->execute($request);
 }
 
 sub endpoint_spec ($self, $name) {
