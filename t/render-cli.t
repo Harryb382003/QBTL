@@ -77,6 +77,7 @@ like(
   $out, qr{URL: http://localhost:8080/api/v2/app/version}, 'qbt request output
 includes URL' );
 
+$out = '';
 is( $render->setup( $result ), 0, 'setup render exits cleanly' );
 like( $out, qr/QBTL setup complete\./, 'setup output includes completion' );
 like( $out, qr/Home: \/tmp\/QBTL/,     'setup output includes home' );
@@ -102,5 +103,19 @@ like( $out,
 like( $out, qr/seen:\s+2/,     'qbt refresh output includes seen count' );
 like( $out, qr/stored:\s+2/,   'qbt refresh output includes stored count' );
 like( $out, qr/problems:\s+0/, 'qbt refresh output includes problem count' );
+
+$out = '';
+is( $render->help, 0, 'help render exits cleanly' );
+like( $out, qr/Usage: qbtl <command>/, 'help output includes usage' );
+like( $out, qr/help\s+Show this help/, 'help output includes help command' );
+like( $out,
+      qr/version\s+Show QBTL version/,
+      'help output includes version command' );
+like( $out,
+      qr/setup\s+Create QBTL runtime directories/,
+      'help output includes setup command' );
+like( $out,
+      qr/qbt help\s+Show qBittorrent command help/,
+      'help output includes qbt help command' );
 
 done_testing;

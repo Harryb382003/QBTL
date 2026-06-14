@@ -24,15 +24,31 @@ sub help ( $self ) {
   say {$out} "Usage: qbtl <command>";
   say {$out} "";
   say {$out} "Commands:";
+  say {$out} "  help        Show this help";
   say {$out} "  setup       Create QBTL runtime directories";
   say {$out} "  status      Show QBTL runtime status";
   say {$out} "  version     Show QBTL version";
   say "";
+  say {$out} "  qbt help      Show qBittorrent command help";
   say {$out} "  qbt info      Show qBittorrent torrents/info request";
   say {$out} "  qbt refresh   Store fake qBittorrent torrents/info rows";
   say {$out} "  qbt version   Show qBittorrent version request";
 
   return 0;
+}
+
+sub qbt_help ( $self ) {
+    my $out = $self->{out};
+
+    say {$out} "Usage: qbtl qbt <command>";
+    say {$out} "";
+    say {$out} "Commands:";
+    say {$out} "  help      Show this help";
+    say {$out} "  info      Show qBittorrent torrents/info request";
+    say {$out} "  refresh   Store fake qBittorrent torrents/info rows";
+    say {$out} "  version   Show qBittorrent version request";
+
+    return 0;
 }
 
 sub qbt_refresh ( $self, $result ) {

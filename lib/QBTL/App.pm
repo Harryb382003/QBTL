@@ -30,6 +30,10 @@ sub _qbtl_home ( $self ) {
 sub run_cli ( $self, @argv ) {
   my $cmd = shift @argv // 'help';
 
+  if ( $cmd eq 'help' ) {
+    return $self->{renderer}->help;
+  }
+
   if ( $cmd eq 'version' ) {
     return $self->{renderer}->version( $QBTL::VERSION );
   }
@@ -61,6 +65,10 @@ sub run_cli ( $self, @argv ) {
 
   if ( $cmd eq 'qbt' ) {
     my $subcmd = shift @argv // 'help';
+
+    if ( $subcmd eq 'help' ) {
+      return $self->{renderer}->qbt_help;
+    }
 
     if ( $subcmd eq 'info' ) {
       my $api = QBTL::QBT::API->new( base_url => $self->{config}->qbt_url, );
@@ -126,7 +134,7 @@ sub run_cli ( $self, @argv ) {
       return $self->{renderer}->qbt_request( $result );
     }
 
-    return $self->{renderer}->help;
+    return $self->{renderer}->qbt_help;
   }
 
   return $self->{renderer}->help;

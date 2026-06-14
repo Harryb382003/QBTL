@@ -9,12 +9,11 @@ use File::Path qw( remove_tree );
 
 use QBTL::App;
 use QBTL::Config;
-
-# use QBTL::DB;
 use QBTL::Render::CLI;
 
 my $out = '';
 open my $fh, '>', \$out or die "open scalar fh: $!";
+
 my $root = tempdir( CLEANUP => 0 );
 
 END {
@@ -22,8 +21,10 @@ END {
 }
 
 my $db_path = File::Spec->catfile( $root, 'QBTL', 'qbtl.db' );
+
 my $config = QBTL::Config->new( db_path => $db_path,
                                 qbt_url => 'http://127.0.0.1:9090', );
+
 my $renderer = QBTL::Render::CLI->new( out => $fh );
 my $app      = QBTL::App->new( config => $config, renderer => $renderer );
 
@@ -36,6 +37,10 @@ like( $out, qr/\AQBTL 0\.001\n\z/, 'version command renders version' );
 $out = '';
 is( $app->run_cli( 'help' ), 0, 'help command exits cleanly' );
 like( $out, qr/Usage: qbtl <command>/, 'help command renders usage' );
+like( $out, qr/help\s+Show this help/, 'help command is listed' );
+like( $out,
+      qr/qbt help\s+Show qBittorrent command help/,
+      'qbt help command is listed' );
 
 $out = '';
 is( $app->run_cli(), 0, 'default command exits cleanly' );
@@ -74,5 +79,21 @@ like( $out,
 like( $out, qr/seen:\s+2/,     'qbt refresh command renders seen count' );
 like( $out, qr/stored:\s+2/,   'qbt refresh command renders stored count' );
 like( $out, qr/problems:\s+0/, 'qbt refresh command renders problem count' );
+
+$out = '';
+is( $app->run_cli( 'qbt', 'help' ), 0, 'qbt help command exits cleanly' );
+like( $out, qr/Usage: qbtl qbt <command>/, 'qbt help command renders usage' );
+like( $out, qr/help\s+Show this help/,     'qbt help command is listed' );
+like( $out,
+      qr/info\s+Show qBittorrent torrents\/info request/,
+      'qbt info command is listed' );
+like( $out,
+      qr/refresh\s+Store fake qBittorrent torrents\/info rows/,
+      'qbt refresh command is listed' );
+
+$out = '';
+is( $app->run_cli( 'qbt' ), 0, 'bare qbt command exits cleanly' );
+like( $out, qr/Usage: qbtl qbt <command>/,
+      'bare qbt command renders qbt help' );
 
 done_testing;
