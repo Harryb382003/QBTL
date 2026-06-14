@@ -16,9 +16,9 @@ sub api ( $self ) {
   return $self->{api};
 }
 
-sub fake_info_rows ($self) {
-    return [
-        {
+sub fake_info_rows ( $self ) {
+  return [
+           {
             hash          => 'abc123',
             name          => 'Fake qBT Torrent One',
             state         => 'pausedUP',
@@ -34,8 +34,8 @@ sub fake_info_rows ($self) {
             last_activity => 1700000200,
             tracker       => 'https://tracker.example.invalid/announce',
             ratio         => 1.0,
-        },
-        {
+           },
+           {
             hash          => 'def456',
             name          => 'Fake qBT Torrent Two',
             state         => 'downloading',
@@ -51,28 +51,39 @@ sub fake_info_rows ($self) {
             last_activity => 1700000400,
             tracker       => 'https://tracker.example.invalid/announce',
             ratio         => 0.25,
-        },
-    ];
+           }, ];
+}
+
+sub login ( $self, %arg ) {
+  my $username = $arg{username} // 'admin';
+  my $password = $arg{password} // 'adminadmin';
+
+  my $request = $self->{api}->login( $username, $password );
+  my $result  = $self->{api}->execute_request( $request );
+
+  return {
+          ok      => $result->{ok} ? 1 : 0,
+          action  => 'qbt_login',
+          request => $request,
+          result  => $result,};
 }
 
 sub refresh_info_rows ( $self, %arg ) {
-    my $db   = $arg{db}   // die 'db is required';
-    my $dbh  = $arg{dbh}  // die 'dbh is required';
-    my $rows = $arg{rows} // die 'rows is required';
+  my $db   = $arg{db}   // die 'db is required';
+  my $dbh  = $arg{dbh}  // die 'dbh is required';
+  my $rows = $arg{rows} // die 'rows is required';
 
-    my $store = $self->store_info_rows(
-        dbh  => $dbh,
-        db   => $db,
-        rows => $rows,
-    );
+  my $store = $self->store_info_rows(
+                                      dbh  => $dbh,
+                                      db   => $db,
+                                      rows => $rows, );
 
-    return {
-        ok       => $store->{ok},
-        action   => 'qbt_refresh',
-        seen     => $store->{seen},
-        stored   => $store->{stored},
-        problems => $store->{problems},
-    };
+  return {
+          ok       => $store->{ok},
+          action   => 'qbt_refresh',
+          seen     => $store->{seen},
+          stored   => $store->{stored},
+          problems => $store->{problems},};
 }
 
 sub store_info_rows ( $self, %arg ) {

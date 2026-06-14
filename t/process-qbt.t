@@ -10,6 +10,63 @@ use QBTL::DB;
 use QBTL::QBT::API;
 use QBTL::Process::QBT;
 
+{
+
+  package Local::LoginUA;
+
+  use v5.40;
+  use common::sense;
+  use feature qw( signatures );
+
+  sub new ( $class ) {
+    return bless {posts => []}, $class;
+  }
+
+  sub post ( $self, $url, $params ) {
+    push @{$self->{posts}},
+        {
+         url    => $url,
+         params => $params,};
+
+    return
+        Local::LoginResponse->new( code => 200,
+                                   body => 'Ok.', );
+  }
+
+  sub posts ( $self ) {
+    return $self->{posts};
+  }
+}
+
+{
+
+  package Local::LoginResponse;
+
+  use v5.40;
+  use common::sense;
+  use feature qw( signatures );
+
+  sub new ( $class, %arg ) {
+    return bless \%arg, $class;
+  }
+
+  sub is_success ( $self ) {
+    return 1;
+  }
+
+  sub status_line ( $self ) {
+    return '200 OK';
+  }
+
+  sub code ( $self ) {
+    return $self->{code};
+  }
+
+  sub decoded_content ( $self ) {
+    return $self->{body};
+  }
+}
+
 my $api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090', );
 
 my $process = QBTL::Process::QBT->new( api => $api );
@@ -17,6 +74,34 @@ my $process = QBTL::Process::QBT->new( api => $api );
 isa_ok( $process, 'QBTL::Process::QBT' );
 
 isa_ok( $process->api, 'QBTL::QBT::API' );
+
+my $login_ua = Local::LoginUA->new;
+
+my $login_api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090',
+                                     ua       => $login_ua, );
+
+my $login_process = QBTL::Process::QBT->new( api => $login_api );
+
+my $login_result = $login_process->login( username => 'admin',
+                                          password => 'adminadmin', );
+
+is( $login_result->{ok},     1,           'qbt login process succeeds' );
+is( $login_result->{action}, 'qbt_login', 'qbt login process returns action' );
+is( $login_result->{result}{code},
+    200, 'qbt login process returns response code' );
+is( $login_result->{result}{body},
+    'Ok.', 'qbt login process returns response body' );
+
+is(
+    $login_ua->posts->[0]{url},
+    'http://127.0.0.1:9090/api/v2/auth/login',
+    'qbt login process posts to login URL' );
+
+is( $login_ua->posts->[0]{params}{username},
+    'admin', 'qbt login process sends username' );
+
+is( $login_ua->posts->[0]{params}{password},
+    'adminadmin', 'qbt login process sends password' );
 
 my $info_result = $process->torrents_info_request;
 
