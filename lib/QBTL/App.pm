@@ -17,6 +17,14 @@ sub new ( $class, %arg ) {
   return bless \%arg, $class;
 }
 
+sub _qbtl_home ( $self ) {
+  my $db_path = $self->{config}->db_path;
+
+  $db_path =~ s{/[^/]+\z}{};
+
+  return $db_path;
+}
+
 sub run_cli ( $self, @argv ) {
   my $cmd = shift @argv // 'help';
 
@@ -27,15 +35,14 @@ sub run_cli ( $self, @argv ) {
   if ( $cmd eq 'setup' ) {
     my $db = QBTL::DB->new( db_path => $self->{config}->db_path );
 
-    my $setup = QBTL::Process::Setup->new(
-        home => $self->_qbtl_home,
-        db   => $db,
-    );
+    my $setup =
+        QBTL::Process::Setup->new( home => $self->_qbtl_home,
+                                   db   => $db, );
 
     my $result = $setup->run;
 
-    return $self->{renderer}->setup($result);
-}
+    return $self->{renderer}->setup( $result );
+  }
 
   if ( $cmd eq 'status' ) {
     my $db = QBTL::DB->new( db_path => $self->{config}->db_path );
@@ -50,14 +57,6 @@ sub run_cli ( $self, @argv ) {
 
   }
   return $self->{renderer}->help;
-}
-
-sub _qbtl_home ( $self ) {
-  my $db_path = $self->{config}->db_path;
-
-  $db_path =~ s{/[^/]+\z}{};
-
-  return $db_path;
 }
 
 1;
