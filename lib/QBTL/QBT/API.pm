@@ -4,16 +4,45 @@ use v5.40;
 use common::sense;
 use feature qw( signatures );
 
-sub new ($class, %arg) {
-    $arg{base_url} //= 'http://localhost:8080';
-    $arg{base_url} =~ s{/+\z}{};
+use URI;
+use URI::Escape qw(uri_escape uri_escape_utf8);
+use LWP::UserAgent;
+use HTTP::Cookies;
 
-    return bless \%arg, $class;
+sub new ( $class, %arg ) {
+  $arg{base_url} //= 'http://localhost:8080';
+  $arg{base_url} =~ s{/+\z}{};
+
+  $arg{username} //= 'admin';
+  $arg{password} //= 'adminadmin';
+  $arg{timeout}  //= 3;
+
+  $arg{ua} //= LWP::UserAgent->new( cookie_jar => HTTP::Cookies->new,
+                                    timeout    => $arg{timeout}, );
+
+  return bless \%arg, $class;
 }
 
-sub ua ($self) {
-    return $self->{ua};
+sub ua ( $self ) {
+  return $self->{ua};
 }
+
+sub execute_request ( $self, $request ) {
+  if ( !$self->{ua} ) {
+    return {
+            ok      => 0,
+            status  => 'no_user_agent',
+            request => $request,
+            error   => 'No user agent configured',};
+  }
+
+  if ( $self->{ua}->can( 'execute' ) ) {
+    return $self->{ua}->execute( $request );
+  }
+
+  return $self->_execute_lwp_request( $request );
+}
+
 
 sub base_url ($self) {
     return $self->{base_url};
