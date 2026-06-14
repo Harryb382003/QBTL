@@ -114,43 +114,49 @@ like(
       qr/qbt info row requires hash/,
       'bad qbt info row reports missing hash' );
 
-my $refresh_result = $process->refresh_info_rows(
-  dbh  => $connect->{dbh},
-  db   => $db,
-  rows => [
-    {
-      hash          => 'ghi789',
-      name          => 'Refresh Example',
-      state         => 'pausedUP',
-      progress      => 1,
-      save_path     => '/Downloads',
-      content_path  => '/Downloads/Refresh Example',
-      category      => 'test',
-      tags          => 'refresh',
-      amount_left   => 0,
-      total_size    => 3000,
-      added_on      => 1700000500,
-      completion_on => 1700000600,
-      last_activity => 1700000700,
-      tracker       => 'https://tracker.example.invalid/announce',
-      ratio         => 2.0,
-    },
-  ],
-);
+my $refresh_result =
+    $process->refresh_info_rows(
+                   dbh  => $connect->{dbh},
+                   db   => $db,
+                   rows => [
+                         {
+                          hash          => 'ghi789',
+                          name          => 'Refresh Example',
+                          state         => 'pausedUP',
+                          progress      => 1,
+                          save_path     => '/Downloads',
+                          content_path  => '/Downloads/Refresh Example',
+                          category      => 'test',
+                          tags          => 'refresh',
+                          amount_left   => 0,
+                          total_size    => 3000,
+                          added_on      => 1700000500,
+                          completion_on => 1700000600,
+                          last_activity => 1700000700,
+                          tracker => 'https://tracker.example.invalid/announce',
+                          ratio   => 2.0,
+                         },
+                   ], );
 
 ok( $refresh_result->{ok}, 'refresh info rows result ok' );
 is( $refresh_result->{action}, 'qbt_refresh', 'refresh info rows action' );
-is( $refresh_result->{seen}, 1, 'refresh info rows seen count' );
+is( $refresh_result->{seen},   1,             'refresh info rows seen count' );
 is( $refresh_result->{stored}, 1, 'refresh info rows stored count' );
 is_deeply( $refresh_result->{problems}, [], 'refresh info rows no problems' );
 
-my ($refresh_name) = $connect->{dbh}->selectrow_array(
-  'SELECT name FROM qbt_info WHERE hash = ?',
-  undef,
-  'ghi789',
-);
+my ( $refresh_name ) =
+    $connect->{dbh}
+    ->selectrow_array( 'SELECT name FROM qbt_info WHERE hash = ?',
+                       undef, 'ghi789', );
 
 is( $refresh_name, 'Refresh Example', 'refresh info row stored in DB' );
+
+my $fake_rows = $process->fake_info_rows;
+
+is( ref $fake_rows,        'ARRAY',  'fake info rows returns arrayref' );
+is( scalar @{$fake_rows},  2,        'fake info rows has two rows' );
+is( $fake_rows->[0]{hash}, 'abc123', 'first fake info row has expected hash' );
+is( $fake_rows->[1]{hash}, 'def456', 'second fake info row has expected hash' );
 
 $connect->{dbh}->disconnect;
 

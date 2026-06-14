@@ -105,46 +105,12 @@ sub run_cli ( $self, @argv ) {
       }
       my $api = QBTL::QBT::API->new( base_url => $self->{config}->qbt_url, );
       my $process = QBTL::Process::QBT->new( api => $api );
+
       my $result =
           $process->refresh_info_rows(
-                      dbh  => $connect->{dbh},
-                      db   => $db,
-                      rows => [
-                        {
-                         hash          => 'abc123',
-                         name          => 'Fake qBT Torrent One',
-                         state         => 'pausedUP',
-                         progress      => 1,
-                         save_path     => '/Downloads',
-                         content_path  => '/Downloads/Fake qBT Torrent One',
-                         category      => 'test',
-                         tags          => 'fake,offline',
-                         amount_left   => 0,
-                         total_size    => 1000,
-                         added_on      => 1700000000,
-                         completion_on => 1700000100,
-                         last_activity => 1700000200,
-                         tracker => 'https://tracker.example.invalid/announce',
-                         ratio   => 1.0,
-                        },
-                        {
-                         hash          => 'def456',
-                         name          => 'Fake qBT Torrent Two',
-                         state         => 'downloading',
-                         progress      => 0.5,
-                         save_path     => '/Downloads',
-                         content_path  => '/Downloads/Fake qBT Torrent Two',
-                         category      => 'test',
-                         tags          => 'fake,offline',
-                         amount_left   => 500,
-                         total_size    => 2000,
-                         added_on      => 1700000300,
-                         completion_on => 0,
-                         last_activity => 1700000400,
-                         tracker => 'https://tracker.example.invalid/announce',
-                         ratio   => 0.25,
-                        },
-                      ], );
+                                       dbh  => $connect->{dbh},
+                                       db   => $db,
+                                       rows => $process->fake_info_rows, );
 
       $connect->{dbh}->disconnect;
 
