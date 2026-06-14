@@ -6,11 +6,37 @@ use feature qw( signatures );
 
 use DBI;
 use File::Basename qw( dirname );
+use File::Spec;
 
 sub new ( $class, %arg ) {
   die 'db_path is required' if !defined $arg{db_path};
 
+  $arg{migration_dir} //= File::Spec->catdir( 'share', 'migrations' );
+
   return bless \%arg, $class;
+}
+
+sub db_path ( $self ) {
+  return $self->{db_path};
+}
+
+sub migration_dir ( $self ) {
+  return $self->{migration_dir};
+}
+
+sub verify_path ( $self ) {
+  my $db_path = $self->db_path;
+  my $dir     = dirname( $db_path );
+
+  my @problems;
+
+  push @problems, "DB directory does not exist: $dir"
+      if !-d $dir;
+
+  push @problems, "DB directory is not writable: $dir"
+      if -d $dir && !-w $dir;
+
+  return @problems;
 }
 
 sub connect ( $self ) {
@@ -38,38 +64,36 @@ sub connect ( $self ) {
           dbh => $dbh,};
 }
 
-sub db_path ( $self ) {
-  return $self->{db_path};
+sub migration_files ( $self ) {
+  my $dir = $self->migration_dir;
+
+  opendir my $dh, $dir or die "opendir migration dir $dir: $!";
+
+  my @files = sort
+      map { File::Spec->catfile( $dir, $_ ) }
+      grep {/\A\d+_.+\.sql\z/} readdir $dh;
+
+  closedir $dh;
+
+  return @files;
 }
 
 sub migrate ( $self, $dbh ) {
-  my $sql = do {
-    open my $fh, '<', 'share/migrations/001_initial.sql'
-        or die "open migration: $!";
-    local $/;
-    <$fh>;
-  };
+  my @files = $self->migration_files;
 
-  $dbh->do( $_ ) for grep {/\S/} split /;\s*/, $sql;
+  for my $file ( @files ) {
+    my $sql = do {
+      open my $fh, '<', $file or die "open migration $file: $!";
+      local $/;
+      <$fh>;
+    };
+
+    $dbh->do( $_ ) for grep {/\S/} split /;\s*/, $sql;
+  }
 
   return {
-          ok      => 1,
-          version => 1,};
-}
-
-sub verify_path ( $self ) {
-  my $db_path = $self->db_path;
-  my $dir     = dirname( $db_path );
-
-  my @problems;
-
-  push @problems, "DB directory does not exist: $dir"
-      if !-d $dir;
-
-  push @problems, "DB directory is not writable: $dir"
-      if -d $dir && !-w $dir;
-
-  return @problems;
+          ok              => 1,
+          migration_count => scalar @files,};
 }
 
 1;
