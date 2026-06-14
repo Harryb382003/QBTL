@@ -128,12 +128,21 @@ sub torrents_info_request ( $self, %params ) {
 }
 
 sub version_request ( $self ) {
-  my $request = $self->api->app_version;
-
   return {
           ok      => 1,
           action  => 'qbt_version',
-          request => $request,};
+          request => $self->{api}->app_version,};
+}
+
+sub version ( $self ) {
+  my $request = $self->{api}->app_version;
+  my $result  = $self->{api}->execute_request( $request );
+
+  return {
+          ok      => $result->{ok} ? 1 : 0,
+          action  => 'qbt_version',
+          request => $request,
+          result  => $result,};
 }
 
 1;
