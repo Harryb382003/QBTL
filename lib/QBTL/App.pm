@@ -25,11 +25,18 @@ sub run_cli ( $self, @argv ) {
   }
 
   if ( $cmd eq 'setup' ) {
-    my $setup  = QBTL::Process::Setup->new( home => $self->_qbtl_home );
+    my $db = QBTL::DB->new( db_path => $self->{config}->db_path );
+
+    my $setup = QBTL::Process::Setup->new(
+        home => $self->_qbtl_home,
+        db   => $db,
+    );
+
     my $result = $setup->run;
 
-    return $self->{renderer}->setup( $result );
-  }
+    return $self->{renderer}->setup($result);
+}
+
   if ( $cmd eq 'status' ) {
     my $db = QBTL::DB->new( db_path => $self->{config}->db_path );
     my $result = {

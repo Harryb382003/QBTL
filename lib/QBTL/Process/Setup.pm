@@ -39,11 +39,37 @@ sub run ($self) {
         push @created, $dir;
     }
 
+    my $db_result;
+
+    if ( defined $self->{db} ) {
+        my $connect = $self->{db}->connect;
+
+        if ( !$connect->{ok} ) {
+            return {
+                ok        => 0,
+                home      => $home,
+                created   => \@created,
+                existing  => \@existing,
+                db_result => $connect,
+            };
+        }
+
+        my $migration = $self->{db}->migrate( $connect->{dbh} );
+
+        $connect->{dbh}->disconnect;
+
+        $db_result = {
+            ok        => 1,
+            migration => $migration,
+        };
+    }
+
     return {
-        ok       => 1,
-        home     => $home,
-        created  => \@created,
-        existing => \@existing,
+        ok        => 1,
+        home      => $home,
+        created   => \@created,
+        existing  => \@existing,
+        db_result => $db_result,
     };
 }
 
