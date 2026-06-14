@@ -67,4 +67,37 @@ sub request ($self, $name, %arg) {
     };
 }
 
+
+###
+### actual api calls
+###
+
+sub app_version ($self) {
+    return $self->request('app_version');
+}
+
+sub torrents_info ($self, %params) {
+    return $self->request(
+        'torrents_info',
+        params => \%params,
+    );
+}
+
+sub torrents_files ($self, $hash) {
+    return $self->request(
+        'torrents_files',
+        params => {
+            hash => $hash,
+        },
+    );
+}
+
+sub torrents_recheck ($self, $hashes) {
+    return $self->request(
+        'torrents_recheck',
+        params => {
+            hashes => $hashes,
+        },
+    );
+}
 1;

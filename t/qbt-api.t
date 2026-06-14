@@ -8,7 +8,15 @@ use QBTL::QBT::API;
 
 my $api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:8080/', );
 
-my $request = $api->request( 'app_version' );
+my $request     = $api->request( 'app_version' );
+my $default_api = QBTL::QBT::API->new;
+my $custom_api  = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:8080/' );
+my $recheck_request = $default_api->torrents_recheck( 'abc123' );
+my $version_request = $default_api->app_version;
+my $info_request =
+    $default_api->torrents_info( filter => 'all',
+                                 sort   => 'name', );
+my $files_request = $default_api->torrents_files( 'abc123' );
 
 isa_ok( $api, 'QBTL::QBT::API' );
 is( $api->base_url, 'http://127.0.0.1:8080', 'default base URL' );
@@ -51,6 +59,11 @@ is_deeply( $request->{params}, {hash => 'abc123'}, 'request params stored' );
 $request =
     $api->request( 'torrents_recheck', params => {hashes => 'abc123',}, );
 
-is( $request->{method}, 'POST', 'torrents_recheck uses POST' );
+is( $request->{method},         'POST',          'torrents_recheck uses POST' );
+is( $info_request->{endpoint},  'torrents_info', 'torrents_info endpoint' );
+is( $files_request->{endpoint}, 'torrents_files', 'torrents_files endpoint' );
+is( $recheck_request->{endpoint},
+    'torrents_recheck', 'torrents_recheck endpoint' );
+is( $recheck_request->{method}, 'POST', 'torrents_recheck method' );
 
 done_testing;
