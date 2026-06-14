@@ -10,16 +10,33 @@ use QBTL::DB;
 use QBTL::QBT::API;
 use QBTL::Process::QBT;
 
-{
+{    # package Local::FakeUA;
 
-  package Local::LoginUA;
+  package Local::FakeUA;
 
   use v5.40;
   use common::sense;
   use feature qw( signatures );
 
-  sub new ( $class ) {
-    return bless {posts => []}, $class;
+  sub new ( $class, %arg ) {
+    return
+        bless {
+               urls      => [],
+               posts     => [],
+               get_body  => $arg{get_body}  // 'v5.0.0',
+               post_body => $arg{post_body} // 'Ok.',
+               get_code  => $arg{get_code}  // 200,
+               post_code => $arg{post_code} // 200,
+        },
+        $class;
+  }
+
+  sub get ( $self, $uri ) {
+    push @{$self->{urls}}, "$uri";
+
+    return
+        Local::FakeResponse->new( code => $self->{get_code},
+                                  body => $self->{get_body}, );
   }
 
   sub post ( $self, $url, $params ) {
@@ -29,8 +46,12 @@ use QBTL::Process::QBT;
          params => $params,};
 
     return
-        Local::LoginResponse->new( code => 200,
-                                   body => 'Ok.', );
+        Local::FakeResponse->new( code => $self->{post_code},
+                                  body => $self->{post_body}, );
+  }
+
+  sub urls ( $self ) {
+    return $self->{urls};
   }
 
   sub posts ( $self ) {
@@ -38,9 +59,9 @@ use QBTL::Process::QBT;
   }
 }
 
-{
+{    # package Local::FakeResponse;
 
-  package Local::LoginResponse;
+  package Local::FakeResponse;
 
   use v5.40;
   use common::sense;
@@ -51,11 +72,11 @@ use QBTL::Process::QBT;
   }
 
   sub is_success ( $self ) {
-    return 1;
+    return ( $self->{code} >= 200 && $self->{code} < 300 ) ? 1 : 0;
   }
 
   sub status_line ( $self ) {
-    return '200 OK';
+    return "$self->{code} " . ( $self->is_success ? 'OK' : 'ERROR' );
   }
 
   sub code ( $self ) {
@@ -75,7 +96,31 @@ isa_ok( $process, 'QBTL::Process::QBT' );
 
 isa_ok( $process->api, 'QBTL::QBT::API' );
 
-my $login_ua = Local::LoginUA->new;
+my $version_ua = Local::FakeUA->new( get_body => 'v5.0.0',
+                                     get_code => 200, );
+
+my $version_api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090',
+                                       ua       => $version_ua, );
+
+my $version_process = QBTL::Process::QBT->new( api => $version_api );
+
+my $version_result = $version_process->version;
+
+is( $version_result->{ok}, 1, 'qbt version process succeeds' );
+is( $version_result->{action},
+    'qbt_version', 'qbt version process returns action' );
+is(
+  $version_result->{result}{code}, 200, 'qbt version process returns response
+code' );
+is( $version_result->{result}{body},
+    'v5.0.0', 'qbt version process returns body' );
+
+is( $version_ua->urls->[0],
+    'http://127.0.0.1:9090/api/v2/app/version',
+    'qbt version process gets version URL' );
+
+my $login_ua = Local::FakeUA->new( post_body => 'Ok.',
+                                   post_code => 200, );
 
 my $login_api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090',
                                      ua       => $login_ua, );
