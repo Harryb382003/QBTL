@@ -8,7 +8,7 @@ use QBTL::QBT::API;
 
 my $default_api = QBTL::QBT::API->new;
 
-{
+{    # package Local::DummyUA;
 
   package Local::DummyUA;
 
@@ -35,7 +35,7 @@ my $default_api = QBTL::QBT::API->new;
   }
 }
 
-{
+{    # package Local::FakeLWP
 
   package Local::FakeLWP;
 
@@ -44,7 +44,7 @@ my $default_api = QBTL::QBT::API->new;
   use feature qw( signatures );
 
   sub new ( $class ) {
-    return bless {urls => []}, $class;
+    return bless {urls => [], posts => []}, $class;
   }
 
   sub get ( $self, $uri ) {
@@ -55,12 +55,27 @@ my $default_api = QBTL::QBT::API->new;
                                   body => 'v5.0.0', );
   }
 
+  sub post ( $self, $url, $params ) {
+    push @{$self->{posts}},
+        {
+         url    => $url,
+         params => $params,};
+
+    return
+        Local::FakeResponse->new( code => 200,
+                                  body => 'Ok.', );
+  }
+
+  sub posts ( $self ) {
+    return $self->{posts};
+  }
+
   sub urls ( $self ) {
     return $self->{urls};
   }
 }
 
-{
+{    # package Local::FakeResponse;
 
   package Local::FakeResponse;
 
@@ -323,5 +338,28 @@ like( $fake_lwp->urls->[0],
 like(
   $fake_lwp->urls->[0], qr/category=movies/, 'execute GET URL includes category
 param' );
+
+my $fake_post_lwp = Local::FakeLWP->new;
+
+my $post_api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090',
+                                    ua       => $fake_post_lwp, );
+
+my $post_result =
+    $post_api->execute_request( $post_api->login( 'admin', 'adminadmin' ) );
+
+is( $post_result->{ok},   1,     'execute POST succeeds with LWP-style ua' );
+is( $post_result->{code}, 200,   'execute POST returns response code' );
+is( $post_result->{body}, 'Ok.', 'execute POST returns response body' );
+
+is(
+    $fake_post_lwp->posts->[0]{url},
+    'http://127.0.0.1:9090/api/v2/auth/login',
+    'execute POST calls expected URL' );
+
+is( $fake_post_lwp->posts->[0]{params}{username},
+    'admin', 'execute POST sends username param' );
+
+is( $fake_post_lwp->posts->[0]{params}{password},
+    'adminadmin', 'execute POST sends password param' );
 
 done_testing;

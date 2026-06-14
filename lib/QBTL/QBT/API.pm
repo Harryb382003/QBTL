@@ -44,34 +44,47 @@ sub execute_request ( $self, $request ) {
 }
 
 sub _execute_lwp_request ( $self, $request ) {
-    my $method = $request->{method} // '';
-    my $url    = $request->{url}    // '';
+  my $method = $request->{method} // '';
+  my $url    = $request->{url}    // '';
 
-    if ( $method ne 'GET' ) {
-        return {
-            ok      => 0,
-            status  => 'unsupported_method',
-            request => $request,
-            error   => "Unsupported method: $method",
-        };
-    }
-
-    my $uri = URI->new($url);
+  if ( $method eq 'GET' ) {
+    my $uri = URI->new( $url );
 
     if ( %{ $request->{params} // {} } ) {
-        $uri->query_form( %{ $request->{params} } );
+      $uri->query_form( %{ $request->{params} } );
     }
 
-    my $res = $self->{ua}->get($uri);
+    my $res = $self->{ua}->get( $uri );
 
     return {
-        ok      => $res->is_success ? 1 : 0,
-        status  => $res->status_line,
-        code    => $res->code,
-        request => $request,
-        url     => "$uri",
-        body    => $res->decoded_content // '',
+            ok      => $res->is_success ? 1 : 0,
+            status  => $res->status_line,
+            code    => $res->code,
+            request => $request,
+            url     => "$uri",
+            body    => $res->decoded_content // '',
     };
+  }
+
+  if ( $method eq 'POST' ) {
+    my $res = $self->{ua}->post( $url, $request->{params} // {} );
+
+    return {
+            ok      => $res->is_success ? 1 : 0,
+            status  => $res->status_line,
+            code    => $res->code,
+            request => $request,
+            url     => $url,
+            body    => $res->decoded_content // '',
+    };
+  }
+
+  return {
+          ok      => 0,
+          status  => 'unsupported_method',
+          request => $request,
+          error   => "Unsupported method: $method",
+  };
 }
 
 sub base_url ($self) {
