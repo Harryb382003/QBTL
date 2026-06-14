@@ -100,4 +100,71 @@ sub torrents_recheck ($self, $hashes) {
         },
     );
 }
+
+sub login ($self, $username, $password) {
+    return $self->request(
+        'login',
+        params => {
+            username => $username,
+            password => $password,
+        },
+    );
+}
+
+sub torrents_add ($self, %params) {
+    return $self->request(
+        'torrents_add',
+        params => \%params,
+    );
+}
+
+sub torrents_pause ($self, $hashes) {
+    return $self->request(
+        'torrents_pause',
+        params => {
+            hashes => $hashes,
+        },
+    );
+}
+
+sub torrents_resume ($self, $hashes) {
+    return $self->request(
+        'torrents_resume',
+        params => {
+            hashes => $hashes,
+        },
+    );
+}
+
+sub torrents_set_location ($self, $hashes, $location) {
+    return $self->request(
+        'torrents_set_location',
+        params => {
+            hashes   => $hashes,
+            location => $location,
+        },
+    );
+}
+
+sub torrents_set_download_path ($self, $hashes, $path) {
+    return $self->request(
+        'torrents_set_download_path',
+        params => {
+            hashes => $hashes,
+            path   => $path,
+        },
+    );
+}
+
+sub torrents_rename_folder ($self, $hash, $old_path, $new_path) {
+    return $self->request(
+        'torrents_rename_folder',
+        params => {
+            hash     => $hash,
+            oldPath  => $old_path,
+            newPath  => $new_path,
+        },
+    );
+}
+
 1;
