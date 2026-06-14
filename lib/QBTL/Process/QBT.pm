@@ -17,22 +17,35 @@ sub api ( $self ) {
 }
 
 sub store_info_rows ( $self, %arg ) {
-    my $db   = $arg{db}   // die 'db is required';
-    my $dbh  = $arg{dbh}  // die 'dbh is required';
-    my $rows = $arg{rows} // die 'rows is required';
+  my $db   = $arg{db}   // die 'db is required';
+  my $dbh  = $arg{dbh}  // die 'dbh is required';
+  my $rows = $arg{rows} // die 'rows is required';
 
-    my $stored = 0;
+  my $seen   = 0;
+  my $stored = 0;
+  my @problems;
 
-    for my $row ( @{$rows} ) {
-        my $result = $db->upsert_qbt_info( $dbh, $row );
+  for my $row ( @{$rows} ) {
+    $seen++;
 
-        $stored++ if $result->{ok};
+    my $result = eval { $db->upsert_qbt_info( $dbh, $row ); };
+
+    if ( !$result || !$result->{ok} ) {
+      push @problems,
+          {
+           hash  => $row->{hash},
+           error => $@ || 'qbt_info upsert failed',};
+      next;
     }
 
-    return {
-        ok     => 1,
-        stored => $stored,
-    };
+    $stored++;
+  }
+
+  return {
+          ok       => @problems ? 0 : 1,
+          seen     => $seen,
+          stored   => $stored,
+          problems => \@problems,};
 }
 
 sub torrents_info_request ( $self, %params ) {
