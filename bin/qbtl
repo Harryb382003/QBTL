@@ -5,18 +5,6 @@ use common::sense;
 use feature qw( signatures );
 
 use lib 'lib';
-use QBTL;
+use QBTL::App;
 
-my $cmd = shift @ARGV // 'help';
-
-if ( $cmd eq 'version' ) {
-  say "QBTL $QBTL::VERSION";
-  exit 0;
-}
-
-say "Usage: qbtl <command>";
-say "";
-say "Commands:";
-say "  version    Show QBTL version";
-
-exit 0;
+exit QBTL::App->new->run_cli(@ARGV);
