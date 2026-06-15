@@ -16,6 +16,12 @@ sub new ( $class, %arg ) {
   return bless \%arg, $class;
 }
 
+sub clear_current_qbt ( $self, $dbh ) {
+  $dbh->do( q{UPDATE qbt_info SET current_qbt = 0} );
+
+  return {ok => 1};
+}
+
 sub db_path ( $self ) {
   return $self->{db_path};
 }
@@ -120,6 +126,27 @@ sub migrate ( $self, $dbh ) {
           migration_count => $ran,};
 }
 
+sub qbt_info_exists ( $self, $dbh, $hash ) {
+  my ( $exists ) = $dbh->selectrow_array(
+    q{
+      SELECT 1
+      FROM qbt_info
+      WHERE hash = ?
+      LIMIT 1
+    },
+    undef,
+    $hash, );
+
+  return $exists ? 1 : 0;
+}
+
+sub removed_qbt_count ( $self, $dbh ) {
+  my ( $count ) = $dbh->selectrow_array(
+                       q{SELECT COUNT(*) FROM qbt_info WHERE current_qbt = 0} );
+
+  return $count // 0;
+}
+
 sub upsert_qbt_info ( $self, $dbh, $row ) {
   die 'qbt info row requires hash' if !defined $row->{hash};
 
@@ -142,44 +169,58 @@ sub upsert_qbt_info ( $self, $dbh, $row ) {
   );
 
   my $sql = q{
-        INSERT INTO qbt_info (
-            hash,
-            name,
-            state,
-            progress,
-            save_path,
-            content_path,
-            category,
-            tags,
-            amount_left,
-            total_size,
-            added_on,
-            completion_on,
-            last_activity,
-            tracker,
-            ratio,
-            seen_on
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(hash) DO UPDATE SET
-            name          = excluded.name,
-            state         = excluded.state,
-            progress      = excluded.progress,
-            save_path     = excluded.save_path,
-            content_path  = excluded.content_path,
-            category      = excluded.category,
-            tags          = excluded.tags,
-            amount_left   = excluded.amount_left,
-            total_size    = excluded.total_size,
-            added_on      = excluded.added_on,
-            completion_on = excluded.completion_on,
-            last_activity = excluded.last_activity,
-            tracker       = excluded.tracker,
-            ratio         = excluded.ratio,
-            seen_on       = excluded.seen_on
-    };
+    INSERT INTO qbt_info (
+      hash,
+      name,
+      state,
+      progress,
+      save_path,
+      content_path,
+      category,
+      tags,
+      amount_left,
+      total_size,
+      added_on,
+      completion_on,
+      last_activity,
+      tracker,
+      ratio,
+      seen_on,
+      current_qbt,
+      discovered_on,
+      discovered_by
+    )
+    VALUES (
+      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      datetime('now'),
+      1,
+      datetime('now'),
+      'qbt'
+    )
+    ON CONFLICT(hash) DO UPDATE SET
+      name          = excluded.name,
+      state         = excluded.state,
+      progress      = excluded.progress,
+      save_path     = excluded.save_path,
+      content_path  = excluded.content_path,
+      category      = excluded.category,
+      tags          = excluded.tags,
+      amount_left   = excluded.amount_left,
+      total_size    = excluded.total_size,
+      added_on      = excluded.added_on,
+      completion_on = excluded.completion_on,
+      last_activity = excluded.last_activity,
+      tracker       = excluded.tracker,
+      ratio         = excluded.ratio,
+      seen_on       = excluded.seen_on,
+      current_qbt   = 1,
+      discovered_on = COALESCE(qbt_info.discovered_on, excluded.discovered_on),
+      discovered_by = COALESCE(qbt_info.discovered_by, excluded.discovered_by)
+  };
 
-  $dbh->do( $sql, undef, map { $row->{$_} } @field, );
+  $dbh->do( $sql, undef, map { $row->{$_} } @field );
 
   return {
           ok   => 1,

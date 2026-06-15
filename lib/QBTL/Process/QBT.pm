@@ -127,6 +127,9 @@ sub refresh_info_rows ( $self, %arg ) {
           action   => 'qbt_refresh',
           seen     => $store->{seen},
           stored   => $store->{stored},
+          new      => $store->{new},
+          existing => $store->{existing},
+          removed  => $store->{removed},
           problems => $store->{problems},};
 }
 
@@ -135,14 +138,23 @@ sub store_info_rows ( $self, %arg ) {
   my $dbh  = $arg{dbh}  // die 'dbh is required';
   my $rows = $arg{rows} // die 'rows is required';
 
-  my $seen   = 0;
-  my $stored = 0;
-  my @problems;
+  my $seen     = 0;
+  my $stored   = 0;
+  my $new      = 0;
+  my $existing = 0;
+  my @problems = ();
 
   for my $row ( @{$rows} ) {
     $seen++;
 
     my $result = eval { $db->upsert_qbt_info( $dbh, $row ); };
+    my $exists = $db->qbt_info_exists( $dbh, $row->{hash} );
+
+    if ( $exists ) {
+      $existing++;
+    } else {
+      $new++;
+    }
 
     if ( !$result || !$result->{ok} ) {
       push @problems,
@@ -154,11 +166,14 @@ sub store_info_rows ( $self, %arg ) {
 
     $stored++;
   }
-
+  my $removed = $db->removed_qbt_count( $dbh );
   return {
           ok       => @problems ? 0 : 1,
           seen     => $seen,
           stored   => $stored,
+          new      => $new,
+          existing => $existing,
+          removed  => $removed,
           problems => \@problems,};
 }
 

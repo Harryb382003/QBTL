@@ -61,9 +61,12 @@ sub qbt_refresh ( $self, $result ) {
     say {$out} "qBT refresh complete.";
   }
 
-  say {$out} "  seen:     $result->{seen}";
-  say {$out} "  stored:   $result->{stored}";
-  say {$out} "  problems: " . scalar @{$result->{problems}};
+  say {$out} "  seen:     " . ( $result->{seen}     // 0 );
+  say {$out} "  stored:   " . ( $result->{stored}   // 0 );
+  say {$out} "  new:      " . ( $result->{new}      // 0 );
+  say {$out} "  existing: " . ( $result->{existing} // 0 );
+  say {$out} "  removed:  " . ( $result->{removed}  // 0 );
+  say {$out} "  problems: " . scalar @{$result->{problems} // []};
 
   if ( @{$result->{problems}} ) {
     say {$out} "";

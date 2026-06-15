@@ -114,6 +114,29 @@ sub run_cli ( $self, @argv ) {
                                      },
                        ],} );
       }
+      my $clear = $db->clear_current_qbt( $connect->{dbh} );
+
+      if ( !$clear->{ok} ) {
+        $connect->{dbh}->disconnect;
+
+        return
+            $self->{renderer}->qbt_refresh(
+                {
+                 ok       => 0,
+                 action   => 'qbt_refresh',
+                 seen     => 0,
+                 stored   => 0,
+                 new      => 0,
+                 existing => 0,
+                 removed  => 0,
+                 problems => [
+                               {
+                                hash  => undef,
+                                error => 'failed to clear qBT current markers',
+                               },
+                 ],} );
+      }
+
       my $api = QBTL::QBT::API->new( base_url => $self->{config}->qbt_url, );
       my $process = QBTL::Process::QBT->new( api => $api );
       my $info    = $process->info;
