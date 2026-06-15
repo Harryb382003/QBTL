@@ -44,6 +44,7 @@ sub db_random ( $self, $row ) {
   say {$out} "  state:         " . ( $row->{state}    // '' );
   say {$out} "  category:      " . ( $row->{category} // '' );
   say {$out} "  tags:          " . ( $row->{tags}     // '' );
+  say {$out} "  comment:       " . ( $row->{comment}  // '' );
 
   say {$out} 'qBT progress:';
   say {$out} "  progress:      " . $progress;
@@ -67,6 +68,24 @@ sub db_random ( $self, $row ) {
 
   say {$out} 'qBT tracker:';
   say {$out} "  tracker:       " . ( $row->{tracker} // '' );
+
+  return;
+}
+
+sub db_summary ( $self, $summary ) {
+  my $out = $self->{out};
+
+  $summary //= {};
+
+  say {$out} 'QBTL database summary';
+  say {$out} '';
+  say {$out} 'qBT inventory:';
+  say {$out} '  currently in qBT: ' . ( $summary->{current} // 0 );
+  say {$out} '  removed from qBT: ' . ( $summary->{removed} // 0 );
+  say {$out} '  total qBT-known:  ' . ( $summary->{total}   // 0 );
+  say {$out} '';
+  say {$out} 'local torrent files:';
+  say {$out} '  not scanned yet';
 
   return;
 }

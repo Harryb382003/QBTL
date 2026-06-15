@@ -67,6 +67,44 @@ sub run_cli ( $self, @argv ) {
   if ( $cmd eq 'db' ) {
     my $subcmd = shift @argv // 'help';
 
+    if ( $subcmd eq 'summary' ) {
+      my $db = QBTL::DB->new( db_path => $self->{config}->db_path, );
+
+      my $connect = $db->connect;
+
+      if ( !$connect->{ok} ) {
+        return
+            $self->{renderer}->setup(
+                                      {
+                                       ok        => 0,
+                                       home      => undef,
+                                       created   => [],
+                                       existing  => [],
+                                       db_result => $connect,} );
+      }
+
+      my $migration = $db->migrate( $connect->{dbh} );
+
+      if ( !$migration->{ok} ) {
+        $connect->{dbh}->disconnect;
+
+        return
+            $self->{renderer}->setup(
+                                      {
+                                       ok        => 0,
+                                       home      => undef,
+                                       created   => [],
+                                       existing  => [],
+                                       db_result => $migration,} );
+      }
+
+      my $summary = $db->qbt_summary( $connect->{dbh} );
+
+      $connect->{dbh}->disconnect;
+
+      return $self->{renderer}->db_summary( $summary );
+    }
+
     if ( $subcmd eq 'random' ) {
       my $db = QBTL::DB->new( db_path => $self->{config}->db_path, );
 

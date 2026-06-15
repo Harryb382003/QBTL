@@ -158,6 +158,21 @@ sub removed_qbt_count ( $self, $dbh ) {
   return $count // 0;
 }
 
+sub qbt_summary ( $self, $dbh ) {
+  my ( $total ) = $dbh->selectrow_array( q{SELECT COUNT(*) FROM qbt_info} );
+
+  my ( $current ) = $dbh->selectrow_array(
+                       q{SELECT COUNT(*) FROM qbt_info WHERE current_qbt = 1} );
+
+  my ( $removed ) = $dbh->selectrow_array(
+                       q{SELECT COUNT(*) FROM qbt_info WHERE current_qbt = 0} );
+
+  return {
+          total   => $total   // 0,
+          current => $current // 0,
+          removed => $removed // 0,};
+}
+
 sub upsert_qbt_info ( $self, $dbh, $row ) {
   die 'qbt info row requires hash' if !defined $row->{hash};
 
@@ -177,6 +192,7 @@ sub upsert_qbt_info ( $self, $dbh, $row ) {
       last_activity
       tracker
       ratio
+      comment
   );
 
   my $sql = q{
@@ -196,6 +212,7 @@ sub upsert_qbt_info ( $self, $dbh, $row ) {
       last_activity,
       tracker,
       ratio,
+      comment,
       seen_on,
       current_qbt,
       discovered_on,
@@ -205,6 +222,7 @@ sub upsert_qbt_info ( $self, $dbh, $row ) {
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?,
+      ?,
       datetime('now'),
       1,
       datetime('now'),
@@ -225,6 +243,7 @@ sub upsert_qbt_info ( $self, $dbh, $row ) {
       last_activity = excluded.last_activity,
       tracker       = excluded.tracker,
       ratio         = excluded.ratio,
+            comment       = excluded.comment,
       seen_on       = excluded.seen_on,
       current_qbt   = 1,
       discovered_on = COALESCE(qbt_info.discovered_on, excluded.discovered_on),

@@ -25,13 +25,15 @@ is( $db->migration_dir,
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 3, 'three migration files discovered' );
+is( scalar @migration_files, 4, 'four migration files discovered' );
 like( $migration_files[0], qr/001_initial\.sql\z/,
       'initial migration discovered' );
 like( $migration_files[1], qr/002_qbt_info\.sql\z/,
       'qbt_info migration discovered' );
 like( $migration_files[2], qr/003_qbt_presence\.sql\z/,
       'qbt_presence migration discovered' );
+like( $migration_files[3], qr/004_qbt_comment\.sql\z/,
+      'qbt_comment migration discovered' );
 
 my @problems = $db->verify_path;
 is_deeply( \@problems, [], 'valid temp DB directory has no path problems' );
@@ -44,12 +46,13 @@ isa_ok( $result->{dbh}, 'DBI::db' );
 my $migration = $db->migrate( $result->{dbh} );
 
 ok( $migration->{ok}, 'migration result ok' );
-is( $migration->{migration_count}, 3, 'three migrations ran' );
+is( $migration->{migration_count}, 4, 'four migrations ran' );
 
 my ( $version ) = $result->{dbh}
     ->selectrow_array( 'SELECT version FROM schema_version WHERE id = 1' );
 
-is( $version, 3, 'schema version stored' );
+is( $version, 4, 'schema version stored' );
+
 my ( $qbt_info_table ) = $result->{dbh}->selectrow_array(
   q{
     SELECT name
@@ -69,6 +72,7 @@ my %column = map { $_->{name} => 1 } @{$columns};
 ok( $column{current_qbt},   'qbt_info has current_qbt column' );
 ok( $column{discovered_on}, 'qbt_info has discovered_on column' );
 ok( $column{discovered_by}, 'qbt_info has discovered_by column' );
+ok( $column{comment},       'qbt_info has comment column' );
 my $upsert = $db->upsert_qbt_info(
                          $result->{dbh},
                          {
@@ -87,6 +91,7 @@ my $upsert = $db->upsert_qbt_info(
                           last_activity => 1700000200,
                           tracker => 'https://tracker.example.invalid/announce',
                           ratio   => 1.5,
+                          comment => 'https://example.test/torrent-page',
                          }, );
 
 ok( $upsert->{ok}, 'qbt_info upsert result ok' );
@@ -102,6 +107,9 @@ is( $stored->{state},       'pausedUP',        'qbt_info state stored' );
 is( $stored->{save_path},   '/Downloads',      'qbt_info save_path stored' );
 is( $stored->{amount_left}, 0,                 'qbt_info amount_left stored' );
 ok( $stored->{seen_on}, 'qbt_info seen_on stored' );
+is( $stored->{comment},
+    'https://example.test/torrent-page',
+    'qbt_info comment stored' );
 
 my $update = $db->upsert_qbt_info(
                          $result->{dbh},
