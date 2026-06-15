@@ -35,35 +35,6 @@ sub run_cli ( $self, @argv ) {
     return $self->{renderer}->help;
   }
 
-  if ( $cmd eq 'version' ) {
-    return $self->{renderer}->version( $QBTL::VERSION );
-  }
-
-  if ( $cmd eq 'setup' ) {
-    my $db = QBTL::DB->new( db_path => $self->{config}->db_path );
-
-    my $setup =
-        QBTL::Process::Setup->new( home => $self->_qbtl_home,
-                                   db   => $db, );
-
-    my $result = $setup->run;
-
-    return $self->{renderer}->setup( $result );
-  }
-
-  if ( $cmd eq 'status' ) {
-    my $db = QBTL::DB->new( db_path => $self->{config}->db_path );
-
-    my $result = {
-                  ok       => 1,
-                  db_path  => $self->{config}->db_path,
-                  problems => [ $db->verify_path ],};
-
-    $result->{ok} = 0 if @{$result->{problems}};
-
-    return $self->{renderer}->status( $result );
-  }
-
   if ( $cmd eq 'db' ) {
     my $subcmd = shift @argv // 'help';
 
@@ -144,6 +115,115 @@ sub run_cli ( $self, @argv ) {
     }
 
     return $self->{renderer}->help;
+  }
+
+  if ( $cmd eq 'search' ) {
+    my $subcmd = shift @argv // 'help';
+
+    if ( $subcmd eq 'list' ) {
+      my $db = QBTL::DB->new( db_path => $self->{config}->db_path, );
+
+      my $connect = $db->connect;
+
+      if ( !$connect->{ok} ) {
+        return
+            $self->{renderer}->setup(
+                                      {
+                                       ok        => 0,
+                                       home      => undef,
+                                       created   => [],
+                                       existing  => [],
+                                       db_result => $connect,} );
+      }
+
+      my $migration = $db->migrate( $connect->{dbh} );
+
+      if ( !$migration->{ok} ) {
+        $connect->{dbh}->disconnect;
+
+        return
+            $self->{renderer}->setup(
+                                      {
+                                       ok        => 0,
+                                       home      => undef,
+                                       created   => [],
+                                       existing  => [],
+                                       db_result => $migration,} );
+      }
+
+      my @field = $db->qbt_info_columns( $connect->{dbh} );
+
+      $connect->{dbh}->disconnect;
+
+      return $self->{renderer}->search_list( @field );
+    }
+    if ( @argv ) {
+      my $field = $subcmd;
+      my $input = join ' ', @argv;
+
+      my $db = QBTL::DB->new( db_path => $self->{config}->db_path, );
+
+      my $connect = $db->connect;
+
+      if ( !$connect->{ok} ) {
+        return
+            $self->{renderer}->setup(
+                                      {
+                                       ok        => 0,
+                                       home      => undef,
+                                       created   => [],
+                                       existing  => [],
+                                       db_result => $connect,} );
+      }
+
+      my $migration = $db->migrate( $connect->{dbh} );
+
+      if ( !$migration->{ok} ) {
+        $connect->{dbh}->disconnect;
+
+        return
+            $self->{renderer}->setup(
+                                      {
+                                       ok        => 0,
+                                       home      => undef,
+                                       created   => [],
+                                       existing  => [],
+                                       db_result => $migration,} );
+      }
+
+      my $result =
+          $db->search_qbt_info( $connect->{dbh}, $field, $input, limit => 25, );
+
+      $connect->{dbh}->disconnect;
+
+      return $self->{renderer}->search_result( $result );
+    }
+    return $self->{renderer}->help;
+  }
+
+  if ( $cmd eq 'setup' ) {
+    my $db = QBTL::DB->new( db_path => $self->{config}->db_path );
+
+    my $setup =
+        QBTL::Process::Setup->new( home => $self->_qbtl_home,
+                                   db   => $db, );
+
+    my $result = $setup->run;
+
+    return $self->{renderer}->setup( $result );
+  }
+
+  if ( $cmd eq 'status' ) {
+    my $db = QBTL::DB->new( db_path => $self->{config}->db_path );
+
+    my $result = {
+                  ok       => 1,
+                  db_path  => $self->{config}->db_path,
+                  problems => [ $db->verify_path ],};
+
+    $result->{ok} = 0 if @{$result->{problems}};
+
+    return $self->{renderer}->status( $result );
   }
 
   if ( $cmd eq 'qbt' ) {
@@ -263,6 +343,10 @@ sub run_cli ( $self, @argv ) {
     }
 
     return $self->{renderer}->qbt_help;
+  }
+
+  if ( $cmd eq 'version' ) {
+    return $self->{renderer}->version( $QBTL::VERSION );
   }
 
   return $self->{renderer}->help;

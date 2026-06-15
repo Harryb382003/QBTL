@@ -126,11 +126,15 @@ sub migrate ( $self, $dbh ) {
           migration_count => $ran,};
 }
 
-sub qbt_info_column_map ( $self, $dbh ) {
+sub qbt_info_columns ( $self, $dbh ) {
   my $columns = $dbh->selectall_arrayref( q{PRAGMA table_info(qbt_info)},
                                           {Slice => {}}, );
 
-  return map { $_->{name} => 1 } @{$columns};
+  return map { $_->{name} } @{$columns};
+}
+
+sub qbt_info_column_map ( $self, $dbh ) {
+  return map { $_ => 1 } $self->qbt_info_columns( $dbh );
 }
 
 sub qbt_info_exists ( $self, $dbh, $hash ) {
@@ -178,6 +182,41 @@ sub removed_qbt_count ( $self, $dbh ) {
                        q{SELECT COUNT(*) FROM qbt_info WHERE current_qbt = 0} );
 
   return $count // 0;
+}
+
+sub search_qbt_info ( $self, $dbh, $field, $input, %arg ) {
+  my %column = $self->qbt_info_column_map( $dbh );
+
+  return {
+          ok     => 0,
+          status => 'invalid_search_field',
+          field  => $field,
+          input  => $input,
+          rows   => [],
+          count  => 0,}
+      if !$column{$field};
+
+  my $limit = $arg{limit} // 25;
+
+  my $sql = qq{
+    SELECT *
+    FROM qbt_info
+    WHERE $field LIKE ?
+    ORDER BY name COLLATE NOCASE, hash
+    LIMIT ?
+  };
+
+  my $rows = $dbh->selectall_arrayref( $sql,
+                                       {Slice => {}},
+                                       '%' . $input . '%', $limit, );
+
+  return {
+          ok    => 1,
+          field => $field,
+          input => $input,
+          rows  => $rows,
+          count => scalar @{$rows},
+          limit => $limit,};
 }
 
 sub upsert_qbt_info ( $self, $dbh, $row ) {
