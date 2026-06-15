@@ -140,6 +140,17 @@ sub qbt_info_exists ( $self, $dbh, $hash ) {
   return $exists ? 1 : 0;
 }
 
+sub random_qbt_info ( $self, $dbh ) {
+  return $dbh->selectrow_hashref(
+    q{
+      SELECT *
+      FROM qbt_info
+      ORDER BY RANDOM()
+      LIMIT 1
+    }
+  );
+}
+
 sub removed_qbt_count ( $self, $dbh ) {
   my ( $count ) = $dbh->selectrow_array(
                        q{SELECT COUNT(*) FROM qbt_info WHERE current_qbt = 0} );

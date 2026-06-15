@@ -4,18 +4,71 @@ use v5.40;
 use common::sense;
 use feature qw( signatures );
 
+use QBTL::Util qw( epoch_time );
+
 sub new ( $class, %arg ) {
-  $arg{out} //= \*STDOUT;
+  $arg{out}         //= \*STDOUT;
+  $arg{time_format} //= 'full';
 
   return bless \%arg, $class;
 }
 
-sub version ( $self, $version ) {
+sub db_random ( $self, $row ) {
   my $out = $self->{out};
 
-  say {$out} "QBTL $version";
+  if ( !$row ) {
+    say {$out} 'No qBT rows found.';
+    return;
+  }
 
-  return 0;
+  my $current = $row->{current_qbt} ? 'yes' : 'no';
+
+  my $progress =
+      defined $row->{progress}
+      ? sprintf( '%.2f%%', $row->{progress} * 100 )
+      : '';
+
+  say {$out} 'Random torrent';
+
+  say {$out} 'identity:';
+  say {$out} "  hash:          " . ( $row->{hash}          // '' );
+  say {$out} "  discovered on: " . ( $row->{discovered_on} // '' );
+  say {$out} "  discovered by: " . ( $row->{discovered_by} // '' );
+
+  say {$out} 'qBT presence:';
+  say {$out} "  in qBT:        " . $current;
+  say {$out} "  seen on:       " . ( $row->{seen_on} // '' );
+
+  say {$out} 'qBT display:';
+  say {$out} "  name:          " . ( $row->{name}     // '' );
+  say {$out} "  state:         " . ( $row->{state}    // '' );
+  say {$out} "  category:      " . ( $row->{category} // '' );
+  say {$out} "  tags:          " . ( $row->{tags}     // '' );
+
+  say {$out} 'qBT progress:';
+  say {$out} "  progress:      " . $progress;
+  say {$out} "  amount left:   " . ( $row->{amount_left} // '' );
+  say {$out} "  total size:    " . ( $row->{total_size}  // '' );
+  say {$out} "  ratio:         " . ( $row->{ratio}       // '' );
+
+  say {$out} 'qBT paths:';
+  say {$out} "  save path:     " . ( $row->{save_path}    // '' );
+  say {$out} "  content path:  " . ( $row->{content_path} // '' );
+
+  say {$out} 'qBT timing:';
+  say {$out} "  added on:      "
+      . epoch_time( $row->{added_on}, format => $self->{time_format} );
+
+  say {$out} "  completion on: "
+      . epoch_time( $row->{completion_on}, format => $self->{time_format} );
+
+  say {$out} "  last activity: "
+      . epoch_time( $row->{last_activity}, format => $self->{time_format} );
+
+  say {$out} 'qBT tracker:';
+  say {$out} "  tracker:       " . ( $row->{tracker} // '' );
+
+  return;
 }
 
 sub help ( $self ) {
@@ -194,6 +247,14 @@ sub status ( $self, $result ) {
   say {$out} "  qbtl setup";
 
   return 1;
+}
+
+sub version ( $self, $version ) {
+  my $out = $self->{out};
+
+  say {$out} "QBTL $version";
+
+  return 0;
 }
 
 1;

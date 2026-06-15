@@ -13,8 +13,9 @@ use QBTL::Process::Setup;
 use QBTL::Render::CLI;
 
 sub new ( $class, %arg ) {
-  $arg{config}   //= QBTL::Config->new;
-  $arg{renderer} //= QBTL::Render::CLI->new;
+  $arg{config} //= QBTL::Config->new;
+  $arg{renderer} //=
+      QBTL::Render::CLI->new( time_format => $arg{config}->time_format, );
 
   return bless \%arg, $class;
 }
@@ -61,6 +62,50 @@ sub run_cli ( $self, @argv ) {
     $result->{ok} = 0 if @{$result->{problems}};
 
     return $self->{renderer}->status( $result );
+  }
+
+  if ( $cmd eq 'db' ) {
+    my $subcmd = shift @argv // 'help';
+
+    if ( $subcmd eq 'random' ) {
+      my $db = QBTL::DB->new( db_path => $self->{config}->db_path, );
+
+      my $connect = $db->connect;
+
+      if ( !$connect->{ok} ) {
+        return
+            $self->{renderer}->setup(
+                                      {
+                                       ok        => 0,
+                                       home      => undef,
+                                       created   => [],
+                                       existing  => [],
+                                       db_result => $connect,} );
+      }
+
+      my $migration = $db->migrate( $connect->{dbh} );
+
+      if ( !$migration->{ok} ) {
+        $connect->{dbh}->disconnect;
+
+        return
+            $self->{renderer}->setup(
+                                      {
+                                       ok        => 0,
+                                       home      => undef,
+                                       created   => [],
+                                       existing  => [],
+                                       db_result => $migration,} );
+      }
+
+      my $row = $db->random_qbt_info( $connect->{dbh} );
+
+      $connect->{dbh}->disconnect;
+
+      return $self->{renderer}->db_random( $row );
+    }
+
+    return $self->{renderer}->help;
   }
 
   if ( $cmd eq 'qbt' ) {
