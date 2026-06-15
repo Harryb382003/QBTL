@@ -25,9 +25,13 @@ is( $db->migration_dir,
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 2, 'two migration files discovered' );
+is( scalar @migration_files, 3, 'three migration files discovered' );
+like( $migration_files[0], qr/001_initial\.sql\z/,
+      'initial migration discovered' );
 like( $migration_files[1], qr/002_qbt_info\.sql\z/,
       'qbt_info migration discovered' );
+like( $migration_files[2], qr/003_qbt_presence\.sql\z/,
+      'qbt_presence migration discovered' );
 
 my @problems = $db->verify_path;
 is_deeply( \@problems, [], 'valid temp DB directory has no path problems' );
@@ -40,12 +44,12 @@ isa_ok( $result->{dbh}, 'DBI::db' );
 my $migration = $db->migrate( $result->{dbh} );
 
 ok( $migration->{ok}, 'migration result ok' );
-is( $migration->{migration_count}, 2, 'two migrations ran' );
+is( $migration->{migration_count}, 3, 'three migrations ran' );
 
 my ( $version ) = $result->{dbh}
     ->selectrow_array( 'SELECT version FROM schema_version WHERE id = 1' );
 
-is( $version, 2, 'schema version stored' );
+is( $version, 3, 'schema version stored' );
 my ( $qbt_info_table ) = $result->{dbh}->selectrow_array(
   q{
     SELECT name
@@ -57,6 +61,14 @@ my ( $qbt_info_table ) = $result->{dbh}->selectrow_array(
 
 is( $qbt_info_table, 'qbt_info', 'qbt_info table created' );
 
+my $columns = $result->{dbh}
+    ->selectall_arrayref( q{PRAGMA table_info(qbt_info)}, {Slice => {}}, );
+
+my %column = map { $_->{name} => 1 } @{$columns};
+
+ok( $column{current_qbt},   'qbt_info has current_qbt column' );
+ok( $column{discovered_on}, 'qbt_info has discovered_on column' );
+ok( $column{discovered_by}, 'qbt_info has discovered_by column' );
 my $upsert = $db->upsert_qbt_info(
                          $result->{dbh},
                          {

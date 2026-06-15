@@ -79,9 +79,31 @@ sub migration_files ( $self ) {
 }
 
 sub migrate ( $self, $dbh ) {
-  my @files = $self->migration_files;
+  my @files           = $self->migration_files;
+  my $current_version = 0;
+  my $ran             = 0;
+
+  my ( $has_schema_version ) = $dbh->selectrow_array(
+    q{
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name = 'schema_version'
+    }
+  );
+
+  if ( $has_schema_version ) {
+    ( $current_version ) = $dbh->selectrow_array(
+                           q{SELECT version FROM schema_version WHERE id = 1} );
+
+    $current_version //= 0;
+  }
 
   for my $file ( @files ) {
+    my ( $file_version ) = $file =~ m{(?:^|/)(\d+)_};
+
+    next if $file_version <= $current_version;
+
     my $sql = do {
       open my $fh, '<', $file or die "open migration $file: $!";
       local $/;
@@ -89,11 +111,13 @@ sub migrate ( $self, $dbh ) {
     };
 
     $dbh->do( $_ ) for grep {/\S/} split /;\s*/, $sql;
+
+    $ran++;
   }
 
   return {
           ok              => 1,
-          migration_count => scalar @files,};
+          migration_count => $ran,};
 }
 
 sub upsert_qbt_info ( $self, $dbh, $row ) {
