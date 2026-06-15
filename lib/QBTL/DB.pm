@@ -126,6 +126,13 @@ sub migrate ( $self, $dbh ) {
           migration_count => $ran,};
 }
 
+sub qbt_info_column_map ( $self, $dbh ) {
+  my $columns = $dbh->selectall_arrayref( q{PRAGMA table_info(qbt_info)},
+                                          {Slice => {}}, );
+
+  return map { $_->{name} => 1 } @{$columns};
+}
+
 sub qbt_info_exists ( $self, $dbh, $hash ) {
   my ( $exists ) = $dbh->selectrow_array(
     q{
@@ -138,6 +145,21 @@ sub qbt_info_exists ( $self, $dbh, $hash ) {
     $hash, );
 
   return $exists ? 1 : 0;
+}
+
+sub qbt_summary ( $self, $dbh ) {
+  my ( $total ) = $dbh->selectrow_array( q{SELECT COUNT(*) FROM qbt_info} );
+
+  my ( $current ) = $dbh->selectrow_array(
+                       q{SELECT COUNT(*) FROM qbt_info WHERE current_qbt = 1} );
+
+  my ( $removed ) = $dbh->selectrow_array(
+                       q{SELECT COUNT(*) FROM qbt_info WHERE current_qbt = 0} );
+
+  return {
+          total   => $total   // 0,
+          current => $current // 0,
+          removed => $removed // 0,};
 }
 
 sub random_qbt_info ( $self, $dbh ) {
@@ -158,99 +180,65 @@ sub removed_qbt_count ( $self, $dbh ) {
   return $count // 0;
 }
 
-sub qbt_summary ( $self, $dbh ) {
-  my ( $total ) = $dbh->selectrow_array( q{SELECT COUNT(*) FROM qbt_info} );
-
-  my ( $current ) = $dbh->selectrow_array(
-                       q{SELECT COUNT(*) FROM qbt_info WHERE current_qbt = 1} );
-
-  my ( $removed ) = $dbh->selectrow_array(
-                       q{SELECT COUNT(*) FROM qbt_info WHERE current_qbt = 0} );
-
-  return {
-          total   => $total   // 0,
-          current => $current // 0,
-          removed => $removed // 0,};
-}
-
 sub upsert_qbt_info ( $self, $dbh, $row ) {
   die 'qbt info row requires hash' if !defined $row->{hash};
 
-  my @field = qw(
-      hash
-      name
-      state
-      progress
-      save_path
-      content_path
-      category
-      tags
-      amount_left
-      total_size
-      added_on
-      completion_on
-      last_activity
-      tracker
-      ratio
-      comment
+  my %column = $self->qbt_info_column_map( $dbh );
+
+  my %qbtl_owned = map { $_ => 1 } qw(
+      seen_on
+      current_qbt
+      discovered_on
+      discovered_by
   );
 
-  my $sql = q{
+  my @qbt_field =
+      sort
+      grep { exists $column{$_} }
+      grep { !$qbtl_owned{$_} }
+      keys %{$row};
+
+  die 'qbt info row hash is not storable'
+      if !grep { $_ eq 'hash' } @qbt_field;
+
+  my @insert_column = (
+    @qbt_field,
+    qw(
+        seen_on
+        current_qbt
+        discovered_on
+        discovered_by
+    ), );
+
+  my @value = (
+                ( q{?} ) x @qbt_field,
+                q{datetime('now')}, q{1}, q{datetime('now')}, q{'qbt'}, );
+
+  my @update = map {"$_ = excluded.$_"}
+      grep { $_ ne 'hash' } @qbt_field;
+
+  push @update,
+      q{seen_on = excluded.seen_on},
+      q{current_qbt = 1},
+q{discovered_on = COALESCE(qbt_info.discovered_on, excluded.discovered_on)},
+q{discovered_by = COALESCE(qbt_info.discovered_by, excluded.discovered_by)};
+
+  my $columns = join ",\n      ", @insert_column;
+  my $values  = join ",\n      ", @value;
+  my $updates = join ",\n      ", @update;
+
+  my $sql = qq{
     INSERT INTO qbt_info (
-      hash,
-      name,
-      state,
-      progress,
-      save_path,
-      content_path,
-      category,
-      tags,
-      amount_left,
-      total_size,
-      added_on,
-      completion_on,
-      last_activity,
-      tracker,
-      ratio,
-      comment,
-      seen_on,
-      current_qbt,
-      discovered_on,
-      discovered_by
+      $columns
     )
     VALUES (
-      ?, ?, ?, ?, ?,
-      ?, ?, ?, ?, ?,
-      ?, ?, ?, ?, ?,
-      ?,
-      datetime('now'),
-      1,
-      datetime('now'),
-      'qbt'
+      $values
     )
     ON CONFLICT(hash) DO UPDATE SET
-      name          = excluded.name,
-      state         = excluded.state,
-      progress      = excluded.progress,
-      save_path     = excluded.save_path,
-      content_path  = excluded.content_path,
-      category      = excluded.category,
-      tags          = excluded.tags,
-      amount_left   = excluded.amount_left,
-      total_size    = excluded.total_size,
-      added_on      = excluded.added_on,
-      completion_on = excluded.completion_on,
-      last_activity = excluded.last_activity,
-      tracker       = excluded.tracker,
-      ratio         = excluded.ratio,
-            comment       = excluded.comment,
-      seen_on       = excluded.seen_on,
-      current_qbt   = 1,
-      discovered_on = COALESCE(qbt_info.discovered_on, excluded.discovered_on),
-      discovered_by = COALESCE(qbt_info.discovered_by, excluded.discovered_by)
+      $updates
   };
 
-  $dbh->do( $sql, undef, map { $row->{$_} } @field );
+  $dbh->do( $sql, undef, map { $row->{$_} } @qbt_field );
 
   return {
           ok   => 1,
