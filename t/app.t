@@ -28,9 +28,11 @@ my $out = '';
   sub get ( $self, $uri ) {
     push @{$self->{urls}}, "$uri";
 
-    return
-        Local::FakeResponse->new( code => 200,
-                                  body => 'Ok.', );
+    return Local::FakeResponse->new(
+      code => 200,
+      body => '[
+        {"hash":"abc123","name":"App Test One"},
+        {"hash":"def456","name":"App Test Two"}]', );
   }
 
   sub urls ( $self ) {
@@ -138,7 +140,7 @@ like( $out,
       qr/info\s+Fetch qBittorrent torrents\/info/,
       'qbt info command is listed' );
 like( $out,
-      qr/refresh\s+Store fake qBittorrent torrents\/info rows/,
+      qr/refresh\s+Store qBittorrent torrents\/info rows/,
       'qbt refresh command is listed' );
 
 $out = '';

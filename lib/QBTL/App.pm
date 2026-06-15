@@ -116,12 +116,31 @@ sub run_cli ( $self, @argv ) {
       }
       my $api = QBTL::QBT::API->new( base_url => $self->{config}->qbt_url, );
       my $process = QBTL::Process::QBT->new( api => $api );
+      my $info    = $process->info;
+
+      if ( !$info->{ok} ) {
+        $connect->{dbh}->disconnect;
+
+        return
+            $self->{renderer}->qbt_refresh(
+            {
+             ok       => 0,
+             action   => 'qbt_refresh',
+             seen     => 0,
+             stored   => 0,
+             problems => [
+                           {
+                            hash  => undef,
+                            error => 'qBittorrent torrents/info request failed',
+                           },
+             ],} );
+      }
 
       my $result =
           $process->refresh_info_rows(
                                        dbh  => $connect->{dbh},
                                        db   => $db,
-                                       rows => $process->fake_info_rows, );
+                                       rows => $info->{rows} // [], );
 
       $connect->{dbh}->disconnect;
 

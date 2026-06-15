@@ -39,7 +39,7 @@ like(
   $out, qr/qbt info\s+Fetch qBittorrent torrents\/info/, 'help output includes
 qbt info command' );
 like(
-  $out, qr/qbt refresh\s+Store fake qBittorrent torrents\/info rows/, 'help
+  $out, qr/qbt refresh\s+Store qBittorrent torrents\/info rows/, 'help
 output includes qbt refresh command' );
 like(
   $out, qr/qbt version\s+Show qBittorrent version/, 'help output includes qbt
@@ -205,7 +205,7 @@ like(
   $out, qr/info\s+Fetch qBittorrent torrents\/info/, 'qbt help output includes
 info' );
 like(
-  $out, qr/refresh\s+Store fake qBittorrent torrents\/info rows/, 'qbt help
+  $out, qr/refresh\s+Store qBittorrent torrents\/info rows/, 'qbt help
 output includes refresh' );
 like(
   $out, qr/version\s+Show qBittorrent version/, 'qbt help output includes

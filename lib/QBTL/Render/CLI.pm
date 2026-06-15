@@ -32,7 +32,7 @@ sub help ( $self ) {
   say "";
   say {$out} "  qbt help      Show qBittorrent command help";
   say {$out} "  qbt info      Fetch qBittorrent torrents/info";
-  say {$out} "  qbt refresh   Store fake qBittorrent torrents/info rows";
+  say {$out} "  qbt refresh   Store qBittorrent torrents/info rows";
   say {$out} "  qbt version   Show qBittorrent version request";
 
   return 0;
@@ -46,7 +46,7 @@ sub qbt_help ( $self ) {
   say {$out} "Commands:";
   say {$out} "  help          Show this help";
   say {$out} "  info          Fetch qBittorrent torrents/info";
-  say {$out} "  refresh       Store fake qBittorrent torrents/info rows";
+  say {$out} "  refresh    Store qBittorrent torrents/info rows";
   say {$out} "  version       Show qBittorrent version request";
 
   return 0;
