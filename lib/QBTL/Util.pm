@@ -6,7 +6,7 @@ use feature qw( signatures );
 
 use Exporter qw( import );
 
-our @EXPORT_OK = qw( epoch_time );
+our @EXPORT_OK = qw( epoch_time human_bytes );
 
 sub epoch_time ( $value, %arg ) {
   return '' if !defined $value;
@@ -33,4 +33,23 @@ sub epoch_time ( $value, %arg ) {
   return "$ymd $hms";
 }
 
+sub human_bytes ( $value ) {
+  return '' if !defined $value;
+  return '' if $value eq '';
+  return '' if $value !~ /\A\d+(?:\.\d+)?\z/;
+  my @unit = qw( B KiB MiB GiB TiB PiB );
+  my $size = $value + 0;
+  my $unit = 0;
+  while ( $size >= 1024 && $unit < $#unit ) {
+    $size /= 1024;
+    $unit++;
+  }
+
+  if ( $unit == 0 ) {
+    return sprintf( '%d %s', $size, $unit[$unit] );
+  }
+
+  return sprintf( '%.2f %s', $size, $unit[$unit] );
+
+}
 1;
