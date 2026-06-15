@@ -12,6 +12,7 @@ use_ok( 'QBTL::App' );
 use_ok( 'QBTL::Config' );
 use_ok( 'QBTL::DB' );
 
+use_ok( 'QBTL::Process::Inventory' );
 use_ok( 'QBTL::Process::QBT' );
 use_ok( 'QBTL::Process::Setup' );
 
