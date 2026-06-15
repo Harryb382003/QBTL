@@ -25,18 +25,27 @@ use QBTL::Process::QBT;
   sub new ( $class, %arg ) {
     return
         bless {
-               urls      => [],
-               posts     => [],
-               get_body  => $arg{get_body}  // 'v5.0.0',
-               post_body => $arg{post_body} // 'Ok.',
-               get_code  => $arg{get_code}  // 200,
-               post_code => $arg{post_code} // 200,
+               urls          => [],
+               posts         => [],
+               get_body      => $arg{get_body}      // 'v5.0.0',
+               post_body     => $arg{post_body}     // 'Ok.',
+               get_code      => $arg{get_code}      // 200,
+               post_code     => $arg{post_code}     // 200,
+               get_responses => $arg{get_responses} // undef,
         },
         $class;
   }
 
   sub get ( $self, $uri ) {
     push @{$self->{urls}}, "$uri";
+
+    if ( $self->{get_responses} && @{$self->{get_responses}} ) {
+      my $response = shift @{$self->{get_responses}};
+
+      return
+          Local::FakeResponse->new( code => $response->{code},
+                                    body => $response->{body}, );
+    }
 
     return
         Local::FakeResponse->new( code => $self->{get_code},
@@ -95,17 +104,18 @@ use QBTL::Process::QBT;
 # ------------------------------
 # Basic construction
 # ------------------------------
+
 my $api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090', );
 
 my $process = QBTL::Process::QBT->new( api => $api );
 
-isa_ok( $process, 'QBTL::Process::QBT' );
-
+isa_ok( $process,      'QBTL::Process::QBT' );
 isa_ok( $process->api, 'QBTL::QBT::API' );
 
 # ------------------------------
-# Executable qBT actions
+# Executable qBT actions: version
 # ------------------------------
+
 my $version_ua = Local::FakeUA->new( get_body => 'v5.0.0',
                                      get_code => 200, );
 
@@ -128,6 +138,10 @@ is( $version_ua->urls->[0],
     'http://127.0.0.1:9090/api/v2/app/version',
     'qbt version process gets version URL' );
 
+# ------------------------------
+# Executable qBT actions: info
+# ------------------------------
+
 my $exec_info_ua = Local::FakeUA->new(
                              get_body => '[{"hash":"abc123","name":"Example"}]',
                              get_code => 200, );
@@ -146,6 +160,11 @@ is( $exec_info_result->{result}{code},
     200, 'qbt info process returns response code' );
 like( $exec_info_result->{result}{body},
       qr/abc123/, 'qbt info process returns body' );
+is( $exec_info_result->{count}, 1, 'qbt info process returns row count' );
+is( ref $exec_info_result->{rows},
+    'ARRAY', 'qbt info process returns rows arrayref' );
+is( $exec_info_result->{rows}[0]{hash},
+    'abc123', 'qbt info process decodes row hash' );
 
 like( $exec_info_ua->urls->[0],
       qr{\Ahttp://127\.0\.0\.1:9090/api/v2/torrents/info\?},
@@ -153,6 +172,56 @@ like( $exec_info_ua->urls->[0],
 
 like( $exec_info_ua->urls->[0],
       qr/filter=all/, 'qbt info process sends filter param' );
+
+# ------------------------------
+# Executable qBT actions: info auth retry
+# ------------------------------
+
+my $retry_info_ua = Local::FakeUA->new(
+                      get_responses => [
+                        {
+                         code => 403,
+                         body => 'Forbidden',
+                        },
+                        {
+                         code => 200,
+                         body => '[{"hash":"retry123","name":"Retry Example"}]',
+                        },
+                      ],
+                      post_body => 'Ok.',
+                      post_code => 200, );
+
+my $retry_info_api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090',
+                                          ua       => $retry_info_ua, );
+
+my $retry_info_process = QBTL::Process::QBT->new( api => $retry_info_api );
+
+my $retry_info_result = $retry_info_process->info;
+
+is( $retry_info_result->{ok}, 1, 'qbt info retries after forbidden response' );
+is( $retry_info_result->{retried}, 1, 'qbt info marks retry' );
+is( $retry_info_result->{login}{ok}, 1,
+    'qbt info login before retry succeeds' );
+like( $retry_info_result->{result}{body},
+      qr/retry123/, 'qbt info retry returns second response body' );
+is( $retry_info_result->{count}, 1, 'qbt info retry returns row count' );
+is( $retry_info_result->{rows}[0]{hash},
+    'retry123', 'qbt info retry decodes row hash' );
+
+is( scalar @{$retry_info_ua->urls},
+    2, 'qbt info retry performs two GET requests' );
+
+is( scalar @{$retry_info_ua->posts},
+    1, 'qbt info retry performs one login POST' );
+
+is(
+    $retry_info_ua->posts->[0]{url},
+    'http://127.0.0.1:9090/api/v2/auth/login',
+    'qbt info retry posts to login URL' );
+
+# ------------------------------
+# Executable qBT actions: login
+# ------------------------------
 
 my $login_ua = Local::FakeUA->new( post_body => 'Ok.',
                                    post_code => 200, );
@@ -202,6 +271,7 @@ is( $info_result->{request}{url},
 # ------------------------------
 # qBT info database storage
 # ------------------------------
+
 my $dir     = tempdir( CLEANUP => 1 );
 my $db_path = File::Spec->catfile( $dir, 'test.sqlite' );
 

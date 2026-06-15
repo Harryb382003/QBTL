@@ -31,7 +31,7 @@ sub help ( $self ) {
   say {$out} "  version     Show QBTL version";
   say "";
   say {$out} "  qbt help      Show qBittorrent command help";
-  say {$out} "  info          Fetch qBittorrent torrents/info";
+  say {$out} "  qbt info      Fetch qBittorrent torrents/info";
   say {$out} "  qbt refresh   Store fake qBittorrent torrents/info rows";
   say {$out} "  qbt version   Show qBittorrent version request";
 
@@ -45,7 +45,7 @@ sub qbt_help ( $self ) {
   say {$out} "";
   say {$out} "Commands:";
   say {$out} "  help          Show this help";
-  say {$out} "  info       Fetch qBittorrent torrents/info";
+  say {$out} "  info          Fetch qBittorrent torrents/info";
   say {$out} "  refresh       Store fake qBittorrent torrents/info rows";
   say {$out} "  version       Show qBittorrent version request";
 
@@ -104,6 +104,12 @@ sub qbt_result ( $self, $result ) {
   say {$out} $result->{ok} ? 'qBT request complete.' : 'qBT request failed.';
   say {$out} "Action: " . ( $result->{action} // '' );
 
+  if ( ( $result->{action} // '' ) eq 'qbt_torrents_info' ) {
+    say {$out} "Torrents: " . ( $result->{count} // 0 );
+
+    return $result->{ok} ? 0 : 1;
+  }
+
   if ( $result->{result} ) {
     say {$out} "Status: " . ( $result->{result}{status} // '' );
     say {$out} "Code: " .   ( $result->{result}{code}   // '' );
@@ -115,6 +121,7 @@ sub qbt_result ( $self, $result ) {
   }
 
   return $result->{ok} ? 0 : 1;
+
 }
 
 sub setup ( $self, $result ) {

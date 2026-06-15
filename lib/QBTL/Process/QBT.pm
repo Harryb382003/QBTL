@@ -4,6 +4,8 @@ use v5.40;
 use common::sense;
 use feature qw( signatures );
 
+use JSON::PP qw( decode_json );
+
 use QBTL::QBT::API;
 
 sub new ( $class, %arg ) {
@@ -58,11 +60,42 @@ sub info ( $self, %params ) {
   my $request = $self->{api}->torrents_info( %params );
   my $result  = $self->{api}->execute_request( $request );
 
+  if ( !$result->{ok} && ( $result->{code} // 0 ) =~ /\A(?:401|403)\z/ ) {
+    my $login = $self->login;
+
+    if ( !$login->{ok} ) {
+      return {
+              ok      => 0,
+              action  => 'qbt_torrents_info',
+              request => $request,
+              result  => $result,
+              login   => $login,};
+    }
+
+    $result = $self->{api}->execute_request( $request );
+
+    my $rows = $self->_decode_info_rows( $result );
+
+    return {
+            ok      => $result->{ok} ? 1 : 0,
+            action  => 'qbt_torrents_info',
+            request => $request,
+            result  => $result,
+            rows    => $rows,
+            count   => scalar @{$rows},
+            login   => $login,
+            retried => 1,};
+  }
+
+  my $rows = $self->_decode_info_rows( $result );
+
   return {
           ok      => $result->{ok} ? 1 : 0,
           action  => 'qbt_torrents_info',
           request => $request,
-          result  => $result,};
+          result  => $result,
+          rows    => $rows,
+          count   => scalar @{$rows},};
 }
 
 sub login ( $self, %arg ) {
@@ -154,6 +187,22 @@ sub version ( $self ) {
           action  => 'qbt_version',
           request => $request,
           result  => $result,};
+}
+
+sub _decode_info_rows ( $self, $result ) {
+  return [] if !$result->{ok};
+
+  my $body = $result->{body} // '';
+
+  return [] if !length $body;
+
+  my $rows = eval { decode_json( $body ) };
+
+  if ( $@ || ref( $rows ) ne 'ARRAY' ) {
+    return [];
+  }
+
+  return $rows;
 }
 
 1;
