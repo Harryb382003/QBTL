@@ -179,7 +179,11 @@ sub random_qbt_info ( $self, $dbh ) {
 
 sub removed_qbt_count ( $self, $dbh ) {
   my ( $count ) = $dbh->selectrow_array(
-                       q{SELECT COUNT(*) FROM qbt_info WHERE current_qbt = 0} );
+    q{SELECT COUNT(*)
+    FROM qbt_info
+    WHERE current_qbt = 0
+    AND seen = 1}
+  );
 
   return $count // 0;
 }
@@ -227,6 +231,7 @@ sub upsert_qbt_info ( $self, $dbh, $row ) {
   my %qbtl_owned = map { $_ => 1 } qw(
       seen_on
       current_qbt
+      seen
       discovered_on
       discovered_by
   );
@@ -245,13 +250,14 @@ sub upsert_qbt_info ( $self, $dbh, $row ) {
     qw(
         seen_on
         current_qbt
+        seen
         discovered_on
         discovered_by
     ), );
 
   my @value = (
                 ( q{?} ) x @qbt_field,
-                q{datetime('now')}, q{1}, q{datetime('now')}, q{'qbt'}, );
+                q{datetime('now')}, q{1}, q{1}, q{datetime('now')}, q{'qbt'}, );
 
   my @update = map {"$_ = excluded.$_"}
       grep { $_ ne 'hash' } @qbt_field;
@@ -259,8 +265,14 @@ sub upsert_qbt_info ( $self, $dbh, $row ) {
   push @update,
       q{seen_on = excluded.seen_on},
       q{current_qbt = 1},
-q{discovered_on = COALESCE(qbt_info.discovered_on, excluded.discovered_on)},
-q{discovered_by = COALESCE(qbt_info.discovered_by, excluded.discovered_by)};
+      q{seen = 1},
+      q{discovered_on = COALESCE(
+        qbt_info.discovered_on,
+        excluded.discovered_on)
+      }, q{discovered_by = COALESCE(
+        qbt_info.discovered_by,
+        excluded.discovered_by)
+      };
 
   my $columns = join ",\n      ", @insert_column;
   my $values  = join ",\n      ", @value;

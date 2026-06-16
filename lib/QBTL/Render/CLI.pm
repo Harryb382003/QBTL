@@ -69,6 +69,8 @@ sub db_torrent ( $self, $row ) {
       ? sprintf( '%.2f%%', $row->{progress} * 100 )
       : '';
 
+my $seen = $row->{seen} ? 'yes' : 'unknown';
+
   say {$out} 'Torrent';
   say {$out} '';
   say {$out} 'identity:';
@@ -78,6 +80,7 @@ sub db_torrent ( $self, $row ) {
   say {$out} '';
   say {$out} 'qBT presence:';
   say {$out} "  in qBT:        " . $current;
+  say {$out} "  seen:          " . $seen;
   say {$out} "  seen on:       " . ( $row->{seen_on} // '' );
   say {$out} '';
   say {$out} 'qBT display:';
