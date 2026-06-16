@@ -9,6 +9,7 @@ use QBTL::QBT::API;
 use QBTL::Config;
 use QBTL::DB;
 use QBTL::Process::QBT;
+use QBTL::Process::Search;
 use QBTL::Process::Setup;
 use QBTL::Render::CLI;
 
@@ -35,45 +36,38 @@ sub run_cli ( $self, @argv ) {
     return $self->{renderer}->help;
   }
 
- if ( $cmd eq 'db' ) {
-  my $subcmd = shift @argv // 'help';
+  if ( $cmd eq 'db' ) {
+    my $subcmd = shift @argv // 'help';
 
-  if ( $subcmd eq 'summary' ) {
-    return $self->{renderer}->db_summary(
-      $self->browse->summary
-    );
+    if ( $subcmd eq 'summary' ) {
+      return $self->{renderer}->db_summary( $self->browse->summary );
+    }
+
+    if ( $subcmd eq 'random' ) {
+      return $self->{renderer}->db_random( $self->browse->random );
+    }
+
+    return $self->{renderer}->help;
   }
 
-  if ( $subcmd eq 'random' ) {
-    return $self->{renderer}->db_random(
-      $self->browse->random
-    );
+  if ( $cmd eq 'search' ) {
+    my $subcmd = shift @argv // 'help';
+
+    if ( $subcmd eq 'list' ) {
+      return $self->{renderer}->search_list( $self->search->search_list );
+    }
+
+    if ( @argv ) {
+      return
+          $self->{renderer}->search_result(
+                                            $self->search->search(
+                                                    field => $subcmd,
+                                                    input => join( ' ', @argv ),
+                                                    limit => 25, ) );
+    }
+
+    return $self->{renderer}->help;
   }
-
-  return $self->{renderer}->help;
-}
-
-if ( $cmd eq 'search' ) {
-  my $subcmd = shift @argv // 'help';
-
-  if ( $subcmd eq 'list' ) {
-    return $self->{renderer}->search_list(
-      $self->search->search_list
-    );
-  }
-
-  if (@argv) {
-    return $self->{renderer}->search_result(
-      $self->search->search(
-        field => $subcmd,
-        input => join( ' ', @argv ),
-        limit => 25,
-      )
-    );
-  }
-
-  return $self->{renderer}->help;
-}
 
   if ( $cmd eq 'setup' ) {
     my $db = QBTL::DB->new( db_path => $self->{config}->db_path );

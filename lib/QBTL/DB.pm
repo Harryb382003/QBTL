@@ -223,6 +223,84 @@ sub search_qbt_info ( $self, $dbh, $field, $input, %arg ) {
           limit => $limit,};
 }
 
+sub search_qbt_size ( $self, $dbh, $query, %arg ) {
+  my %column = $self->qbt_info_column_map( $dbh );
+
+  my $field = $query->{field};
+  my $limit = $arg{limit} // 25;
+
+  return {
+          ok     => 0,
+          status => 'invalid_search_field',
+          field  => $field,
+          rows   => [],
+          count  => 0,}
+      if !$column{$field};
+
+  my ( $where, @bind );
+
+  if ( $query->{type} eq 'size_compare' ) {
+    my @part;
+
+    for my $bytes ( @{$query->{values} // []} ) {
+      push @part, "$field $query->{op} ?";
+      push @bind, $bytes;
+    }
+
+    return {
+            ok     => 0,
+            status => 'invalid_size_query',
+            field  => $field,
+            rows   => [],
+            count  => 0,}
+        if !@part;
+
+    $where = '(' . join( ' OR ', @part ) . ')';
+  } elsif ( $query->{type} eq 'size_range' ) {
+    my @part;
+
+    for my $range ( @{$query->{ranges} // []} ) {
+      push @part, "$field BETWEEN ? AND ?";
+      push @bind, $range->{low}, $range->{high};
+    }
+
+    return {
+            ok     => 0,
+            status => 'invalid_size_query',
+            field  => $field,
+            rows   => [],
+            count  => 0,}
+        if !@part;
+
+    $where = '(' . join( ' OR ', @part ) . ')';
+  } else {
+    return {
+            ok     => 0,
+            status => 'invalid_size_query',
+            field  => $field,
+            rows   => [],
+            count  => 0,};
+  }
+
+  my $sql = qq{
+    SELECT *
+    FROM qbt_info
+    WHERE $where
+    ORDER BY $field, name COLLATE NOCASE, hash
+    LIMIT ?
+  };
+
+  my $rows = $dbh->selectall_arrayref( $sql, {Slice => {}}, @bind, $limit, );
+
+  return {
+          ok    => 1,
+          field => $field,
+          input => $query,
+          rows  => $rows,
+          count => scalar @{$rows},
+          limit => $limit,};
+}
+
 sub upsert_qbt_info ( $self, $dbh, $row ) {
   die 'qbt info row requires hash' if !defined $row->{hash};
 
