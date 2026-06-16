@@ -4,11 +4,11 @@ use v5.40;
 use common::sense;
 use feature qw( signatures );
 
-use QBTL::Process::DB;
+use QBTL::Process::WithDB;
 use QBTL::Util qw( parse_byte_values );
 
 sub new ( $class, %arg ) {
-  $arg{db_process} //= QBTL::Process::DB->new( db_path => $arg{db_path}, );
+  $arg{db_process} //= QBTL::Process::WithDB->new( db_path => $arg{db_path}, );
 
   return bless \%arg, $class;
 }

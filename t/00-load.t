@@ -15,7 +15,7 @@ use_ok( 'QBTL::DB' );
 use_ok( 'QBTL::Local::Scanner' );
 
 use_ok( 'QBTL::Process::Browse' );
-use_ok( 'QBTL::Process::DB' );
+use_ok( 'QBTL::Process::WithDB' );
 use_ok( 'QBTL::Process::Local' );
 use_ok( 'QBTL::Process::QBT' );
 use_ok( 'QBTL::Process::Search' );

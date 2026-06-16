@@ -161,6 +161,29 @@ sub local_scan ( $self, $result ) {
   return;
 }
 
+sub local_summary ( $self, $result ) {
+  my $out = $self->{out};
+
+  if ( !$result->{ok} ) {
+    say {$out} 'Local summary failed.';
+
+    for my $problem ( @{ $result->{problems} // [] } ) {
+      say {$out} "  problem:  $problem";
+    }
+
+    return;
+  }
+
+  my $summary = $result->{summary} // {};
+
+  say {$out} 'Local torrent files:';
+  say {$out} '  total paths:     ' . ( $summary->{total} // 0 );
+  say {$out} '  backend count:   ' . ( $summary->{backend_count} // 0 );
+  say {$out} '  latest scan:     ' . ( $summary->{latest_seen} // '' );
+
+  return;
+}
+
 sub qbt_help ( $self ) {
   my $out = $self->{out};
 

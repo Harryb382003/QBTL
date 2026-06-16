@@ -22,29 +22,6 @@ sub clear_current_qbt ( $self, $dbh ) {
   return {ok => 1};
 }
 
-sub db_path ( $self ) {
-  return $self->{db_path};
-}
-
-sub migration_dir ( $self ) {
-  return $self->{migration_dir};
-}
-
-sub verify_path ( $self ) {
-  my $db_path = $self->db_path;
-  my $dir     = dirname( $db_path );
-
-  my @problems;
-
-  push @problems, "DB directory does not exist: $dir"
-      if !-d $dir;
-
-  push @problems, "DB directory is not writable: $dir"
-      if -d $dir && !-w $dir;
-
-  return @problems;
-}
-
 sub connect ( $self ) {
   my @problems = $self->verify_path;
 
@@ -68,6 +45,45 @@ sub connect ( $self ) {
   return {
           ok  => 1,
           dbh => $dbh,};
+}
+
+sub db_path ( $self ) {
+  return $self->{db_path};
+}
+
+sub local_torrent_file_count ( $self, $dbh ) {
+  my ( $count ) =
+      $dbh->selectrow_array( q{SELECT COUNT(*) FROM local_torrent_files} );
+
+  return $count // 0;
+}
+
+sub local_torrent_summary ( $self, $dbh ) {
+  my ( $total ) =
+      $dbh->selectrow_array( q{SELECT COUNT(*) FROM local_torrent_files} );
+
+  my ( $backend_count ) = $dbh->selectrow_array(
+    q{
+      SELECT COUNT(DISTINCT backend)
+      FROM local_torrent_files
+    }
+  );
+
+  my ( $latest_seen ) = $dbh->selectrow_array(
+    q{
+      SELECT MAX(seen_on)
+      FROM local_torrent_files
+    }
+  );
+
+  return {
+          total         => $total         // 0,
+          backend_count => $backend_count // 0,
+          latest_seen   => $latest_seen   // '',};
+}
+
+sub migration_dir ( $self ) {
+  return $self->{migration_dir};
 }
 
 sub migration_files ( $self ) {
@@ -330,21 +346,11 @@ sub upsert_local_torrent_file ( $self, $dbh, $row ) {
     $row->{path},
     $row->{size},
     $row->{mtime},
-    $row->{backend},
-  );
+    $row->{backend}, );
 
   return {
-    ok   => 1,
-    path => $row->{path},
-  };
-}
-
-sub local_torrent_file_count ( $self, $dbh ) {
-  my ( $count ) = $dbh->selectrow_array(
-    q{SELECT COUNT(*) FROM local_torrent_files}
-  );
-
-  return $count // 0;
+          ok   => 1,
+          path => $row->{path},};
 }
 
 sub upsert_qbt_info ( $self, $dbh, $row ) {
@@ -418,6 +424,21 @@ sub upsert_qbt_info ( $self, $dbh, $row ) {
   return {
           ok   => 1,
           hash => $row->{hash},};
+}
+
+sub verify_path ( $self ) {
+  my $db_path = $self->db_path;
+  my $dir     = dirname( $db_path );
+
+  my @problems;
+
+  push @problems, "DB directory does not exist: $dir"
+      if !-d $dir;
+
+  push @problems, "DB directory is not writable: $dir"
+      if -d $dir && !-w $dir;
+
+  return @problems;
 }
 
 1;

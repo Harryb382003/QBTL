@@ -30,10 +30,9 @@ sub _qbtl_home ( $self ) {
   return $db_path;
 }
 
-sub local ($self) {
-  $self->{local} //= QBTL::Process::Local->new(
-    db_path => $self->{config}->db_path,
-  );
+sub local ( $self ) {
+  $self->{local} //=
+      QBTL::Process::Local->new( db_path => $self->{config}->db_path, );
 
   return $self->{local};
 }
@@ -60,16 +59,18 @@ sub run_cli ( $self, @argv ) {
   }
 
   if ( $cmd eq 'local' ) {
-  my $subcmd = shift @argv // 'help';
+    my $subcmd = shift @argv // 'help';
 
-  if ( $subcmd eq 'scan' ) {
-    return $self->{renderer}->local_scan(
-      $self->local->scan
-    );
+    if ( $subcmd eq 'summary' ) {
+      return $self->{renderer}->local_summary( $self->local->summary );
+    }
+
+    if ( $subcmd eq 'scan' ) {
+      return $self->{renderer}->local_scan( $self->local->scan );
+    }
+
+    return $self->{renderer}->help;
   }
-
-  return $self->{renderer}->help;
-}
 
   if ( $cmd eq 'search' ) {
     my $subcmd = shift @argv // 'help';
