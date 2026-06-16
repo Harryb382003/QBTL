@@ -35,171 +35,45 @@ sub run_cli ( $self, @argv ) {
     return $self->{renderer}->help;
   }
 
-  if ( $cmd eq 'db' ) {
-    my $subcmd = shift @argv // 'help';
+ if ( $cmd eq 'db' ) {
+  my $subcmd = shift @argv // 'help';
 
-    if ( $subcmd eq 'summary' ) {
-      my $db = QBTL::DB->new( db_path => $self->{config}->db_path, );
-
-      my $connect = $db->connect;
-
-      if ( !$connect->{ok} ) {
-        return
-            $self->{renderer}->setup(
-                                      {
-                                       ok        => 0,
-                                       home      => undef,
-                                       created   => [],
-                                       existing  => [],
-                                       db_result => $connect,} );
-      }
-
-      my $migration = $db->migrate( $connect->{dbh} );
-
-      if ( !$migration->{ok} ) {
-        $connect->{dbh}->disconnect;
-
-        return
-            $self->{renderer}->setup(
-                                      {
-                                       ok        => 0,
-                                       home      => undef,
-                                       created   => [],
-                                       existing  => [],
-                                       db_result => $migration,} );
-      }
-
-      my $summary = $db->qbt_summary( $connect->{dbh} );
-
-      $connect->{dbh}->disconnect;
-
-      return $self->{renderer}->db_summary( $summary );
-    }
-
-    if ( $subcmd eq 'random' ) {
-      my $db = QBTL::DB->new( db_path => $self->{config}->db_path, );
-
-      my $connect = $db->connect;
-
-      if ( !$connect->{ok} ) {
-        return
-            $self->{renderer}->setup(
-                                      {
-                                       ok        => 0,
-                                       home      => undef,
-                                       created   => [],
-                                       existing  => [],
-                                       db_result => $connect,} );
-      }
-
-      my $migration = $db->migrate( $connect->{dbh} );
-
-      if ( !$migration->{ok} ) {
-        $connect->{dbh}->disconnect;
-
-        return
-            $self->{renderer}->setup(
-                                      {
-                                       ok        => 0,
-                                       home      => undef,
-                                       created   => [],
-                                       existing  => [],
-                                       db_result => $migration,} );
-      }
-
-      my $row = $db->random_qbt_info( $connect->{dbh} );
-
-      $connect->{dbh}->disconnect;
-
-      return $self->{renderer}->db_random( $row );
-    }
-
-    return $self->{renderer}->help;
+  if ( $subcmd eq 'summary' ) {
+    return $self->{renderer}->db_summary(
+      $self->browse->summary
+    );
   }
 
-  if ( $cmd eq 'search' ) {
-    my $subcmd = shift @argv // 'help';
-
-    if ( $subcmd eq 'list' ) {
-      my $db = QBTL::DB->new( db_path => $self->{config}->db_path, );
-
-      my $connect = $db->connect;
-
-      if ( !$connect->{ok} ) {
-        return
-            $self->{renderer}->setup(
-                                      {
-                                       ok        => 0,
-                                       home      => undef,
-                                       created   => [],
-                                       existing  => [],
-                                       db_result => $connect,} );
-      }
-
-      my $migration = $db->migrate( $connect->{dbh} );
-
-      if ( !$migration->{ok} ) {
-        $connect->{dbh}->disconnect;
-
-        return
-            $self->{renderer}->setup(
-                                      {
-                                       ok        => 0,
-                                       home      => undef,
-                                       created   => [],
-                                       existing  => [],
-                                       db_result => $migration,} );
-      }
-
-      my @field = $db->qbt_info_columns( $connect->{dbh} );
-
-      $connect->{dbh}->disconnect;
-
-      return $self->{renderer}->search_list( @field );
-    }
-    if ( @argv ) {
-      my $field = $subcmd;
-      my $input = join ' ', @argv;
-
-      my $db = QBTL::DB->new( db_path => $self->{config}->db_path, );
-
-      my $connect = $db->connect;
-
-      if ( !$connect->{ok} ) {
-        return
-            $self->{renderer}->setup(
-                                      {
-                                       ok        => 0,
-                                       home      => undef,
-                                       created   => [],
-                                       existing  => [],
-                                       db_result => $connect,} );
-      }
-
-      my $migration = $db->migrate( $connect->{dbh} );
-
-      if ( !$migration->{ok} ) {
-        $connect->{dbh}->disconnect;
-
-        return
-            $self->{renderer}->setup(
-                                      {
-                                       ok        => 0,
-                                       home      => undef,
-                                       created   => [],
-                                       existing  => [],
-                                       db_result => $migration,} );
-      }
-
-      my $result =
-          $db->search_qbt_info( $connect->{dbh}, $field, $input, limit => 25, );
-
-      $connect->{dbh}->disconnect;
-
-      return $self->{renderer}->search_result( $result );
-    }
-    return $self->{renderer}->help;
+  if ( $subcmd eq 'random' ) {
+    return $self->{renderer}->db_random(
+      $self->browse->random
+    );
   }
+
+  return $self->{renderer}->help;
+}
+
+if ( $cmd eq 'search' ) {
+  my $subcmd = shift @argv // 'help';
+
+  if ( $subcmd eq 'list' ) {
+    return $self->{renderer}->search_list(
+      $self->search->search_list
+    );
+  }
+
+  if (@argv) {
+    return $self->{renderer}->search_result(
+      $self->search->search(
+        field => $subcmd,
+        input => join( ' ', @argv ),
+        limit => 25,
+      )
+    );
+  }
+
+  return $self->{renderer}->help;
+}
 
   if ( $cmd eq 'setup' ) {
     my $db = QBTL::DB->new( db_path => $self->{config}->db_path );
@@ -350,6 +224,20 @@ sub run_cli ( $self, @argv ) {
   }
 
   return $self->{renderer}->help;
+}
+
+sub browse ( $self ) {
+  $self->{browse} //=
+      QBTL::Process::Browse->new( db_path => $self->{config}->db_path, );
+
+  return $self->{browse};
+}
+
+sub search ( $self ) {
+  $self->{search} //=
+      QBTL::Process::Search->new( db_path => $self->{config}->db_path, );
+
+  return $self->{search};
 }
 
 1;

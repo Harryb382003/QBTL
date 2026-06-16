@@ -13,14 +13,33 @@ sub new ( $class, %arg ) {
   return bless \%arg, $class;
 }
 
-sub db_random ( $self, $row ) {
-  return $self->db_torrent( $row );
+sub db_error ( $self, $result ) {
+  return $self->setup(
+    {
+      ok        => 0,
+      home      => undef,
+      created   => [],
+      existing  => [],
+      db_result => $result->{db_result},
+    }
+  );
 }
 
-sub db_summary ( $self, $summary ) {
-  my $out = $self->{out};
+sub db_random ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->db_error($result);
+  }
 
-  $summary //= {};
+  return $self->db_torrent( $result->{row} );
+}
+
+sub db_summary ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->db_error($result);
+  }
+
+  my $summary = $result->{summary} // {};
+  my $out     = $self->{out};
 
   say {$out} 'QBTL database summary';
   say {$out} '';
@@ -203,13 +222,17 @@ sub qbt_result ( $self, $result ) {
 
 }
 
-sub search_list ( $self, @field ) {
+sub search_list ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->db_error($result);
+  }
+
   my $out = $self->{out};
 
   say {$out} 'Searchable qBT fields:';
   say {$out} '';
 
-  for my $field ( @field ) {
+  for my $field ( @{ $result->{fields} // [] } ) {
     say {$out} "  $field";
   }
 
@@ -221,7 +244,7 @@ sub search_result ( $self, $result ) {
 
   if ( !$result->{ok} ) {
     say {$out} 'Search failed.';
-    say {$out} 'Field: ' .  ( $result->{field}  // '' );
+    say {$out} 'Field: ' . ( $result->{field} // '' );
     say {$out} 'Status: ' . ( $result->{status} // '' );
     return;
   }
