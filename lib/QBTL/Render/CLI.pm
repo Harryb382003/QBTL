@@ -136,6 +136,31 @@ sub help ( $self ) {
   return 0;
 }
 
+sub local_scan ( $self, $result ) {
+  my $out = $self->{out};
+
+  if ( !$result->{ok} ) {
+    say {$out} 'Local scan failed.';
+    say {$out} '  backend:  ' . ( $result->{backend} // '' );
+    say {$out} '  seen:     ' . ( $result->{seen} // 0 );
+    say {$out} '  stored:   ' . ( $result->{stored} // 0 );
+
+    for my $problem ( @{ $result->{problems} // [] } ) {
+      say {$out} "  problem:  $problem";
+    }
+
+    return;
+  }
+
+  say {$out} 'Local scan complete.';
+  say {$out} '  backend:  ' . ( $result->{backend} // '' );
+  say {$out} '  seen:     ' . ( $result->{seen} // 0 );
+  say {$out} '  stored:   ' . ( $result->{stored} // 0 );
+  say {$out} '  total:    ' . ( $result->{total} // 0 );
+
+  return;
+}
+
 sub qbt_help ( $self ) {
   my $out = $self->{out};
 

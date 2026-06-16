@@ -301,6 +301,52 @@ sub search_qbt_size ( $self, $dbh, $query, %arg ) {
           limit => $limit,};
 }
 
+sub upsert_local_torrent_file ( $self, $dbh, $row ) {
+  die 'local torrent file row requires path' if !defined $row->{path};
+
+  $dbh->do(
+    q{
+      INSERT INTO local_torrent_files (
+        path,
+        size,
+        mtime,
+        backend,
+        seen_on
+      )
+      VALUES (
+        ?,
+        ?,
+        ?,
+        ?,
+        datetime('now')
+      )
+      ON CONFLICT(path) DO UPDATE SET
+        size = excluded.size,
+        mtime = excluded.mtime,
+        backend = excluded.backend,
+        seen_on = excluded.seen_on
+    },
+    undef,
+    $row->{path},
+    $row->{size},
+    $row->{mtime},
+    $row->{backend},
+  );
+
+  return {
+    ok   => 1,
+    path => $row->{path},
+  };
+}
+
+sub local_torrent_file_count ( $self, $dbh ) {
+  my ( $count ) = $dbh->selectrow_array(
+    q{SELECT COUNT(*) FROM local_torrent_files}
+  );
+
+  return $count // 0;
+}
+
 sub upsert_qbt_info ( $self, $dbh, $row ) {
   die 'qbt info row requires hash' if !defined $row->{hash};
 

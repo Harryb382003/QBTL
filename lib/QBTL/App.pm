@@ -8,6 +8,7 @@ use QBTL;
 use QBTL::QBT::API;
 use QBTL::Config;
 use QBTL::DB;
+use QBTL::Process::Local;
 use QBTL::Process::QBT;
 use QBTL::Process::Search;
 use QBTL::Process::Setup;
@@ -27,6 +28,14 @@ sub _qbtl_home ( $self ) {
   $db_path =~ s{/[^/]+\z}{};
 
   return $db_path;
+}
+
+sub local ($self) {
+  $self->{local} //= QBTL::Process::Local->new(
+    db_path => $self->{config}->db_path,
+  );
+
+  return $self->{local};
 }
 
 sub run_cli ( $self, @argv ) {
@@ -49,6 +58,18 @@ sub run_cli ( $self, @argv ) {
 
     return $self->{renderer}->help;
   }
+
+  if ( $cmd eq 'local' ) {
+  my $subcmd = shift @argv // 'help';
+
+  if ( $subcmd eq 'scan' ) {
+    return $self->{renderer}->local_scan(
+      $self->local->scan
+    );
+  }
+
+  return $self->{renderer}->help;
+}
 
   if ( $cmd eq 'search' ) {
     my $subcmd = shift @argv // 'help';

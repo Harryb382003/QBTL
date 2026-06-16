@@ -25,7 +25,7 @@ is( $db->migration_dir,
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 5, 'five migration files discovered' );
+is( scalar @migration_files, 6, 'six migration files discovered' );
 like( $migration_files[0], qr/001_initial\.sql\z/,
       'initial migration discovered' );
 like( $migration_files[1], qr/002_qbt_info\.sql\z/,
@@ -36,6 +36,9 @@ like( $migration_files[3], qr/004_qbt_comment\.sql\z/,
       'qbt_comment migration discovered' );
 like( $migration_files[4], qr/005_qbt_seen\.sql\z/,
       'qbt_seen migration discovered' );
+like( $migration_files[5],
+      qr/006_local_torrent_files\.sql\z/,
+      'ocal_torrent_files migration discovered' );
 
 my @problems = $db->verify_path;
 is_deeply( \@problems, [], 'valid temp DB directory has no path problems' );
@@ -48,12 +51,12 @@ isa_ok( $result->{dbh}, 'DBI::db' );
 my $migration = $db->migrate( $result->{dbh} );
 
 ok( $migration->{ok}, 'migration result ok' );
-is( $migration->{migration_count}, 5, 'five migrations ran' );
+is( $migration->{migration_count}, 6, 'six migrations ran' );
 
 my ( $version ) = $result->{dbh}
     ->selectrow_array( 'SELECT version FROM schema_version WHERE id = 1' );
 
-is( $version, 5, 'schema version stored' );
+is( $version, 6, 'schema version stored' );
 
 my ( $qbt_info_table ) = $result->{dbh}->selectrow_array(
   q{

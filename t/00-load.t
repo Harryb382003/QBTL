@@ -12,8 +12,11 @@ use_ok( 'QBTL::App' );
 use_ok( 'QBTL::Config' );
 use_ok( 'QBTL::DB' );
 
+use_ok( 'QBTL::Local::Scanner' );
+
 use_ok( 'QBTL::Process::Browse' );
 use_ok( 'QBTL::Process::DB' );
+use_ok( 'QBTL::Process::Local' );
 use_ok( 'QBTL::Process::QBT' );
 use_ok( 'QBTL::Process::Search' );
 use_ok( 'QBTL::Process::Setup' );
