@@ -12,12 +12,14 @@ use_ok( 'QBTL::App' );
 use_ok( 'QBTL::Config' );
 use_ok( 'QBTL::DB' );
 
-use_ok( 'QBTL::Process::Inventory' );
+use_ok( 'QBTL::Process::Browse' );
+use_ok( 'QBTL::Process::DB' );
 use_ok( 'QBTL::Process::QBT' );
+use_ok( 'QBTL::Process::Search' );
 use_ok( 'QBTL::Process::Setup' );
 
+use_ok( 'QBTL::Render::Chandra' );
 use_ok( 'QBTL::Render::CLI' );
 use_ok( 'QBTL::Render::Mojo' );
-use_ok( 'QBTL::Render::Chandra' );
 
 done_testing;
