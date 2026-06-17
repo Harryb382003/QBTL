@@ -319,6 +319,48 @@ sub manual_value_unset ( $self, $result ) {
   return 0;
 }
 
+sub metadata_candidates ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->db_error($result);
+  }
+
+  my $out = $self->{out};
+
+  say {$out} 'Metadata promotion candidates:';
+  say {$out} "  threshold: $result->{threshold}";
+  say {$out} '';
+
+  if ( !@{ $result->{candidates} // [] } ) {
+    say {$out} '  none';
+    return 0;
+  }
+
+  printf {$out} "%-36s %8s %8s %8s  %s\n",
+    'Key',
+    'Hashes',
+    'Values',
+    'Seen',
+    'Action';
+
+  printf {$out} "%-36s %8s %8s %8s  %s\n",
+    '-' x 36,
+    '-' x 8,
+    '-' x 8,
+    '-' x 8,
+    '-' x 24;
+
+  for my $row ( @{ $result->{candidates} } ) {
+    printf {$out} "%-36s %8s %8s %8s  %s\n",
+      $row->{key},
+      $row->{hashes}      // 0,
+      $row->{values_seen} // 0,
+      $row->{seen}        // 0,
+      $row->{action}      // '';
+  }
+
+  return 0;
+}
+
 sub metadata_promote ( $self, $result ) {
   if ( !$result->{ok} ) {
     return $self->db_error($result);

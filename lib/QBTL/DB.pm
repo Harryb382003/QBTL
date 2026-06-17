@@ -674,6 +674,51 @@ sub promoted_hash_keys ( $self, $dbh ) {
   };
 }
 
+sub promotion_candidates ( $self, $dbh, %arg ) {
+  my $threshold = $arg{threshold} // 20;
+
+  if ( $threshold !~ /\A[0-9]+\z/ ) {
+    return {
+      ok     => 0,
+      status => 'invalid_threshold',
+      error  => 'threshold must be a non-negative integer',
+    };
+  }
+
+  if ( $threshold == 0 ) {
+    return {
+      ok         => 1,
+      threshold  => 0,
+      candidates => [],
+    };
+  }
+
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        hv."key",
+        COUNT(DISTINCT hv.hash) AS hashes,
+        COUNT(DISTINCT hv.value) AS values_seen,
+        SUM(hv.seen_count) AS seen
+      FROM hash_values hv
+      LEFT JOIN promoted_keys pk
+        ON pk."key" = hv."key"
+      WHERE pk."key" IS NULL
+      GROUP BY hv."key"
+      HAVING SUM(hv.seen_count) >= ?
+      ORDER BY seen DESC, hv."key" ASC
+    },
+    { Slice => {} },
+    $threshold,
+  );
+
+  return {
+    ok         => 1,
+    threshold  => $threshold,
+    candidates => $rows,
+  };
+}
+
 sub upsert_hash_value ( $self, $dbh, %arg ) {
   my $hash = $arg{hash};
   my $key  = $arg{key};

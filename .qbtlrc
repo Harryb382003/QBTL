@@ -18,3 +18,5 @@ url = http://localhost:8080
 [database]
 path = $ENV{HOME}/QBTL/qbtl.db
 
+[metadata]
+promoter_threshold = 1

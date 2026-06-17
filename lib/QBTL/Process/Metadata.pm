@@ -82,4 +82,33 @@ sub promoted ($self) {
   );
 }
 
+sub candidates ( $self, %arg ) {
+  my $threshold = $arg{threshold} // 20;
+
+  return $self->{with_db}->with_db(
+    sub ( $db, $dbh ) {
+      my $result = $db->promotion_candidates(
+        $dbh,
+        threshold => $threshold,
+      );
+
+      return $result if !$result->{ok};
+
+      for my $row ( @{ $result->{candidates} // [] } ) {
+        $row->{action} =
+          'meta promote ' . $row->{key};
+
+        $row->{message} =
+          'Metadata key "' . $row->{key} . '" has appeared '
+          . ( $row->{seen} // 0 ) . ' times.';
+
+        $row->{question} =
+          'Promote it to a hash-centered column?';
+      }
+
+      return $result;
+    }
+  );
+}
+
 1;

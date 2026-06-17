@@ -26,26 +26,29 @@ sub topics ( $class ) {
     },
 
     meta => {
-           title    => 'QBTL metadata commands',
-           usage    => 'qbtl meta <command>',
-           commands => [
-             [ keys    => 'list observed metadata keys' ],
-             [ key     => 'inspect one observed metadata key' ],
-             [ promote => 'promote an observed metadata key to a real column' ],
-             [ promoted => 'list promoted metadata keys' ],
-             [ set      => 'set a manual hash-tied value' ],
-             [ get      => 'show manual values for a hash' ],
-             [ unset    => 'remove a manual hash-tied value' ],
-           ],
-           examples => [
-                         'qbtl meta keys',
-                         'qbtl meta key qBt-savePath',
-                         'qbtl meta set <hash> preferred_path /Volumes/Media',
-                         'qbtl meta get <hash>',
-                         'qbtl meta promote qBt-savePath',
-                         'qbtl meta promoted',
-                         'qbtl meta unset <hash> preferred_path',
-           ],
+        title    => 'QBTL metadata commands',
+        usage    => 'qbtl meta <command>',
+        commands => [
+          [
+            candidates => 'list observed keys that are candidates for promotion'
+          ],
+          [ keys     => 'list observed metadata keys' ],
+          [ key      => 'inspect one observed metadata key' ],
+          [ promote  => 'promote an observed metadata key to a real column' ],
+          [ promoted => 'list promoted metadata keys' ],
+          [ set      => 'set a manual hash-tied value' ],
+          [ get      => 'show manual values for a hash' ],
+          [ unset    => 'remove a manual hash-tied value' ],
+        ],
+        examples => [
+                      'qbtl meta keys',
+                      'qbtl meta key qBt-savePath',
+                      'qbtl meta set <hash> preferred_path /Volumes/Media',
+                      'qbtl meta get <hash>',
+                      'qbtl meta promote qBt-savePath',
+                      'qbtl meta promoted',
+                      'qbtl meta unset <hash> preferred_path',
+        ],
     },
 
     qbt => {

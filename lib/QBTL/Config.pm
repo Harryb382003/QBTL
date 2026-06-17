@@ -15,8 +15,9 @@ sub new ( $class, %arg ) {
                home        => $home,
                config_path => File::Spec->catfile( $home, 'QBTL', '.qbtlrc' ),
                db_path     => File::Spec->catfile( $home, 'QBTL', 'qbtl.db' ),
-               qbt_url     => 'http://localhost:8080',
-               time_format => 'full', );
+               qbt_url                     => 'http://localhost:8080',
+               time_format                 => 'full',
+               metadata_promoter_threshold => 20, );
 
   my $self = bless \%self, $class;
 
@@ -38,6 +39,11 @@ sub _load_config_file ( $self ) {
 
   my %config;
   read_config $path => %config;
+
+  if ( defined $config{metadata}{promoter_threshold} ) {
+  $self->{metadata_promoter_threshold}
+    = $config{metadata}{promoter_threshold};
+}
 
   if ( exists $config{time_format} ) {
     my $format = $config{time_format}{time};
@@ -66,6 +72,11 @@ sub _load_config_file ( $self ) {
 sub home        ( $self ) { return $self->{home}; }
 sub config_path ( $self ) { return $self->{config_path}; }
 sub db_path     ( $self ) { return $self->{db_path}; }
+
+sub metadata_promoter_threshold ( $self ) {
+  return $self->{metadata_promoter_threshold};
+}
+
 sub qbt_url     ( $self ) { return $self->{qbt_url}; }
 sub time_format ( $self ) { return $self->{time_format}; }
 

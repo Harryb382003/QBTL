@@ -111,6 +111,14 @@ sub run_cli ( $self, @argv ) {
           );
     }
 
+    if ( $subcmd eq 'candidates' ) {
+      return
+          $self->{renderer}->metadata_candidates(
+                    $self->metadata->candidates(
+                      threshold => $self->{config}->metadata_promoter_threshold,
+                    ) );
+    }
+
     if ( $subcmd eq 'promote' ) {
       my $key = shift @argv;
 
