@@ -81,8 +81,14 @@ sub run_cli ( $self, @argv ) {
     }
 
     if ( $subcmd eq 'scan' ) {
-      return $self->{renderer}->local_scan( $self->local->scan );
-    }
+  my $path = shift @argv;
+
+  return $self->{renderer}->local_scan(
+    $self->local->scan(
+      path => $path,
+    )
+  );
+}
 
     return $self->{renderer}->help;
   }

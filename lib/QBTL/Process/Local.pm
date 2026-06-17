@@ -22,7 +22,7 @@ sub db_process ( $self ) {
   return $self->{db_process};
 }
 
-sub _elapsed ($started) {
+sub _elapsed ( $started ) {
   return sprintf( '%.2f', time - $started );
 }
 
@@ -34,9 +34,9 @@ sub scanner ( $self ) {
   return $self->{scanner};
 }
 
-sub scan ( $self ) {
+sub scan ( $self, %arg ) {
   my $started = time;
-  my $scan    = $self->scanner->scan_torrents;
+  my $scan    = $self->scanner->scan_torrents( path => $arg{path}, );
 
   if ( !$scan->{ok} ) {
     return {
@@ -116,6 +116,32 @@ sub scan ( $self ) {
         if ( !$parse_result->{ok} ) {
           push @problem, "parse store failed for $path";
           next;
+        }
+
+        if ( $parse->{ok} && $parse->{infohash} ) {
+          for my $key ( @{$parse->{observed_keys} // []} ) {
+            my $stored_key = eval {
+              $db->upsert_hash_value(
+                                     $dbh,
+                                     hash       => $parse->{infohash},
+                                     key        => $key->{key},
+                                     value      => $key->{value},
+                                     value_type => $key->{value_type} // 'text',
+              );
+            };
+
+            if ( $@ ) {
+              push @problem, "metadata key store failed for $path: $@";
+              next;
+            }
+
+            if ( !$stored_key->{ok} ) {
+              push @problem,
+                  "metadata key store failed for $path: "
+                  . ( $stored_key->{error} // $key->{key} );
+              next;
+            }
+          }
         }
 
         if ( $parse->{ok} ) {
