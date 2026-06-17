@@ -84,6 +84,32 @@ my $hv_again = $db->upsert_hash_value(
 
 ok( $hv_again->{ok}, 'hash value repeat upsert result ok' );
 
+my $promote = $db->promote_hash_key( $result->{dbh}, key => 'qBt-savePath', );
+
+ok( $promote->{ok}, 'hash key promotion result ok' );
+is( $promote->{status}, 'promoted', 'hash key promotion status stored' );
+is( $promote->{target_column},
+    'qbt_savepath', 'hash key promotion target column stored' );
+is( $promote->{backfilled}, 1, 'hash key promotion backfilled one hash' );
+
+my ( $promoted_value ) = $result->{dbh}->selectrow_array(
+  q{
+  SELECT qbt_savepath
+  FROM promoted_values
+  WHERE hash = ?
+  },
+  undef,
+  $hash, );
+
+is( $promoted_value, '/Volumes/A/Movies', 'promoted value backfilled' );
+
+my $promote_again =
+    $db->promote_hash_key( $result->{dbh}, key => 'qBt-savePath', );
+
+ok( $promote_again->{ok}, 'repeat hash key promotion result ok' );
+is( $promote_again->{status},
+    'already_promoted', 'repeat hash key promotion status stored' );
+
 my ( $seen_count ) = $result->{dbh}->selectrow_array(
   q{
     SELECT seen_count

@@ -62,4 +62,24 @@ sub unset_manual ( $self, %arg ) {
     } );
 }
 
+sub promote ( $self, %arg ) {
+  return $self->{with_db}->with_db(
+    sub ( $db, $dbh ) {
+      return $db->promote_hash_key(
+        $dbh,
+        key    => $arg{key},
+        column => $arg{column},
+      );
+    }
+  );
+}
+
+sub promoted ($self) {
+  return $self->{with_db}->with_db(
+    sub ( $db, $dbh ) {
+      return $db->promoted_hash_keys($dbh);
+    }
+  );
+}
+
 1;

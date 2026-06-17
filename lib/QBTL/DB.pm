@@ -230,6 +230,141 @@ sub migrate ( $self, $dbh ) {
           migration_count => $ran,};
 }
 
+sub promote_hash_key ( $self, $dbh, %arg ) {
+  my $key = $arg{key};
+
+  if ( !defined $key || $key eq '' ) {
+    return {
+      ok     => 0,
+      status => 'invalid_key',
+      error  => 'key is required',
+    };
+  }
+
+  my $exists = $dbh->selectrow_array(
+    q{
+      SELECT COUNT(*)
+      FROM hash_values
+      WHERE "key" = ?
+    },
+    undef,
+    $key,
+  );
+
+  if ( !$exists ) {
+    return {
+      ok     => 0,
+      status => 'key_not_found',
+      error  => "observed key not found: $key",
+      key    => $key,
+    };
+  }
+
+  my $column = $arg{column} // _safe_promoted_column_name($key);
+
+  if ( $column !~ /\A[a-z][a-z0-9_]*\z/ ) {
+    return {
+      ok     => 0,
+      status => 'invalid_column',
+      error  => "invalid promoted column name: $column",
+      key    => $key,
+    };
+  }
+
+  my $already = $dbh->selectrow_hashref(
+    q{
+      SELECT key, target_column
+      FROM promoted_keys
+      WHERE "key" = ?
+    },
+    undef,
+    $key,
+  );
+
+  if ($already) {
+    return {
+      ok            => 1,
+      status        => 'already_promoted',
+      key           => $key,
+      target_column => $already->{target_column},
+      promoted      => 0,
+      backfilled    => 0,
+    };
+  }
+
+  my $column_exists = _column_exists( $dbh, 'promoted_values', $column );
+
+  if ( !$column_exists ) {
+    $dbh->do(
+      qq{
+        ALTER TABLE promoted_values
+        ADD COLUMN "$column" TEXT
+      }
+    );
+  }
+
+  $dbh->do(
+    q{
+      INSERT INTO promoted_keys
+        ("key", target_column, value_type)
+      VALUES
+        (?, ?, ?)
+    },
+    undef,
+    $key,
+    $column,
+    $arg{value_type} // 'text',
+  );
+
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT hash, value
+      FROM hash_values
+      WHERE "key" = ?
+      ORDER BY last_seen_on DESC, id DESC
+    },
+    { Slice => {} },
+    $key,
+  );
+
+  my $insert = $dbh->prepare(
+    q{
+      INSERT INTO promoted_values (hash)
+      VALUES (?)
+      ON CONFLICT(hash) DO NOTHING
+    }
+  );
+
+  my $update = $dbh->prepare(
+    qq{
+      UPDATE promoted_values
+      SET "$column" = ?
+      WHERE hash = ?
+    }
+  );
+
+  my %seen_hash;
+  my $backfilled = 0;
+
+  for my $row ( @{$rows} ) {
+    next if $seen_hash{ $row->{hash} }++;
+
+    $insert->execute( $row->{hash} );
+    $update->execute( $row->{value}, $row->{hash} );
+
+    $backfilled++;
+  }
+
+  return {
+    ok            => 1,
+    status        => 'promoted',
+    key           => $key,
+    target_column => $column,
+    promoted      => 1,
+    backfilled    => $backfilled,
+  };
+}
+
 sub qbt_info_columns ( $self, $dbh ) {
   my $columns = $dbh->selectall_arrayref( q{PRAGMA table_info(qbt_info)},
                                           {Slice => {}}, );
@@ -290,6 +425,40 @@ sub removed_qbt_count ( $self, $dbh ) {
   );
 
   return $count // 0;
+}
+
+sub _safe_promoted_column_name ($key) {
+  my $column = lc $key;
+
+  $column =~ s/[^a-z0-9]+/_/g;
+  $column =~ s/\A_+//;
+  $column =~ s/_+\z//;
+  $column =~ s/_+/_/g;
+
+  if ( $column eq '' ) {
+    $column = 'metadata_value';
+  }
+
+  if ( $column !~ /\A[a-z]/ ) {
+    $column = "metadata_$column";
+  }
+
+  return $column;
+}
+
+sub _column_exists ( $dbh, $table, $column ) {
+  my $columns = $dbh->selectall_arrayref(
+    qq{PRAGMA table_info("$table")},
+    { Slice => {} },
+  );
+
+  for my $row ( @{$columns} ) {
+    if ( $row->{name} eq $column ) {
+      return 1;
+    }
+  }
+
+  return 0;
 }
 
 sub search_qbt_info ( $self, $dbh, $field, $input, %arg ) {
@@ -483,6 +652,26 @@ sub manual_values_for_hash ( $self, $dbh, $hash ) {
           ok   => 1,
           hash => $hash,
           rows => $rows,};
+}
+
+sub promoted_hash_keys ( $self, $dbh ) {
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        "key",
+        target_column,
+        value_type,
+        created_on
+      FROM promoted_keys
+      ORDER BY "key" ASC
+    },
+    { Slice => {} },
+  );
+
+  return {
+    ok   => 1,
+    rows => $rows,
+  };
 }
 
 sub upsert_hash_value ( $self, $dbh, %arg ) {

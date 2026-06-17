@@ -319,6 +319,66 @@ sub manual_value_unset ( $self, $result ) {
   return 0;
 }
 
+sub metadata_promote ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->db_error($result);
+  }
+
+  my $out = $self->{out};
+
+  if ( ( $result->{status} // '' ) eq 'already_promoted' ) {
+    say {$out} 'Metadata key already promoted.';
+    say {$out} "  key:    $result->{key}";
+    say {$out} "  column: $result->{target_column}";
+    return 0;
+  }
+
+  say {$out} 'Metadata key promoted.';
+  say {$out} "  key:        $result->{key}";
+  say {$out} "  column:     $result->{target_column}";
+  say {$out} "  backfilled: $result->{backfilled}";
+
+  return 0;
+}
+
+sub metadata_promoted ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->db_error($result);
+  }
+
+  my $out = $self->{out};
+
+  say {$out} 'Promoted metadata keys:';
+  say {$out} '';
+
+  if ( !@{ $result->{rows} // [] } ) {
+    say {$out} '  none';
+    return 0;
+  }
+
+  printf {$out} "%-36s %-36s %-10s %s\n",
+    'Key',
+    'Column',
+    'Type',
+    'Created';
+
+  printf {$out} "%-36s %-36s %-10s %s\n",
+    '-' x 36,
+    '-' x 36,
+    '-' x 10,
+    '-' x 19;
+
+  for my $row ( @{ $result->{rows} } ) {
+    printf {$out} "%-36s %-36s %-10s %s\n",
+      $row->{key},
+      $row->{target_column},
+      $row->{value_type} // '',
+      $row->{created_on} // '';
+  }
+
+  return 0;
+}
+
 sub qbt_refresh ( $self, $result ) {
   my $out = $self->{out};
 

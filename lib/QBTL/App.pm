@@ -81,14 +81,11 @@ sub run_cli ( $self, @argv ) {
     }
 
     if ( $subcmd eq 'scan' ) {
-  my $path = shift @argv;
+      my $path = shift @argv;
 
-  return $self->{renderer}->local_scan(
-    $self->local->scan(
-      path => $path,
-    )
-  );
-}
+      return $self->{renderer}
+          ->local_scan( $self->local->scan( path => $path, ) );
+    }
 
     return $self->{renderer}->help;
   }
@@ -112,6 +109,17 @@ sub run_cli ( $self, @argv ) {
                                            $self->metadata->key( key   => $key,
                                                                  limit => 25, )
           );
+    }
+
+    if ( $subcmd eq 'promote' ) {
+      my $key = shift @argv;
+
+      return $self->{renderer}
+          ->metadata_promote( $self->metadata->promote( key => $key, ) );
+    }
+
+    if ( $subcmd eq 'promoted' ) {
+      return $self->{renderer}->metadata_promoted( $self->metadata->promoted );
     }
 
     if ( $subcmd eq 'set' ) {
