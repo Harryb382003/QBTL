@@ -90,6 +90,10 @@ sub run_cli ( $self, @argv ) {
   if ( $cmd eq 'meta' ) {
     my $subcmd = shift @argv // 'help';
 
+    if ( $subcmd eq 'help' ) {
+      return $self->{renderer}->help( QBTL::Help->topic( 'meta' ) );
+    }
+
     if ( $subcmd eq 'keys' ) {
       return $self->{renderer}->metadata_keys( $self->metadata->keys );
     }
