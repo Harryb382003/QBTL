@@ -97,15 +97,14 @@ like( $out, qr/\AQBTL 0\.001\n\z/, 'version command renders version' );
 
 $out = '';
 is( $app->run_cli( 'help' ), 0, 'help command exits cleanly' );
-like( $out, qr/Usage: qbtl <command>/, 'help command renders usage' );
-like( $out, qr/help\s+Show this help/, 'help command is listed' );
-like( $out,
-      qr/qbt help\s+Show qBittorrent command help/,
-      'qbt help command is listed' );
+like( $out, qr/Usage:/, 'help command renders usage heading' );
+like( $out, qr/qbtl <command> \[options\]/,     'help command renders usage' );
+like( $out, qr/qbt\s+qBittorrent API commands/, 'qbt command is listed' );
 
 $out = '';
 is( $app->run_cli(), 0, 'default command exits cleanly' );
-like( $out, qr/Usage: qbtl <command>/, 'default command renders help' );
+like( $out, qr/Usage:/, 'default command renders help heading' );
+like( $out, qr/qbtl <command> \[options\]/, 'default command renders help' );
 
 $out = '';
 is( $app->run_cli( 'setup' ), 0, 'setup command exits cleanly' );
@@ -134,8 +133,9 @@ like( $out, qr/problems:\s+0/, 'qbt refresh command renders problem count' );
 
 $out = '';
 is( $app->run_cli( 'qbt', 'help' ), 0, 'qbt help command exits cleanly' );
-like( $out, qr/Usage: qbtl qbt <command>/, 'qbt help command renders usage' );
-like( $out, qr/help\s+Show this help/,     'qbt help command is listed' );
+like( $out, qr/Usage:/,             'qbt help command renders usage heading' );
+like( $out, qr/qbtl qbt <command>/, 'qbt help command renders usage' );
+like( $out, qr/help\s+Show this help/, 'qbt help command is listed' );
 like( $out,
       qr/info\s+Fetch qBittorrent torrents\/info/,
       'qbt info command is listed' );
@@ -145,7 +145,7 @@ like( $out,
 
 $out = '';
 is( $app->run_cli( 'qbt' ), 0, 'bare qbt command exits cleanly' );
-like( $out, qr/Usage: qbtl qbt <command>/,
-      'bare qbt command renders qbt help' );
+like( $out, qr/Usage:/, 'bare qbt command renders qbt help heading' );
+like( $out, qr/qbtl qbt <command>/, 'bare qbt command renders qbt help' );
 
 done_testing;

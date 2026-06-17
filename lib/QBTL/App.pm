@@ -8,7 +8,9 @@ use QBTL;
 use QBTL::QBT::API;
 use QBTL::Config;
 use QBTL::DB;
+use QBTL::Help;
 use QBTL::Process::Local;
+use QBTL::Process::Metadata;
 use QBTL::Process::QBT;
 use QBTL::Process::Search;
 use QBTL::Process::Setup;
@@ -37,25 +39,38 @@ sub local ( $self ) {
   return $self->{local};
 }
 
+sub metadata ( $self ) {
+  $self->{metadata} //=
+      QBTL::Process::Metadata->new( db_path => $self->{config}->db_path, );
+
+  return $self->{metadata};
+}
+
 sub run_cli ( $self, @argv ) {
   my $cmd = shift @argv // 'help';
 
   if ( $cmd eq 'help' ) {
-    return $self->{renderer}->help;
+    return $self->{renderer}->help( QBTL::Help->topic( 'main' ) );
   }
 
   if ( $cmd eq 'db' ) {
     my $subcmd = shift @argv // 'help';
 
-    if ( $subcmd eq 'summary' ) {
-      return $self->{renderer}->db_summary( $self->browse->summary );
+    if ( $subcmd eq 'keys' ) {
+      return $self->{renderer}->metadata_keys( $self->metadata->keys );
     }
 
-    if ( $subcmd eq 'random' ) {
-      return $self->{renderer}->db_random( $self->browse->random );
+    if ( $subcmd eq 'key' ) {
+      my $key = shift @argv;
+
+      return
+          $self->{renderer}->metadata_key(
+                                           $self->metadata->key( key   => $key,
+                                                                 limit => 25, )
+          );
     }
 
-    return $self->{renderer}->help;
+    return $self->{renderer}->help( QBTL::Help->topic( 'meta' ) );
   }
 
   if ( $cmd eq 'local' ) {
@@ -72,8 +87,65 @@ sub run_cli ( $self, @argv ) {
     return $self->{renderer}->help;
   }
 
+  if ( $cmd eq 'meta' ) {
+    my $subcmd = shift @argv // 'help';
+
+    if ( $subcmd eq 'keys' ) {
+      return $self->{renderer}->metadata_keys( $self->metadata->keys );
+    }
+
+    if ( $subcmd eq 'key' ) {
+      my $key = shift @argv;
+
+      return
+          $self->{renderer}->metadata_key(
+                                           $self->metadata->key( key   => $key,
+                                                                 limit => 25, )
+          );
+    }
+
+    if ( $subcmd eq 'set' ) {
+      my $hash  = shift @argv;
+      my $key   = shift @argv;
+      my $value = join( ' ', @argv );
+
+      return
+          $self->{renderer}->manual_value_set(
+                                               $self->metadata->set_manual(
+                                                                hash  => $hash,
+                                                                key   => $key,
+                                                                value => $value,
+                                               ) );
+    }
+
+    if ( $subcmd eq 'get' ) {
+      my $hash = shift @argv;
+
+      return $self->{renderer}->manual_values_for_hash(
+                                $self->metadata->get_manual( hash => $hash, ) );
+    }
+
+    if ( $subcmd eq 'unset' ) {
+      my $hash = shift @argv;
+      my $key  = shift @argv;
+
+      return
+          $self->{renderer}->manual_value_unset(
+                                                 $self->metadata->unset_manual(
+                                                                  hash => $hash,
+                                                                  key  => $key,
+                                                 ) );
+    }
+
+    return $self->{renderer}->help( QBTL::Help->topic( 'meta' ) );
+  }
+
   if ( $cmd eq 'search' ) {
     my $subcmd = shift @argv // 'help';
+
+    if ( $subcmd eq 'help' ) {
+      return $self->{renderer}->help( QBTL::Help->topic( 'search' ) );
+    }
 
     if ( $subcmd eq 'list' ) {
       return $self->{renderer}->search_list( $self->search->search_list );
@@ -88,7 +160,7 @@ sub run_cli ( $self, @argv ) {
                                                     limit => 25, ) );
     }
 
-    return $self->{renderer}->help;
+    return $self->{renderer}->help( QBTL::Help->topic( 'search' ) );
   }
 
   if ( $cmd eq 'setup' ) {
@@ -120,7 +192,7 @@ sub run_cli ( $self, @argv ) {
     my $subcmd = shift @argv // 'help';
 
     if ( $subcmd eq 'help' ) {
-      return $self->{renderer}->qbt_help;
+      return $self->{renderer}->help( QBTL::Help->topic( 'qbt' ) );
     }
 
     if ( $subcmd eq 'info' ) {
@@ -232,7 +304,7 @@ sub run_cli ( $self, @argv ) {
       return $self->{renderer}->qbt_result( $result );
     }
 
-    return $self->{renderer}->qbt_help;
+    return $self->{renderer}->help( QBTL::Help->topic( 'qbt' ) );
   }
 
   if ( $cmd eq 'version' ) {

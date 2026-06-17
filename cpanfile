@@ -8,6 +8,7 @@ requires 'LWP::UserAgent';
 requires 'HTTP::Cookies';
 requires 'Config::Std';
 requires 'JSON::PP'
+requires 'Bencode';
 
 on 'test' => sub {
     requires 'Test::More';

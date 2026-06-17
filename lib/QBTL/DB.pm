@@ -51,6 +51,76 @@ sub db_path ( $self ) {
   return $self->{db_path};
 }
 
+sub hash_keys ( $self, $dbh ) {
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        "key",
+        COUNT(DISTINCT hash) AS hashes,
+        COUNT(DISTINCT value) AS values_seen,
+        SUM(seen_count) AS seen
+      FROM hash_values
+      GROUP BY "key"
+      ORDER BY hashes DESC, "key" ASC
+    },
+    {Slice => {}}, );
+
+  return {
+          ok   => 1,
+          rows => $rows,};
+}
+
+sub hash_key_detail ( $self, $dbh, %arg ) {
+  my $key   = $arg{key};
+  my $limit = $arg{limit} // 25;
+
+  if ( !defined $key || $key eq '' ) {
+    return {
+            ok     => 0,
+            status => 'invalid_key',
+            error  => 'key is required',};
+  }
+
+  my $summary = $dbh->selectrow_hashref(
+    q{
+      SELECT
+        "key",
+        COUNT(DISTINCT hash) AS hashes,
+        COUNT(DISTINCT value) AS values_seen,
+        SUM(seen_count) AS seen
+      FROM hash_values
+      WHERE "key" = ?
+      GROUP BY "key"
+    },
+    undef,
+    $key, );
+
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        hash,
+        "key",
+        value,
+        value_type,
+        seen_count,
+        first_seen_on,
+        last_seen_on
+      FROM hash_values
+      WHERE "key" = ?
+      ORDER BY seen_count DESC, hash ASC
+      LIMIT ?
+    },
+    {Slice => {}},
+    $key,
+    $limit, );
+
+  return {
+          ok      => 1,
+          key     => $key,
+          summary => $summary,
+          rows    => $rows,};
+}
+
 sub local_torrent_file_count ( $self, $dbh ) {
   my ( $count ) =
       $dbh->selectrow_array( q{SELECT COUNT(*) FROM local_torrent_files} );
@@ -76,10 +146,28 @@ sub local_torrent_summary ( $self, $dbh ) {
     }
   );
 
+  my ( $parsed ) = $dbh->selectrow_array(
+    q{
+    SELECT COUNT(*)
+    FROM local_torrent_files
+    WHERE parse_ok = 1
+  }
+  );
+
+  my ( $parse_problems ) = $dbh->selectrow_array(
+    q{
+    SELECT COUNT(*)
+    FROM local_torrent_files
+    WHERE parse_ok = 0
+  }
+  );
+
   return {
-          total         => $total         // 0,
-          backend_count => $backend_count // 0,
-          latest_seen   => $latest_seen   // '',};
+          total          => $total          // 0,
+          backend_count  => $backend_count  // 0,
+          latest_seen    => $latest_seen    // '',
+          parsed         => $parsed         // 0,
+          parse_problems => $parse_problems // 0,};
 }
 
 sub migration_dir ( $self ) {
@@ -317,6 +405,167 @@ sub search_qbt_size ( $self, $dbh, $query, %arg ) {
           limit => $limit,};
 }
 
+sub set_manual_value ( $self, $dbh, %arg ) {
+  my $hash = $arg{hash};
+  my $key  = $arg{key};
+
+  if ( !defined $hash || $hash !~ /\A[0-9a-f]{40}\z/ ) {
+    return {
+            ok     => 0,
+            status => 'invalid_hash',
+            error  => 'hash must be a 40-character lowercase hex value',};
+  }
+
+  if ( !defined $key || $key eq '' ) {
+    return {
+            ok     => 0,
+            status => 'invalid_key',
+            error  => 'key is required',};
+  }
+
+  my $value      = defined $arg{value}      ? $arg{value}      : '';
+  my $value_type = defined $arg{value_type} ? $arg{value_type} : 'text';
+  my $note       = $arg{note};
+
+  $dbh->do(
+    q{
+      INSERT INTO manual_values
+        (hash, "key", value, value_type, note)
+      VALUES
+        (?, ?, ?, ?, ?)
+      ON CONFLICT(hash, "key")
+      DO UPDATE SET
+        value      = excluded.value,
+        value_type = excluded.value_type,
+        note       = excluded.note,
+        updated_on = CURRENT_TIMESTAMP
+    },
+    undef,
+    $hash,
+    $key,
+    $value,
+    $value_type,
+    $note, );
+
+  return {
+          ok    => 1,
+          hash  => $hash,
+          key   => $key,
+          value => $value,};
+}
+
+sub manual_values_for_hash ( $self, $dbh, $hash ) {
+  if ( !defined $hash || $hash !~ /\A[0-9a-f]{40}\z/ ) {
+    return {
+            ok     => 0,
+            status => 'invalid_hash',
+            error  => 'hash must be a 40-character lowercase hex value',};
+  }
+
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        hash,
+        "key",
+        value,
+        value_type,
+        note,
+        created_on,
+        updated_on
+      FROM manual_values
+      WHERE hash = ?
+      ORDER BY "key" ASC
+    },
+    {Slice => {}},
+    $hash, );
+
+  return {
+          ok   => 1,
+          hash => $hash,
+          rows => $rows,};
+}
+
+sub upsert_hash_value ( $self, $dbh, %arg ) {
+  my $hash = $arg{hash};
+  my $key  = $arg{key};
+
+  if ( !defined $hash || $hash !~ /\A[0-9a-f]{40}\z/ ) {
+    return {
+            ok     => 0,
+            status => 'invalid_hash',
+            error  => 'hash must be a 40-character lowercase hex value',};
+  }
+
+  if ( !defined $key || $key eq '' ) {
+    return {
+            ok     => 0,
+            status => 'invalid_key',
+            error  => 'key is required',};
+  }
+
+  my $value      = defined $arg{value}      ? $arg{value}      : '';
+  my $value_type = defined $arg{value_type} ? $arg{value_type} : 'text';
+
+  $dbh->do(
+    q{
+      INSERT INTO hash_values
+        (hash, "key", value, value_type)
+      VALUES
+        (?, ?, ?, ?)
+      ON CONFLICT(hash, "key", value)
+      DO UPDATE SET
+        seen_count   = seen_count + 1,
+        value_type   = excluded.value_type,
+        last_seen_on = CURRENT_TIMESTAMP
+    },
+    undef,
+    $hash,
+    $key,
+    $value,
+    $value_type, );
+
+  return {
+          ok    => 1,
+          hash  => $hash,
+          key   => $key,
+          value => $value,};
+}
+
+sub unset_manual_value ( $self, $dbh, %arg ) {
+  my $hash = $arg{hash};
+  my $key  = $arg{key};
+
+  if ( !defined $hash || $hash !~ /\A[0-9a-f]{40}\z/ ) {
+    return {
+            ok     => 0,
+            status => 'invalid_hash',
+            error  => 'hash must be a 40-character lowercase hex value',};
+  }
+
+  if ( !defined $key || $key eq '' ) {
+    return {
+            ok     => 0,
+            status => 'invalid_key',
+            error  => 'key is required',};
+  }
+
+  my $rows = $dbh->do(
+    q{
+      DELETE FROM manual_values
+      WHERE hash = ?
+      AND "key" = ?
+    },
+    undef,
+    $hash,
+    $key, );
+
+  return {
+          ok      => 1,
+          hash    => $hash,
+          key     => $key,
+          deleted => $rows + 0,};
+}
+
 sub upsert_local_torrent_file ( $self, $dbh, $row ) {
   die 'local torrent file row requires path' if !defined $row->{path};
 
@@ -347,6 +596,40 @@ sub upsert_local_torrent_file ( $self, $dbh, $row ) {
     $row->{size},
     $row->{mtime},
     $row->{backend}, );
+
+  return {
+          ok   => 1,
+          path => $row->{path},};
+}
+
+sub update_local_torrent_parse ( $self, $dbh, $row ) {
+  die 'local torrent parse row requires path' if !defined $row->{path};
+
+  $dbh->do(
+    q{
+      UPDATE local_torrent_files
+      SET
+        infohash = ?,
+        torrent_name = ?,
+        comment = ?,
+        announce = ?,
+        created_by = ?,
+        creation_date = ?,
+        parsed_on = datetime('now'),
+        parse_ok = ?,
+        parse_problem = ?
+      WHERE path = ?
+    },
+    undef,
+    $row->{infohash},
+    $row->{torrent_name},
+    $row->{comment},
+    $row->{announce},
+    $row->{created_by},
+    $row->{creation_date},
+    $row->{parse_ok},
+    $row->{parse_problem},
+    $row->{path}, );
 
   return {
           ok   => 1,

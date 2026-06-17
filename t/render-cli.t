@@ -23,27 +23,45 @@ like( $out, qr/\AQBTL 0\.001\n\z/, 'version output' );
 # ------------------------------
 
 $out = '';
-is( $render->help, 0, 'help render exits cleanly' );
-like( $out, qr/Usage: qbtl <command>/, 'help output includes usage' );
+
+is(
+  $render->help(
+    {
+      title    => 'QBTL',
+      usage    => 'qbtl <command> [options]',
+      commands => [
+        [ help    => 'Show this help' ],
+        [ version => 'Show QBTL version' ],
+        [ setup   => 'Create QBTL runtime directories' ],
+        [ qbt     => 'qBittorrent API commands' ],
+        [ meta    => 'hash-centered metadata commands' ],
+      ],
+      examples => [
+        'qbtl help',
+        'qbtl version',
+        'qbtl setup',
+        'qbtl qbt info',
+        'qbtl meta keys',
+      ],
+    }
+  ),
+   0,
+   'help render exits cleanly'
+);
+
+like( $out, qr/QBTL/, 'help output includes title' );
+like( $out, qr/Usage:/, 'help output includes usage heading' );
+like( $out, qr/qbtl <command> \[options\]/, 'help output includes usage' );
 like( $out, qr/help\s+Show this help/, 'help output includes help command' );
-like( $out,
-      qr/version\s+Show QBTL version/,
-      'help output includes version command' );
-like(
-  $out, qr/setup\s+Create QBTL runtime directories/, 'help output includes setup
+like( $out, qr/version\s+Show QBTL version/, 'help output includes version command'
+);
+like( $out, qr/setup\s+Create QBTL runtime directories/, 'help output includes setup
 command' );
-like(
-  $out, qr/qbt help\s+Show qBittorrent command help/, 'help output includes qbt
-help command' );
-like(
-  $out, qr/qbt info\s+Fetch qBittorrent torrents\/info/, 'help output includes
-qbt info command' );
-like(
-  $out, qr/qbt refresh\s+Store qBittorrent torrents\/info rows/, 'help
-output includes qbt refresh command' );
-like(
-  $out, qr/qbt version\s+Show qBittorrent version/, 'help output includes qbt
-version command' );
+like( $out, qr/qbt\s+qBittorrent API commands/, 'help output includes qbt command'
+);
+like( $out, qr/meta\s+hash-centered metadata commands/, 'help output includes meta
+command' );
+like( $out, qr/qbtl meta keys/, 'help output includes meta example' );
 
 # ------------------------------
 # Setup
@@ -198,17 +216,39 @@ like( $out, qr/problems:\s+0/, 'qbt refresh output includes problem count' );
 # ------------------------------
 
 $out = '';
-is( $render->qbt_help, 0, 'qbt help render exits cleanly' );
-like( $out, qr/Usage: qbtl qbt <command>/, 'qbt help output includes usage' );
-like( $out, qr/help\s+Show this help/,     'qbt help output includes help' );
-like(
-  $out, qr/info\s+Fetch qBittorrent torrents\/info/, 'qbt help output includes
+
+is(
+  $render->help(
+    {
+      title    => 'QBT commands',
+      usage    => 'qbtl qbt <command>',
+      commands => [
+        [ help    => 'Show this help' ],
+        [ info    => 'Fetch qBittorrent torrents/info' ],
+        [ refresh => 'Store qBittorrent torrents/info rows' ],
+        [ version => 'Show qBittorrent version' ],
+      ],
+      examples => [
+        'qbtl qbt info',
+        'qbtl qbt refresh',
+        'qbtl qbt version',
+      ],
+    }
+  ),
+   0,
+   'qbt help render exits cleanly'
+);
+
+like( $out, qr/QBT commands/, 'qbt help output includes title' );
+like( $out, qr/Usage:/, 'qbt help output includes usage heading' );
+like( $out, qr/qbtl qbt <command>/, 'qbt help output includes usage' );
+like( $out, qr/help\s+Show this help/, 'qbt help output includes help' );
+like( $out, qr/info\s+Fetch qBittorrent torrents\/info/, 'qbt help output includes
 info' );
-like(
-  $out, qr/refresh\s+Store qBittorrent torrents\/info rows/, 'qbt help
-output includes refresh' );
-like(
-  $out, qr/version\s+Show qBittorrent version/, 'qbt help output includes
+like( $out, qr/refresh\s+Store qBittorrent torrents\/info rows/, 'qbt help output
+includes refresh' );
+like( $out, qr/version\s+Show qBittorrent version/, 'qbt help output includes
 version' );
+like( $out, qr/qbtl qbt refresh/, 'qbt help output includes example' );
 
 done_testing;

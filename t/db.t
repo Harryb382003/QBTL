@@ -25,7 +25,7 @@ is( $db->migration_dir,
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 6, 'six migration files discovered' );
+is( scalar @migration_files, 8, 'eight migration files discovered' );
 like( $migration_files[0], qr/001_initial\.sql\z/,
       'initial migration discovered' );
 like( $migration_files[1], qr/002_qbt_info\.sql\z/,
@@ -38,9 +38,15 @@ like( $migration_files[4], qr/005_qbt_seen\.sql\z/,
       'qbt_seen migration discovered' );
 like( $migration_files[5],
       qr/006_local_torrent_files\.sql\z/,
-      'ocal_torrent_files migration discovered' );
+      'local_torrent_files migration discovered' );
+like( $migration_files[6],
+      qr/007_local_torrent_parse\.sql\z/,
+      'local_torrent_parse migration discovered' );
+like( $migration_files[7], qr/008_hash_values\.sql\z/,
+      'hash_values.sql migration discovered' );
 
 my @problems = $db->verify_path;
+
 is_deeply( \@problems, [], 'valid temp DB directory has no path problems' );
 
 my $result = $db->connect;
@@ -51,12 +57,85 @@ isa_ok( $result->{dbh}, 'DBI::db' );
 my $migration = $db->migrate( $result->{dbh} );
 
 ok( $migration->{ok}, 'migration result ok' );
-is( $migration->{migration_count}, 6, 'six migrations ran' );
+is( $migration->{migration_count}, 8, 'eight migrations ran' );
 
 my ( $version ) = $result->{dbh}
     ->selectrow_array( 'SELECT version FROM schema_version WHERE id = 1' );
 
-is( $version, 6, 'schema version stored' );
+is( $version, 7, 'schema version stored' );
+
+my $hash = '7ba7c0f31cd3ae7186c8d08353cfa87291b825e4';
+
+my $hv = $db->upsert_hash_value(
+                                 $result->{dbh},
+                                 hash       => $hash,
+                                 key        => 'qBt-savePath',
+                                 value      => '/Volumes/A/Movies',
+                                 value_type => 'text', );
+
+ok( $hv->{ok}, 'hash value upsert result ok' );
+
+my $hv_again = $db->upsert_hash_value(
+                                       $result->{dbh},
+                                       hash       => $hash,
+                                       key        => 'qBt-savePath',
+                                       value      => '/Volumes/A/Movies',
+                                       value_type => 'text', );
+
+ok( $hv_again->{ok}, 'hash value repeat upsert result ok' );
+
+my ( $seen_count ) = $result->{dbh}->selectrow_array(
+  q{
+    SELECT seen_count
+    FROM hash_values
+    WHERE hash = ?
+    AND "key" = ?
+    AND value = ?
+    },
+  undef,
+  $hash,
+  'qBt-savePath',
+  '/Volumes/A/Movies', );
+
+is( $seen_count, 2, 'hash value repeat upsert increments seen_count' );
+
+my $keys = $db->hash_keys( $result->{dbh} );
+
+ok( $keys->{ok}, 'hash keys result ok' );
+is( $keys->{rows}[0]{key},    'qBt-savePath', 'hash key listed' );
+is( $keys->{rows}[0]{hashes}, 1,              'hash key hash count listed' );
+
+my $key_detail = $db->hash_key_detail(
+                                       $result->{dbh},
+                                       key   => 'qBt-savePath',
+                                       limit => 10, );
+
+ok( $key_detail->{ok}, 'hash key detail result ok' );
+is( $key_detail->{key}, 'qBt-savePath',  'hash key detail key stored' );
+is( $key_detail->{rows}[0]{hash}, $hash, 'hash key detail row hash stored' );
+
+my $manual = $db->set_manual_value(
+                                    $result->{dbh},
+                                    hash  => $hash,
+                                    key   => 'preferred_path',
+                                    value => '/Volumes/B/Movies', );
+
+ok( $manual->{ok}, 'manual value set result ok' );
+
+my $manual_rows = $db->manual_values_for_hash( $result->{dbh}, $hash );
+
+ok( $manual_rows->{ok}, 'manual values for hash result ok' );
+is( $manual_rows->{rows}[0]{key}, 'preferred_path', 'manual value key stored' );
+is( $manual_rows->{rows}[0]{value},
+    '/Volumes/B/Movies', 'manual value value stored' );
+
+my $unset = $db->unset_manual_value(
+                                     $result->{dbh},
+                                     hash => $hash,
+                                     key  => 'preferred_path', );
+
+ok( $unset->{ok}, 'manual value unset result ok' );
+is( $unset->{deleted}, 1, 'manual value deleted one row' );
 
 my ( $qbt_info_table ) = $result->{dbh}->selectrow_array(
   q{
