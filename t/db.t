@@ -8,7 +8,8 @@ use File::Spec;
 
 use QBTL::DB;
 
-my $dir     = tempdir( CLEANUP => 1 );
+my $dir = tempdir( CLEANUP => 1 );
+my ( $tmpdir, $dbh );
 my $db_path = File::Spec->catfile( $dir, 'test.sqlite' );
 
 my $db = QBTL::DB->new(
@@ -25,7 +26,7 @@ is( $db->migration_dir,
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 8, 'eight migration files discovered' );
+is( scalar @migration_files, 9, 'nine migration files discovered' );
 like( $migration_files[0], qr/001_initial\.sql\z/,
       'initial migration discovered' );
 like( $migration_files[1], qr/002_qbt_info\.sql\z/,
@@ -44,7 +45,9 @@ like( $migration_files[6],
       'local_torrent_parse migration discovered' );
 like( $migration_files[7], qr/008_hash_values\.sql\z/,
       'hash_values.sql migration discovered' );
-
+like( $migration_files[8],
+      qr/009_local_fastresume_files\.sql\z/,
+      'local_fastresume_files migration discovered' );
 my @problems = $db->verify_path;
 
 is_deeply( \@problems, [], 'valid temp DB directory has no path problems' );
@@ -54,15 +57,17 @@ my $result = $db->connect;
 ok( $result->{ok}, 'connect result ok' );
 isa_ok( $result->{dbh}, 'DBI::db' );
 
+my $dbh = $result->{dbh};
+
 my $migration = $db->migrate( $result->{dbh} );
 
 ok( $migration->{ok}, 'migration result ok' );
-is( $migration->{migration_count}, 8, 'eight migrations ran' );
+is( $migration->{migration_count}, 9, 'nine migrations ran' );
 
 my ( $version ) = $result->{dbh}
     ->selectrow_array( 'SELECT version FROM schema_version WHERE id = 1' );
 
-is( $version, 7, 'schema version stored' );
+is( $version, 9, 'schema version stored' );
 
 my $hash = '7ba7c0f31cd3ae7186c8d08353cfa87291b825e4';
 
@@ -256,7 +261,40 @@ my ( $updated_name ) =
                                      undef, 'abc123', );
 
 is( $updated_name, 'Example Torrent Renamed', 'qbt_info row updated' );
+my $fr_path = File::Spec->catfile( $tmpdir,
+                          'd207bae331f40b5f9b49220e7aa4e4a60df9ca3a.fastresume',
+);
 
+my $fr_store =
+    $db->upsert_local_fastresume_file(
+                                       $dbh,
+                                       {
+                                        path    => $fr_path,
+                                        size    => 1234,
+                                        mtime   => 111,
+                                        backend => 'test',
+                                       } );
+
+ok $fr_store->{ok}, 'stored local fastresume file';
+
+my $fr_parse =
+    $db->update_local_fastresume_parse(
+                        $dbh,
+                        {
+                         path     => $fr_path,
+                         infohash => 'd207bae331f40b5f9b49220e7aa4e4a60df9ca3a',
+                         parse_ok => 1,
+                         parse_problem => undef,
+                        } );
+
+ok $fr_parse->{ok}, 'updated local fastresume parse data';
+
+is $db->local_fastresume_file_count( $dbh ), 1, 'local fastresume file count';
+
+my $fr_summary = $db->local_fastresume_summary( $dbh );
+
+is $fr_summary->{total},  1, 'fastresume summary total';
+is $fr_summary->{parsed}, 1, 'fastresume summary parsed';
 $result->{dbh}->do(
      'CREATE TABLE sanity_check (id INTEGER PRIMARY KEY, name TEXT NOT NULL)' );
 $result->{dbh}->do( 'INSERT INTO sanity_check (name) VALUES (?)', undef, 'ok' );

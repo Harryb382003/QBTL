@@ -54,3 +54,6 @@ CREATE TABLE IF NOT EXISTS hash_conflicts (
 
 CREATE INDEX IF NOT EXISTS hash_conflicts_hash_idx ON hash_conflicts(hash);
 CREATE INDEX IF NOT EXISTS hash_conflicts_key_idx ON hash_conflicts(key);
+
+UPDATE schema_version
+SET version = 8;

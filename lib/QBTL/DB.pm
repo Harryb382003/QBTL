@@ -121,6 +121,29 @@ sub hash_key_detail ( $self, $dbh, %arg ) {
           rows    => $rows,};
 }
 
+sub local_fastresume_file_count ( $self, $dbh ) {
+  return $dbh->selectrow_array(
+    q{
+      SELECT COUNT(*)
+      FROM local_fastresume_files
+    }
+  );
+}
+
+sub local_fastresume_summary ( $self, $dbh ) {
+  return $dbh->selectrow_hashref(
+    q{
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN parse_ok = 1 THEN 1 ELSE 0 END) AS parsed,
+        SUM(CASE WHEN parse_ok = 0 THEN 1 ELSE 0 END) AS parse_problems,
+        COUNT(DISTINCT backend) AS backend_count,
+        MAX(seen_on) AS latest_seen
+      FROM local_fastresume_files
+    }
+  );
+}
+
 sub local_torrent_file_count ( $self, $dbh ) {
   my ( $count ) =
       $dbh->selectrow_array( q{SELECT COUNT(*) FROM local_torrent_files} );
@@ -785,36 +808,46 @@ sub unset_manual_value ( $self, $dbh, %arg ) {
           deleted => $rows + 0,};
 }
 
-sub upsert_local_torrent_file ( $self, $dbh, $row ) {
-  die 'local torrent file row requires path' if !defined $row->{path};
-
+sub upsert_local_fastresume_file ( $self, $dbh, $row ) {
   $dbh->do(
     q{
-      INSERT INTO local_torrent_files (
-        path,
-        size,
-        mtime,
-        backend,
-        seen_on
-      )
-      VALUES (
-        ?,
-        ?,
-        ?,
-        ?,
-        datetime('now')
-      )
-      ON CONFLICT(path) DO UPDATE SET
-        size = excluded.size,
-        mtime = excluded.mtime,
+      INSERT INTO local_fastresume_files
+        (path, size, mtime, backend, seen_on)
+      VALUES
+        (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(path)
+      DO UPDATE SET
+        size    = excluded.size,
+        mtime   = excluded.mtime,
         backend = excluded.backend,
-        seen_on = excluded.seen_on
+        seen_on = CURRENT_TIMESTAMP
     },
     undef,
     $row->{path},
     $row->{size},
     $row->{mtime},
     $row->{backend}, );
+
+  return {
+          ok   => 1,
+          path => $row->{path},};
+}
+
+sub update_local_fastresume_parse ( $self, $dbh, $row ) {
+  $dbh->do(
+    q{
+      UPDATE local_fastresume_files
+      SET
+        infohash      = ?,
+        parse_ok      = ?,
+        parse_problem = ?
+      WHERE path = ?
+    },
+    undef,
+    $row->{infohash},
+    $row->{parse_ok},
+    $row->{parse_problem},
+    $row->{path}, );
 
   return {
           ok   => 1,
@@ -849,6 +882,42 @@ sub update_local_torrent_parse ( $self, $dbh, $row ) {
     $row->{parse_ok},
     $row->{parse_problem},
     $row->{path}, );
+
+  return {
+          ok   => 1,
+          path => $row->{path},};
+}
+
+sub upsert_local_torrent_file ( $self, $dbh, $row ) {
+  die 'local torrent file row requires path' if !defined $row->{path};
+
+  $dbh->do(
+    q{
+      INSERT INTO local_torrent_files (
+        path,
+        size,
+        mtime,
+        backend,
+        seen_on
+      )
+      VALUES (
+        ?,
+        ?,
+        ?,
+        ?,
+        datetime('now')
+      )
+      ON CONFLICT(path) DO UPDATE SET
+        size = excluded.size,
+        mtime = excluded.mtime,
+        backend = excluded.backend,
+        seen_on = excluded.seen_on
+    },
+    undef,
+    $row->{path},
+    $row->{size},
+    $row->{mtime},
+    $row->{backend}, );
 
   return {
           ok   => 1,
