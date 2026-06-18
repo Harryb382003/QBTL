@@ -94,49 +94,55 @@ sub _mdfind_torrents ( $self ) {
             problems => ['mdfind not available'],};
   }
 
-  my @path;
+  my @type = qw(torrent fastresume);
+  my %type;
   my @problem;
 
-  my $query = q{kMDItemFSName == "*.torrent"cd};
+  for my $type ( @type ) {
+    $type{$type} = {
+                    count => 0,
+                    paths => [],};
 
-  if ( !open $fh, '-|', $mdfind, $query ) {
-    return {
-            ok       => 0,
-            backend  => 'mdfind',
-            paths    => [],
-            count    => 0,
-            problems => ["could not run mdfind: $!"],};
+    my $query = qq{kMDItemFSName == "*.$type"cd};
+
+    my @path;
+
+    open my $fh, '-|', $mdfind, $query
+        or do {
+      push @problem, "mdfind failed for .$type: $!";
+      next;
+        };
+
+    while ( my $path = <$fh> ) {
+      chomp $path;
+      next if $path eq '';
+
+      push @path, $path;
+    }
+
+    close $fh
+        or push @problem, "mdfind close failed for .$type: $!";
+
+    $type{$type} = {
+                    count => scalar @path,
+                    paths => \@path,};
   }
 
-  while ( my $line = <$fh> ) {
-    chomp $line;
-    next if !defined $line;
-    next if $line eq '';
-    push @path, $line;
-  }
-
-  if ( !close $fh ) {
-    push @problem, 'mdfind exited with an error';
-  }
-
-  my %seen;
-  @path = grep { !$seen{$_}++ } @path;
-  @path = grep { -e $_ || -l $_ } @path;
-  @path = grep { -f $_ } @path;
-
-  if (    defined $self->{limit}
-       && $self->{limit} =~ /\A\d+\z/
-       && $self->{limit} > 0 )
-  {
-    @path = @path[ 0 .. $self->{limit} - 1 ] if @path > $self->{limit};
-  }
+  my $count = 0;
+  $count += $type{$_}{count} for @type;
 
   return {
-          ok       => @problem ? 0 : 1,
-          backend  => 'mdfind',
-          paths    => \@path,
-          count    => scalar @path,
-          problems => \@problem,};
+    ok      => @problem ? 0 : 1,
+    backend => 'mdfind',
+    count   => $count,
+
+    # compatibility for existing Process::Local code
+    paths => $type{torrent}{paths},
+
+    # new grouped result
+    types => \%type,
+
+    problems => \@problem,};
 }
 
 sub _command_path ( $command ) {
