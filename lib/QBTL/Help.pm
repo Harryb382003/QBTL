@@ -25,6 +25,22 @@ sub topics ( $class ) {
              ],
     },
 
+    local => {
+              title    => 'QBTL local commands',
+              usage    => 'qbtl local <command>',
+              commands => [
+                          [ help    => 'Show this help' ],
+                          [ summary => 'Show local torrent file scan summary' ],
+                          [ scan    => 'Scan local .torrent files' ],
+              ],
+              examples => [
+                            'qbtl local summary',
+                            'qbtl local scan',
+                            'qbtl local scan /path/to/file.torrent',
+                            'qbtl local scan /path/to/directory',
+              ],
+    },
+
     meta => {
         title    => 'QBTL metadata commands',
         usage    => 'qbtl meta <command>',

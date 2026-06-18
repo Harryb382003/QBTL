@@ -92,7 +92,7 @@ sub run_cli ( $self, @argv ) {
                     ) );
     }
 
-    return $self->{renderer}->help;
+    return $self->{renderer}->help( QBTL::Help->topic( 'local' ) );
   }
 
   if ( $cmd eq 'meta' ) {
@@ -342,7 +342,7 @@ sub run_cli ( $self, @argv ) {
     return $self->{renderer}->version( $QBTL::VERSION );
   }
 
-  return $self->{renderer}->help;
+  return $self->{renderer}->help( QBTL::Help->topic( 'main' ) );
 }
 
 sub browse ( $self ) {
