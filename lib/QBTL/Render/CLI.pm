@@ -158,6 +158,8 @@ sub local_scan ( $self, $result ) {
     say {$out} 'Local scan failed.';
     say {$out} '  backend:  ' . ( $result->{backend} // '' );
     say {$out} '  seen:     ' . ( $result->{seen} // 0 );
+    say {$out} '  torrents: ' . ( $result->{torrent_seen} // 0 );
+say {$out} '  fastres:  ' . ( $result->{fastresume_seen} // 0 );
     say {$out} '  stored:   ' . ( $result->{stored} // 0 );
     say {$out} '  parsed:   ' . ( $result->{parsed} // 0 );
 say {$out} '  problems: ' . ( $result->{parse_problems} // 0 );

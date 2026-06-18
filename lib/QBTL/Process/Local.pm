@@ -60,41 +60,49 @@ sub scan ( $self, %arg ) {
       my $parse_problem = 0;
       my @problem;
 
-      for my $path ( @{$scan->{paths} // []} ) {
-        my @stat = stat( $path );
+      for my $type ( qw(torrent fastresume) ) {
 
-        if ( !@stat ) {
-          push @problem, "stat failed for $path: $!";
-          next;
-        }
+        for my $path ( @{$scan->{types}{$type}{paths} // []} ) {
 
-        my $result = eval {
-          $db->upsert_local_torrent_file(
-                                          $dbh,
-                                          {
-                                           path    => $path,
-                                           size    => $stat[7],
-                                           mtime   => $stat[9],
-                                           backend => $scan->{backend},
-                                          } );
-        };
+          if ( $type eq 'fastresume' ) {
 
-        if ( $@ ) {
-          push @problem, "store failed for $path: $@";
-          next;
-        }
+            next;
 
-        if ( !$result->{ok} ) {
-          push @problem, "store failed for $path";
-          next;
-        }
+          }
+          my @stat = stat( $path );
 
-        $stored++;
+          if ( !@stat ) {
+            push @problem, "stat failed for $path: $!";
+            next;
+          }
 
-        my $parse = $self->parser->parse_file( $path );
+          my $result = eval {
+            $db->upsert_local_torrent_file(
+                                            $dbh,
+                                            {
+                                             path    => $path,
+                                             size    => $stat[7],
+                                             mtime   => $stat[9],
+                                             backend => $scan->{backend},
+                                            } );
+          };
 
-        my $parse_result = eval {
-          $db->update_local_torrent_parse(
+          if ( $@ ) {
+            push @problem, "store failed for $path: $@";
+            next;
+          }
+
+          if ( !$result->{ok} ) {
+            push @problem, "store failed for $path";
+            next;
+          }
+
+          $stored++;
+
+          my $parse = $self->parser->parse_file( $path );
+
+          my $parse_result = eval {
+            $db->update_local_torrent_parse(
                      $dbh,
                      {
                       path          => $path,
@@ -107,48 +115,49 @@ sub scan ( $self, %arg ) {
                       parse_ok      => $parse->{ok} ? 1     : 0,
                       parse_problem => $parse->{ok} ? undef : $parse->{problem},
                      } );
-        };
+          };
 
-        if ( $@ ) {
-          push @problem, "parse store failed for $path: $@";
-          next;
-        }
+          if ( $@ ) {
+            push @problem, "parse store failed for $path: $@";
+            next;
+          }
 
-        if ( !$parse_result->{ok} ) {
-          push @problem, "parse store failed for $path";
-          next;
-        }
+          if ( !$parse_result->{ok} ) {
+            push @problem, "parse store failed for $path";
+            next;
+          }
 
-        if ( $parse->{ok} && $parse->{infohash} ) {
-          for my $key ( @{$parse->{observed_keys} // []} ) {
-            my $stored_key = eval {
-              $db->upsert_hash_value(
+          if ( $parse->{ok} && $parse->{infohash} ) {
+            for my $key ( @{$parse->{observed_keys} // []} ) {
+              my $stored_key = eval {
+                $db->upsert_hash_value(
                                      $dbh,
                                      hash       => $parse->{infohash},
                                      key        => $key->{key},
                                      value      => $key->{value},
                                      value_type => $key->{value_type} // 'text',
-              );
-            };
+                );
+              };
 
-            if ( $@ ) {
-              push @problem, "metadata key store failed for $path: $@";
-              next;
-            }
+              if ( $@ ) {
+                push @problem, "metadata key store failed for $path: $@";
+                next;
+              }
 
-            if ( !$stored_key->{ok} ) {
-              push @problem,
-                  "metadata key store failed for $path: "
-                  . ( $stored_key->{error} // $key->{key} );
-              next;
+              if ( !$stored_key->{ok} ) {
+                push @problem,
+                    "metadata key store failed for $path: "
+                    . ( $stored_key->{error} // $key->{key} );
+                next;
+              }
             }
           }
-        }
 
-        if ( $parse->{ok} ) {
-          $parsed++;
-        } else {
-          $parse_problem++;
+          if ( $parse->{ok} ) {
+            $parsed++;
+          } else {
+            $parse_problem++;
+          }
         }
       }
 
@@ -156,17 +165,19 @@ sub scan ( $self, %arg ) {
           $db->promotion_candidates( $dbh, threshold => $threshold, );
 
       return {
-              ok                  => @problem ? 0 : 1,
-              action              => 'local_scan',
-              backend             => $scan->{backend},
-              seen                => $scan->{count},
-              stored              => $stored,
-              parsed              => $parsed,
-              parse_problems      => $parse_problem,
-              total               => $db->local_torrent_file_count( $dbh ),
-              elapsed             => _elapsed( $started ),
-              problems            => \@problem,
-              metadata_candidates => $metadata_candidates,};
+        ok                  => @problem ? 0 : 1,
+        action              => 'local_scan',
+        backend             => $scan->{backend},
+        seen                => $scan->{count},
+        torrent_seen        => $scan->{types}{torrent}{count} // 0,
+        fastresume_seen     => $scan->{types}{fastresume}{count} // 0,
+        stored              => $stored,
+        parsed              => $parsed,
+        parse_problems      => $parse_problem,
+        total               => $db->local_torrent_file_count($dbh),
+        elapsed             => _elapsed($started),
+        problems            => \@problem,
+        metadata_candidates => $metadata_candidates,};
     } );
 }
 
