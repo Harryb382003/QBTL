@@ -20,3 +20,6 @@ path = $HOME/QBTL/qbtl.db
 
 [metadata]
 promoter_threshold = 1
+
+[local]
+search_tool = mdfind

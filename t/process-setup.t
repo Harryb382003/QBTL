@@ -42,6 +42,8 @@ ok( -d "$home/tmp",     'tmp directory created' );
 ok( -e $db_path,                         'database file created' );
 ok( $result->{db_result}{ok},            'database setup result ok' );
 ok( $result->{db_result}{migration}{ok}, 'database migration result ok' );
+ok( $result->{local_search}{ok}, 'local search detection result ok' );
+ok( $result->{local_search}{search_tool}, 'local search tool selected' );
 
 my $second = $setup->run;
 

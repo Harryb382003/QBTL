@@ -32,6 +32,7 @@ sub new ( $class, %arg ) {
               db_path     => File::Spec->catfile( $home, 'QBTL', 'qbtl.db' ),
               qbt_url     => 'http://localhost:8080',
               time_format => 'full',
+              local_search_tool => 'mdfind',
               metadata_promoter_threshold => 20, );
 
   my $self = bless \%self, $class;
@@ -74,6 +75,14 @@ sub _load_config_file ( $self ) {
     $self->{qbt_url} = $config{qbt}{url};
   }
 
+  if ( exists $config{local}{search_tool} ) {
+    my $search_tool = $config{local}{search_tool};
+
+    if ( $search_tool =~ /\A(?:mdfind|plocate|mlocate|locate|slocate|find)\z/ ) {
+      $self->{local_search_tool} = $search_tool;
+    }
+  }
+
   if ( exists $config{database}{path} ) {
     my $db_path = $config{database}{path};
 
@@ -95,6 +104,8 @@ sub metadata_promoter_threshold ( $self ) {
 }
 
 sub qbt_url ( $self ) { return $self->{qbt_url}; }
+
+sub local_search_tool ( $self ) { return $self->{local_search_tool}; }
 
 sub _repo_root ( $self ) {
   my $lib_qbtl_dir = dirname( __FILE__ );         # .../lib/QBTL

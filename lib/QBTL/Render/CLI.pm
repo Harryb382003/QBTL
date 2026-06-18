@@ -635,6 +635,18 @@ sub setup ( $self, $result ) {
     say {$out} "  schema ready";
   }
 
+  if ( $result->{local_search} && $result->{local_search}{ok} ) {
+    say {$out} "";
+    say {$out} "Local search:";
+    say {$out} "  search_tool = " . $result->{local_search}{search_tool};
+    say {$out} "  path = " . $result->{local_search}{path};
+
+    if ( $result->{local_search}{warning} ) {
+      say {$out} "";
+      say {$out} $result->{local_search}{warning};
+    }
+  }
+
   return 0;
 }
 
