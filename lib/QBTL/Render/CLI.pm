@@ -155,7 +155,11 @@ sub local_scan ( $self, $result ) {
   my $out = $self->{out};
 
   if ( !$result->{ok} ) {
-    say {$out} 'Local scan failed.';
+    if ( defined $result->{target} && length $result->{target} ) {
+      say {$out} 'Local scan of ' . $result->{target} . ' failed.';
+    } else {
+      say {$out} 'Local scan failed.';
+    }
     say {$out} '  backend:  ' . ( $result->{backend} // '' );
     say {$out} '  seen:     ' . ( $result->{seen} // 0 );
     say {$out} '  torrents: ' . ( $result->{torrent_seen} // 0 );
@@ -179,7 +183,11 @@ sub local_scan ( $self, $result ) {
     return;
   }
 
-  say {$out} 'Local scan complete.';
+  if ( defined $result->{target} && length $result->{target} ) {
+    say {$out} 'Local scan of ' . $result->{target} . ' complete.';
+  } else {
+    say {$out} 'Local scan complete.';
+  }
   say {$out} '  backend:  ' . ( $result->{backend} // '' );
   say {$out} '  seen:     ' . ( $result->{seen} // 0 );
   say {$out} '  torrent stored:   ' . ( $result->{stored} // 0 );

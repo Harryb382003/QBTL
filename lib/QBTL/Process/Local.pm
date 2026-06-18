@@ -13,7 +13,9 @@ use QBTL::Process::WithDB;
 sub new ( $class, %arg ) {
   $arg{db_process} //= QBTL::Process::WithDB->new( db_path => $arg{db_path}, );
   $arg{parser}     //= QBTL::Local::Parser->new;
-  $arg{scanner}    //= QBTL::Local::Scanner->new;
+  $arg{scanner}    //= QBTL::Local::Scanner->new(
+    search_tool => $arg{search_tool},
+  );
 
   return bless \%arg, $class;
 }
@@ -44,6 +46,8 @@ sub scan ( $self, %arg ) {
             ok             => 0,
             action         => 'local_scan',
             backend        => $scan->{backend},
+            target         => $scan->{path},
+            search_tool    => $scan->{search_tool},
             seen           => $scan->{count} // 0,
             stored         => 0,
             parsed         => 0,
@@ -255,6 +259,8 @@ sub scan ( $self, %arg ) {
         ok      => @problem ? 0 : 1,
         action  => 'local_scan',
         backend => $scan->{backend},
+        target  => $scan->{path},
+        search_tool => $scan->{search_tool},
         seen    => $scan->{count},
 
         torrent_seen    => $scan->{types}{torrent}{count} // 0,

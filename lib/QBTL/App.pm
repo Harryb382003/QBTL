@@ -34,7 +34,10 @@ sub browse ( $self ) {
 
 sub local ( $self ) {
   $self->{local} //=
-      QBTL::Process::Local->new( db_path => $self->{config}->db_path, );
+      QBTL::Process::Local->new(
+        db_path     => $self->{config}->db_path,
+        search_tool => $self->{config}->local_search_tool,
+      );
 
   return $self->{local};
 }
