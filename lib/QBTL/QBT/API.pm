@@ -23,75 +23,14 @@ sub new ( $class, %arg ) {
   return bless \%arg, $class;
 }
 
-sub ua ( $self ) {
-  return $self->{ua};
-}
-
-sub execute_request ( $self, $request ) {
-  if ( !$self->{ua} ) {
-    return {
-            ok      => 0,
-            status  => 'no_user_agent',
-            request => $request,
-            error   => 'No user agent configured',
-    };
-  }
-
-  return $self->_execute_lwp_request( $request );
-}
-
-sub _execute_lwp_request ( $self, $request ) {
-  my $method = $request->{method} // '';
-  my $url    = $request->{url}    // '';
-
-  if ( $method eq 'GET' ) {
-    my $uri = URI->new( $url );
-
-    if ( %{ $request->{params} // {} } ) {
-      $uri->query_form( %{ $request->{params} } );
-    }
-
-    my $res = $self->{ua}->get( $uri );
-
-    return {
-            ok      => $res->is_success ? 1 : 0,
-            status  => $res->status_line,
-            code    => $res->code,
-            request => $request,
-            url     => "$uri",
-            body    => $res->decoded_content // '',
-    };
-  }
-
-  if ( $method eq 'POST' ) {
-    my $res = $self->{ua}->post( $url, $request->{params} // {} );
-
-    return {
-            ok      => $res->is_success ? 1 : 0,
-            status  => $res->status_line,
-            code    => $res->code,
-            request => $request,
-            url     => $url,
-            body    => $res->decoded_content // '',
-    };
-  }
-
-  return {
-          ok      => 0,
-          status  => 'unsupported_method',
-          request => $request,
-          error   => "Unsupported method: $method",
-  };
-}
-
-sub base_url ($self) {
-    return $self->{base_url};
-}
-
 sub api_url ($self, $path) {
     $path =~ s{\A/+}{};
 
     return $self->base_url . '/api/v2/' . $path;
+}
+
+sub base_url ($self) {
+    return $self->{base_url};
 }
 
 sub endpoint ($self, $name) {
@@ -152,6 +91,63 @@ sub endpoint_spec ($self, $name) {
     return $spec{$name};
 }
 
+sub execute_request ( $self, $request ) {
+  if ( !$self->{ua} ) {
+    return {
+            ok      => 0,
+            status  => 'no_user_agent',
+            request => $request,
+            error   => 'No user agent configured',
+    };
+  }
+
+  return $self->_execute_lwp_request( $request );
+}
+
+sub _execute_lwp_request ( $self, $request ) {
+  my $method = $request->{method} // '';
+  my $url    = $request->{url}    // '';
+
+  if ( $method eq 'GET' ) {
+    my $uri = URI->new( $url );
+
+    if ( %{ $request->{params} // {} } ) {
+      $uri->query_form( %{ $request->{params} } );
+    }
+
+    my $res = $self->{ua}->get( $uri );
+
+    return {
+            ok      => $res->is_success ? 1 : 0,
+            status  => $res->status_line,
+            code    => $res->code,
+            request => $request,
+            url     => "$uri",
+            body    => $res->decoded_content // '',
+    };
+  }
+
+  if ( $method eq 'POST' ) {
+    my $res = $self->{ua}->post( $url, $request->{params} // {} );
+
+    return {
+            ok      => $res->is_success ? 1 : 0,
+            status  => $res->status_line,
+            code    => $res->code,
+            request => $request,
+            url     => $url,
+            body    => $res->decoded_content // '',
+    };
+  }
+
+  return {
+          ok      => 0,
+          status  => 'unsupported_method',
+          request => $request,
+          error   => "Unsupported method: $method",
+  };
+}
+
 sub request ($self, $name, %arg) {
     my $spec = $self->endpoint_spec($name);
 
@@ -161,6 +157,14 @@ sub request ($self, $name, %arg) {
         url      => $self->api_url( $spec->{path} ),
         params   => $arg{params} // {},
     };
+}
+
+sub ua ( $self ) {
+  $self->{ua} //= LWP::UserAgent->new(
+    cookie_jar => {},
+  );
+
+  return $self->{ua};
 }
 
 
@@ -199,10 +203,7 @@ sub torrents_files ($self, $hash) {
 }
 
 sub torrents_info ($self, %params) {
-    return $self->request(
-        'torrents_info',
-        params => \%params,
-    );
+    return $self->request( 'torrents_info', params => \%params, );
 }
 
 sub torrents_pause ($self, $hashes) {

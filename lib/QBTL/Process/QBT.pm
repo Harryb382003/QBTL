@@ -9,9 +9,12 @@ use JSON::PP qw( decode_json );
 use QBTL::QBT::API;
 
 sub new ( $class, %arg ) {
-  $arg{api} //= QBTL::QBT::API->new;
+  my $self = bless {
+    url => $arg{url},
+    ua  => $arg{ua},
+  }, $class;
 
-  return bless \%arg, $class;
+  return $self;
 }
 
 sub api ( $self ) {
@@ -186,16 +189,24 @@ sub torrents_info_request ( $self, %params ) {
           request => $request,};
 }
 
-sub version_request ( $self ) {
-  return {
-          ok      => 1,
-          action  => 'qbt_version',
-          request => $self->{api}->app_version,};
-}
-
 sub version ( $self ) {
   my $request = $self->{api}->app_version;
   my $result  = $self->{api}->execute_request( $request );
+
+  if ( !$result->{ok} && ( $result->{code} // 0 ) =~ /\A(?:401|403)\z/ ) {
+    my $login = $self->login;
+
+    if ( !$login->{ok} ) {
+      return {
+              ok      => 0,
+              action  => 'qbt_version',
+              request => $request,
+              result  => $result,
+              login   => $login,};
+    }
+
+    $result = $self->{api}->execute_request( $request );
+  }
 
   return {
           ok      => $result->{ok} ? 1 : 0,

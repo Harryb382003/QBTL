@@ -25,12 +25,11 @@ sub new ( $class, %arg ) {
   return bless \%arg, $class;
 }
 
-sub _qbtl_home ( $self ) {
-  my $db_path = $self->{config}->db_path;
+sub browse ( $self ) {
+  $self->{browse} //=
+      QBTL::Process::Browse->new( db_path => $self->{config}->db_path, );
 
-  $db_path =~ s{/[^/]+\z}{};
-
-  return $db_path;
+  return $self->{browse};
 }
 
 sub local ( $self ) {
@@ -45,6 +44,14 @@ sub metadata ( $self ) {
       QBTL::Process::Metadata->new( db_path => $self->{config}->db_path, );
 
   return $self->{metadata};
+}
+
+sub _qbtl_home ( $self ) {
+  my $db_path = $self->{config}->db_path;
+
+  $db_path =~ s{/[^/]+\z}{};
+
+  return $db_path;
 }
 
 sub run_cli ( $self, @argv ) {
@@ -343,13 +350,6 @@ sub run_cli ( $self, @argv ) {
   }
 
   return $self->{renderer}->help( QBTL::Help->topic( 'main' ) );
-}
-
-sub browse ( $self ) {
-  $self->{browse} //=
-      QBTL::Process::Browse->new( db_path => $self->{config}->db_path, );
-
-  return $self->{browse};
 }
 
 sub search ( $self ) {
