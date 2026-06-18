@@ -26,18 +26,46 @@ sub _path_torrents ( $self, $path ) {
   }
 
   if ( -f $path ) {
-    if ( $path =~ /\.torrent\z/i ) {
-      push @paths, File::Spec->rel2abs( $path );
-    } else {
-      push @problems, "not a .torrent file: $path";
+    my @type = qw(torrent fastresume);
+
+    my %type = map { $_ => {count => 0, paths => [],} } @type;
+
+    my $matched;
+
+    for my $type ( @type ) {
+      if ( $path =~ /\.\Q$type\E\z/i ) {
+        push @{$type{$type}{paths}}, $path;
+        $type{$type}{count} = 1;
+        $matched = 1;
+        last;
+      }
     }
 
+    if ( !$matched ) {
+      return {
+              ok       => 0,
+              backend  => 'path',
+              count    => 0,
+              paths    => [],
+              types    => \%type,
+              problems => ["not a .torrent or .fastresume file: $path"],};
+    }
+
+    my $count = 0;
+    $count += $type{$_}{count} for @type;
+
     return {
-            ok       => @problems ? 0 : 1,
-            backend  => 'path',
-            paths    => \@paths,
-            count    => scalar @paths,
-            problems => \@problems,};
+      ok      => 1,
+      backend => 'path',
+      count   => $count,
+
+      # compatibility for existing torrent callers
+      paths => $type{torrent}{paths},
+
+      # grouped result
+      types => \%type,
+
+      problems => [],};
   }
 
   if ( -d $path ) {

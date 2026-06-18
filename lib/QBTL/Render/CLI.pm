@@ -159,10 +159,17 @@ sub local_scan ( $self, $result ) {
     say {$out} '  backend:  ' . ( $result->{backend} // '' );
     say {$out} '  seen:     ' . ( $result->{seen} // 0 );
     say {$out} '  torrents: ' . ( $result->{torrent_seen} // 0 );
-say {$out} '  fastres:  ' . ( $result->{fastresume_seen} // 0 );
     say {$out} '  stored:   ' . ( $result->{stored} // 0 );
     say {$out} '  parsed:   ' . ( $result->{parsed} // 0 );
-say {$out} '  problems: ' . ( $result->{parse_problems} // 0 );
+    say {$out} '  problems: ' . ( $result->{parse_problems} // 0 );
+    say {$out} '  fastres:  ' . ( $result->{fastresume_seen} // 0 );
+    say {$out} '  fastres stored:   '
+      . ( $result->{fastresume_stored} // 0 );
+    say {$out} '  fastres parsed:   '
+      . ( $result->{fastresume_parsed} // 0 );
+    say {$out} '  fastres problems: '
+      . ( $result->{fastresume_parse_problems} // 0 );
+    say {$out} '  fastres total:    ' . ( $result->{fastresume_total} // 0 );
 
     for my $problem ( @{ $result->{problems} // [] } ) {
       say {$out} "  problem:  $problem";
@@ -175,10 +182,20 @@ say {$out} '  problems: ' . ( $result->{parse_problems} // 0 );
   say {$out} 'Local scan complete.';
   say {$out} '  backend:  ' . ( $result->{backend} // '' );
   say {$out} '  seen:     ' . ( $result->{seen} // 0 );
-  say {$out} '  stored:   ' . ( $result->{stored} // 0 );
-  say {$out} '  parsed:   ' . ( $result->{parsed} // 0 );
-  say {$out} '  problems: ' . ( $result->{parse_problems} // 0 );
-  say {$out} '  total:    ' . ( $result->{total} // 0 );
+  say {$out} '  torrent stored:   ' . ( $result->{stored} // 0 );
+  say {$out} '  torrent parsed:   ' . ( $result->{parsed} // 0 );
+  say {$out} '  torrent problems: ' . ( $result->{parse_problems} // 0 );
+  say {$out} '  torrent total:    ' . ( $result->{total} // 0 );
+
+      say {$out} '';
+  say {$out} '  fastres stored:   '
+    . ( $result->{fastresume_stored} // 0 );
+  say {$out} '  fastres parsed:   '
+    . ( $result->{fastresume_parsed} // 0 );
+  say {$out} '  fastres problems: '
+    . ( $result->{fastresume_parse_problems} // 0 );
+  say {$out} '  fastres total:    ' . ( $result->{fastresume_total} // 0 );
+      say {$out} '';
   say {$out} '  elapsed:  ' . ( $result->{elapsed} // '' ) . 's';
 
   my $metadata_candidates = $result->{metadata_candidates};

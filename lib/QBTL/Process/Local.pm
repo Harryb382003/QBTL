@@ -55,9 +55,12 @@ sub scan ( $self, %arg ) {
 
   return $self->db_process->with_db(
     sub ( $db, $dbh ) {
-      my $stored        = 0;
-      my $parsed        = 0;
-      my $parse_problem = 0;
+      my $stored                   = 0;
+      my $parsed                   = 0;
+      my $parse_problem            = 0;
+      my $fastresume_stored        = 0;
+      my $fastresume_parsed        = 0;
+      my $fastresume_parse_problem = 0;
       my @problem;
 
       for my $type ( qw(torrent fastresume) ) {
@@ -65,9 +68,93 @@ sub scan ( $self, %arg ) {
         for my $path ( @{$scan->{types}{$type}{paths} // []} ) {
 
           if ( $type eq 'fastresume' ) {
+            my @stat = stat( $path );
+
+            if ( !@stat ) {
+              push @problem, "stat failed for $path: $!";
+              next;
+            }
+
+            my $store = eval {
+              $db->upsert_local_fastresume_file(
+                                                 $dbh,
+                                                 {
+                                                  path    => $path,
+                                                  size    => $stat[7],
+                                                  mtime   => $stat[9],
+                                                  backend => $scan->{backend},
+                                                 } );
+            };
+
+            if ( $@ ) {
+              push @problem, "fastresume store failed for $path: $@";
+              next;
+            }
+
+            if ( !$store->{ok} ) {
+              push @problem, "fastresume store failed for $path";
+              next;
+            }
+
+            $fastresume_stored++;
+
+            my $parse = $self->parser->parse_file( $path );
+
+            my $parse_store = eval {
+              $db->update_local_fastresume_parse(
+                     $dbh,
+                     {
+                      path          => $path,
+                      infohash      => $parse->{infohash},
+                      parse_ok      => $parse->{ok} ? 1     : 0,
+                      parse_problem => $parse->{ok} ? undef : $parse->{problem},
+                     } );
+            };
+
+            if ( $@ ) {
+              push @problem, "fastresume parse store failed for $path: $@";
+              next;
+            }
+
+            if ( !$parse_store->{ok} ) {
+              push @problem, "fastresume parse store failed for $path";
+              next;
+            }
+
+            if ( $parse->{ok} && $parse->{infohash} ) {
+              for my $key ( @{$parse->{observed_keys} // []} ) {
+                my $stored_key = eval {
+                  $db->upsert_hash_value(
+                                     $dbh,
+                                     hash       => $parse->{infohash},
+                                     key        => $key->{key},
+                                     value      => $key->{value},
+                                     value_type => $key->{value_type} // 'text',
+                  );
+                };
+
+                if ( $@ ) {
+                  push @problem,
+                      "fastresume metadata key store failed for $path: $@";
+                  next;
+                }
+
+                if ( !$stored_key->{ok} ) {
+                  push @problem,
+                      "fastresume metadata key store failed for $path: "
+                      . ( $stored_key->{error} // $key->{key} );
+                  next;
+                }
+              }
+            }
+
+            if ( $parse->{ok} ) {
+              $fastresume_parsed++;
+            } else {
+              $fastresume_parse_problem++;
+            }
 
             next;
-
           }
           my @stat = stat( $path );
 
@@ -165,17 +252,24 @@ sub scan ( $self, %arg ) {
           $db->promotion_candidates( $dbh, threshold => $threshold, );
 
       return {
-        ok                  => @problem ? 0 : 1,
-        action              => 'local_scan',
-        backend             => $scan->{backend},
-        seen                => $scan->{count},
-        torrent_seen        => $scan->{types}{torrent}{count} // 0,
-        fastresume_seen     => $scan->{types}{fastresume}{count} // 0,
-        stored              => $stored,
-        parsed              => $parsed,
-        parse_problems      => $parse_problem,
-        total               => $db->local_torrent_file_count($dbh),
-        elapsed             => _elapsed($started),
+        ok      => @problem ? 0 : 1,
+        action  => 'local_scan',
+        backend => $scan->{backend},
+        seen    => $scan->{count},
+
+        torrent_seen    => $scan->{types}{torrent}{count} // 0,
+        stored          => $stored,
+        parsed          => $parsed,
+        parse_problems  => $parse_problem,
+        fastresume_seen => $scan->{types}{fastresume}{count} // 0,
+        total           => $db->local_torrent_file_count( $dbh ),
+
+        fastresume_stored         => $fastresume_stored,
+        fastresume_parsed         => $fastresume_parsed,
+        fastresume_parse_problems => $fastresume_parse_problem,
+        fastresume_total          => $db->local_fastresume_file_count( $dbh ),
+
+        elapsed             => _elapsed( $started ),
         problems            => \@problem,
         metadata_candidates => $metadata_candidates,};
     } );
