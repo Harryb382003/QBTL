@@ -192,9 +192,11 @@ sub torrents_info_request ( $self, %params ) {
 sub version ( $self ) {
   my $request = $self->{api}->app_version;
   my $result  = $self->{api}->execute_request( $request );
+  my $login;
+  my $retried = 0;
 
   if ( !$result->{ok} && ( $result->{code} // 0 ) =~ /\A(?:401|403)\z/ ) {
-    my $login = $self->login;
+    $login = $self->login;
 
     if ( !$login->{ok} ) {
       return {
@@ -205,14 +207,25 @@ sub version ( $self ) {
               login   => $login,};
     }
 
-    $result = $self->{api}->execute_request( $request );
+    $result  = $self->{api}->execute_request( $request );
+    $retried = 1;
   }
 
-  return {
-          ok      => $result->{ok} ? 1 : 0,
-          action  => 'qbt_version',
-          request => $request,
-          result  => $result,};
+  my $response = {
+                  ok      => $result->{ok} ? 1 : 0,
+                  action  => 'qbt_version',
+                  request => $request,
+                  result  => $result,};
+
+  if ( $login ) {
+    $response->{login} = $login;
+  }
+
+  if ( $retried ) {
+    $response->{retried} = 1;
+  }
+
+  return $response;
 }
 
 sub _decode_info_rows ( $self, $result ) {
