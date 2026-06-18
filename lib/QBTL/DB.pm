@@ -235,10 +235,9 @@ sub promote_hash_key ( $self, $dbh, %arg ) {
 
   if ( !defined $key || $key eq '' ) {
     return {
-      ok     => 0,
-      status => 'invalid_key',
-      error  => 'key is required',
-    };
+            ok     => 0,
+            status => 'invalid_key',
+            error  => 'key is required',};
   }
 
   my $exists = $dbh->selectrow_array(
@@ -248,27 +247,24 @@ sub promote_hash_key ( $self, $dbh, %arg ) {
       WHERE "key" = ?
     },
     undef,
-    $key,
-  );
+    $key, );
 
   if ( !$exists ) {
     return {
-      ok     => 0,
-      status => 'key_not_found',
-      error  => "observed key not found: $key",
-      key    => $key,
-    };
+            ok     => 0,
+            status => 'key_not_found',
+            error  => "observed key not found: $key",
+            key    => $key,};
   }
 
-  my $column = $arg{column} // _safe_promoted_column_name($key);
+  my $column = $arg{column} // _safe_promoted_column_name( $key );
 
   if ( $column !~ /\A[a-z][a-z0-9_]*\z/ ) {
     return {
-      ok     => 0,
-      status => 'invalid_column',
-      error  => "invalid promoted column name: $column",
-      key    => $key,
-    };
+            ok     => 0,
+            status => 'invalid_column',
+            error  => "invalid promoted column name: $column",
+            key    => $key,};
   }
 
   my $already = $dbh->selectrow_hashref(
@@ -278,18 +274,16 @@ sub promote_hash_key ( $self, $dbh, %arg ) {
       WHERE "key" = ?
     },
     undef,
-    $key,
-  );
+    $key, );
 
-  if ($already) {
+  if ( $already ) {
     return {
-      ok            => 1,
-      status        => 'already_promoted',
-      key           => $key,
-      target_column => $already->{target_column},
-      promoted      => 0,
-      backfilled    => 0,
-    };
+            ok            => 1,
+            status        => 'already_promoted',
+            key           => $key,
+            target_column => $already->{target_column},
+            promoted      => 0,
+            backfilled    => 0,};
   }
 
   my $column_exists = _column_exists( $dbh, 'promoted_values', $column );
@@ -313,8 +307,7 @@ sub promote_hash_key ( $self, $dbh, %arg ) {
     undef,
     $key,
     $column,
-    $arg{value_type} // 'text',
-  );
+    $arg{value_type} // 'text', );
 
   my $rows = $dbh->selectall_arrayref(
     q{
@@ -323,9 +316,8 @@ sub promote_hash_key ( $self, $dbh, %arg ) {
       WHERE "key" = ?
       ORDER BY last_seen_on DESC, id DESC
     },
-    { Slice => {} },
-    $key,
-  );
+    {Slice => {}},
+    $key, );
 
   my $insert = $dbh->prepare(
     q{
@@ -347,7 +339,7 @@ sub promote_hash_key ( $self, $dbh, %arg ) {
   my $backfilled = 0;
 
   for my $row ( @{$rows} ) {
-    next if $seen_hash{ $row->{hash} }++;
+    next if $seen_hash{$row->{hash}}++;
 
     $insert->execute( $row->{hash} );
     $update->execute( $row->{value}, $row->{hash} );
@@ -356,13 +348,12 @@ sub promote_hash_key ( $self, $dbh, %arg ) {
   }
 
   return {
-    ok            => 1,
-    status        => 'promoted',
-    key           => $key,
-    target_column => $column,
-    promoted      => 1,
-    backfilled    => $backfilled,
-  };
+          ok            => 1,
+          status        => 'promoted',
+          key           => $key,
+          target_column => $column,
+          promoted      => 1,
+          backfilled    => $backfilled,};
 }
 
 sub qbt_info_columns ( $self, $dbh ) {
@@ -427,7 +418,7 @@ sub removed_qbt_count ( $self, $dbh ) {
   return $count // 0;
 }
 
-sub _safe_promoted_column_name ($key) {
+sub _safe_promoted_column_name ( $key ) {
   my $column = lc $key;
 
   $column =~ s/[^a-z0-9]+/_/g;
@@ -447,10 +438,8 @@ sub _safe_promoted_column_name ($key) {
 }
 
 sub _column_exists ( $dbh, $table, $column ) {
-  my $columns = $dbh->selectall_arrayref(
-    qq{PRAGMA table_info("$table")},
-    { Slice => {} },
-  );
+  my $columns = $dbh->selectall_arrayref( qq{PRAGMA table_info("$table")},
+                                          {Slice => {}}, );
 
   for my $row ( @{$columns} ) {
     if ( $row->{name} eq $column ) {
@@ -665,13 +654,11 @@ sub promoted_hash_keys ( $self, $dbh ) {
       FROM promoted_keys
       ORDER BY "key" ASC
     },
-    { Slice => {} },
-  );
+    {Slice => {}}, );
 
   return {
-    ok   => 1,
-    rows => $rows,
-  };
+          ok   => 1,
+          rows => $rows,};
 }
 
 sub promotion_candidates ( $self, $dbh, %arg ) {
@@ -679,18 +666,18 @@ sub promotion_candidates ( $self, $dbh, %arg ) {
 
   if ( $threshold !~ /\A[0-9]+\z/ ) {
     return {
-      ok     => 0,
-      status => 'invalid_threshold',
-      error  => 'threshold must be a non-negative integer',
-    };
+            ok     => 0,
+            status => 'invalid_threshold',
+            error  => 'threshold must be a non-negative integer',};
   }
+
+  $threshold = 0 + $threshold;
 
   if ( $threshold == 0 ) {
     return {
-      ok         => 1,
-      threshold  => 0,
-      candidates => [],
-    };
+            ok         => 1,
+            threshold  => 0,
+            candidates => [],};
   }
 
   my $rows = $dbh->selectall_arrayref(
@@ -705,18 +692,16 @@ sub promotion_candidates ( $self, $dbh, %arg ) {
         ON pk."key" = hv."key"
       WHERE pk."key" IS NULL
       GROUP BY hv."key"
-      HAVING SUM(hv.seen_count) >= ?
+            HAVING SUM(hv.seen_count) >= CAST(? AS INTEGER)
       ORDER BY seen DESC, hv."key" ASC
     },
-    { Slice => {} },
-    $threshold,
-  );
+    {Slice => {}},
+    $threshold, );
 
   return {
-    ok         => 1,
-    threshold  => $threshold,
-    candidates => $rows,
-  };
+          ok         => 1,
+          threshold  => $threshold,
+          candidates => $rows,};
 }
 
 sub upsert_hash_value ( $self, $dbh, %arg ) {

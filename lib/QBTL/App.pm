@@ -11,6 +11,7 @@ use QBTL::DB;
 use QBTL::Help;
 use QBTL::Process::Local;
 use QBTL::Process::Metadata;
+use QBTL::Process::Browse;
 use QBTL::Process::QBT;
 use QBTL::Process::Search;
 use QBTL::Process::Setup;
@@ -83,8 +84,12 @@ sub run_cli ( $self, @argv ) {
     if ( $subcmd eq 'scan' ) {
       my $path = shift @argv;
 
-      return $self->{renderer}
-          ->local_scan( $self->local->scan( path => $path, ) );
+      return
+          $self->{renderer}->local_scan(
+                    $self->local->scan(
+                      path      => $path,
+                      threshold => $self->{config}->metadata_promoter_threshold,
+                    ) );
     }
 
     return $self->{renderer}->help;

@@ -35,8 +35,9 @@ sub scanner ( $self ) {
 }
 
 sub scan ( $self, %arg ) {
-  my $started = time;
-  my $scan    = $self->scanner->scan_torrents( path => $arg{path}, );
+  my $started   = time;
+  my $threshold = $arg{threshold} // 20;
+  my $scan      = $self->scanner->scan_torrents( path => $arg{path}, );
 
   if ( !$scan->{ok} ) {
     return {
@@ -151,17 +152,21 @@ sub scan ( $self, %arg ) {
         }
       }
 
+      my $metadata_candidates =
+          $db->promotion_candidates( $dbh, threshold => $threshold, );
+
       return {
-              ok             => @problem ? 0 : 1,
-              action         => 'local_scan',
-              backend        => $scan->{backend},
-              seen           => $scan->{count},
-              stored         => $stored,
-              parsed         => $parsed,
-              parse_problems => $parse_problem,
-              total          => $db->local_torrent_file_count( $dbh ),
-              elapsed        => _elapsed( $started ),
-              problems       => \@problem,};
+              ok                  => @problem ? 0 : 1,
+              action              => 'local_scan',
+              backend             => $scan->{backend},
+              seen                => $scan->{count},
+              stored              => $stored,
+              parsed              => $parsed,
+              parse_problems      => $parse_problem,
+              total               => $db->local_torrent_file_count( $dbh ),
+              elapsed             => _elapsed( $started ),
+              problems            => \@problem,
+              metadata_candidates => $metadata_candidates,};
     } );
 }
 
