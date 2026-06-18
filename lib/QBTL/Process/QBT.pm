@@ -9,12 +9,12 @@ use JSON::PP qw( decode_json );
 use QBTL::QBT::API;
 
 sub new ( $class, %arg ) {
-  my $self = bless {
-    url => $arg{url},
-    ua  => $arg{ua},
-  }, $class;
+  $arg{api} //= QBTL::QBT::API->new;
+  return bless \%arg, $class;
+}
 
-  return $self;
+sub api ( $self ) {
+  return $self->{api};
 }
 
 sub api ( $self ) {
