@@ -26,7 +26,7 @@ is( $db->migration_dir,
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 9, 'nine migration files discovered' );
+is( scalar @migration_files, 12, 'twelve migration files discovered' );
 like( $migration_files[0], qr/001_initial\.sql\z/,
       'initial migration discovered' );
 like( $migration_files[1], qr/002_qbt_info\.sql\z/,
@@ -48,6 +48,8 @@ like( $migration_files[7], qr/008_hash_values\.sql\z/,
 like( $migration_files[8],
       qr/009_local_fastresume_files\.sql\z/,
       'local_fastresume_files migration discovered' );
+like( $migration_files[9], qr/010_key_accessors\.sql\z/,
+      'key_accessors migration discovered' );
 my @problems = $db->verify_path;
 
 is_deeply( \@problems, [], 'valid temp DB directory has no path problems' );
@@ -62,12 +64,12 @@ my $dbh = $result->{dbh};
 my $migration = $db->migrate( $result->{dbh} );
 
 ok( $migration->{ok}, 'migration result ok' );
-is( $migration->{migration_count}, 9, 'nine migrations ran' );
+is( $migration->{migration_count}, 12, 'twelve migrations ran' );
 
 my ( $version ) = $result->{dbh}
     ->selectrow_array( 'SELECT version FROM schema_version WHERE id = 1' );
 
-is( $version, 9, 'schema version stored' );
+is( $version, 12, 'schema version stored' );
 
 my $hash = '7ba7c0f31cd3ae7186c8d08353cfa87291b825e4';
 
@@ -136,6 +138,18 @@ ok( $keys->{ok}, 'hash keys result ok' );
 is( $keys->{rows}[0]{key},    'qBt-savePath', 'hash key listed' );
 is( $keys->{rows}[0]{hashes}, 1,              'hash key hash count listed' );
 
+my $accessors = $db->key_accessors( $result->{dbh} );
+
+ok( $accessors->{ok}, 'key accessors result ok' );
+
+my %accessor = map { $_->{key} => $_ } @{$accessors->{rows}};
+
+is( $accessor{comment}{kind},        'core', 'core key accessor seeded' );
+is( $accessor{'qBt-savePath'}{kind}, 'core', 'promoted key becomes core-ish' );
+is( $accessor{'qBt-savePath'}{source},
+    'promoted_values.qbt_savepath',
+    'promoted key accessor source updated' );
+
 my $key_detail = $db->hash_key_detail(
                                        $result->{dbh},
                                        key   => 'qBt-savePath',
@@ -152,6 +166,12 @@ my $manual = $db->set_manual_value(
                                     value => '/Volumes/B/Movies', );
 
 ok( $manual->{ok}, 'manual value set result ok' );
+
+my $manual_accessor = $db->key_accessors( $result->{dbh} );
+my %manual_accessor = map { $_->{key} => $_ } @{$manual_accessor->{rows}};
+
+is( $manual_accessor{preferred_path}{kind},
+    'manual', 'manual key accessor registered' );
 
 my $manual_rows = $db->manual_values_for_hash( $result->{dbh}, $hash );
 

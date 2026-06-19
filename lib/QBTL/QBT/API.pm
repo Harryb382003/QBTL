@@ -48,6 +48,10 @@ sub endpoint_spec ($self, $name) {
             method => 'GET',
             path   => 'app/version',
         },
+        app_preferences => {
+            method => 'GET',
+            path   => 'app/preferences',
+        },
         torrents_info => {
             method => 'GET',
             path   => 'torrents/info',
@@ -174,6 +178,14 @@ sub ua ( $self ) {
 
 sub app_version ($self) {
     return $self->request('app_version');
+}
+
+sub app_preferences ($self) {
+    return $self->request('app_preferences');
+}
+
+sub app_preferences ($self) {
+    return $self->request('app_preferences');
 }
 
 sub login ($self, $username, $password) {

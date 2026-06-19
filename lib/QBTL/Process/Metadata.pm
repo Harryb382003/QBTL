@@ -31,6 +31,13 @@ sub keys ( $self ) {
     } );
 }
 
+sub keys_all ( $self ) {
+  return $self->{with_db}->with_db(
+    sub ( $db, $dbh ) {
+      return $db->key_accessors( $dbh );
+    } );
+}
+
 sub set_manual ( $self, %arg ) {
   return $self->{with_db}->with_db(
     sub ( $db, $dbh ) {

@@ -99,6 +99,10 @@ is( $custom_api->endpoint( 'app_version' ),
     'http://127.0.0.1:9090/api/v2/app/version',
     'app_version endpoint' );
 
+is( $custom_api->endpoint( 'app_preferences' ),
+    'http://127.0.0.1:9090/api/v2/app/preferences',
+    'app_preferences endpoint' );
+
 is( $custom_api->endpoint( 'torrents_info' ),
     'http://127.0.0.1:9090/api/v2/torrents/info',
     'torrents_info endpoint' );
@@ -141,6 +145,12 @@ my $version_request = $default_api->app_version;
 
 is( $version_request->{endpoint}, 'app_version', 'app_version endpoint' );
 is( $version_request->{method},   'GET',         'app_version method' );
+
+my $preferences_request = $default_api->app_preferences;
+
+is( $preferences_request->{endpoint},
+    'app_preferences', 'app_preferences endpoint' );
+is( $preferences_request->{method}, 'GET', 'app_preferences method' );
 
 my $info_request =
     $default_api->torrents_info( filter => 'all',

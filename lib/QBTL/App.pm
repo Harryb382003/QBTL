@@ -35,8 +35,8 @@ sub browse ( $self ) {
 sub local ( $self ) {
   $self->{local} //=
       QBTL::Process::Local->new(
-        db_path     => $self->{config}->db_path,
-        search_tool => $self->{config}->local_search_tool,
+                              db_path     => $self->{config}->db_path,
+                              search_tool => $self->{config}->local_search_tool,
       );
 
   return $self->{local};
@@ -113,6 +113,13 @@ sub run_cli ( $self, @argv ) {
     }
 
     if ( $subcmd eq 'keys' ) {
+      my $scope = shift @argv;
+
+      if ( defined $scope && $scope eq 'all' ) {
+        return $self->{renderer}
+            ->metadata_keys_all( $self->metadata->keys_all );
+      }
+
       return $self->{renderer}->metadata_keys( $self->metadata->keys );
     }
 
@@ -334,6 +341,88 @@ sub run_cli ( $self, @argv ) {
       $connect->{dbh}->disconnect;
 
       return $self->{renderer}->qbt_refresh( $result );
+    }
+
+    if ( $subcmd eq 'preferences' ) {
+      my $prefcmd = shift @argv;
+
+      my $db      = QBTL::DB->new( db_path => $self->{config}->db_path );
+      my $connect = $db->connect;
+
+      if ( !$connect->{ok} ) {
+        return
+            $self->{renderer}->status(
+                                       {
+                                        ok       => 0,
+                                        db_path  => $self->{config}->db_path,
+                                        problems => $connect->{problems},} );
+      }
+
+      my $migration = $db->migrate( $connect->{dbh} );
+
+      if ( !$migration->{ok} ) {
+        $connect->{dbh}->disconnect;
+
+        return
+            $self->{renderer}->qbt_preferences(
+                      {
+                       ok       => 0,
+                       action   => 'qbt_preferences_refresh',
+                       seen     => 0,
+                       stored   => 0,
+                       problems => [
+                                     {
+                                      key   => undef,
+                                      error => 'database schema update failed',
+                                     },
+                       ],} );
+      }
+      if ( defined $prefcmd && $prefcmd eq 'keys' ) {
+        my $result = $db->qbt_preference_keys( $connect->{dbh} );
+
+        $connect->{dbh}->disconnect;
+
+        return $self->{renderer}->qbt_preference_keys( $result );
+      }
+
+      if ( defined $prefcmd && $prefcmd ne 'refresh' ) {
+        $connect->{dbh}->disconnect;
+
+        return $self->{renderer}->help( QBTL::Help->topic( 'qbt' ) );
+      }
+
+      my $api = QBTL::QBT::API->new( base_url => $self->{config}->qbt_url, );
+      my $process     = QBTL::Process::QBT->new( api => $api );
+      my $preferences = $process->preferences;
+
+      if ( !$preferences->{ok} ) {
+        $connect->{dbh}->disconnect;
+
+        return
+            $self->{renderer}->qbt_preferences(
+            {
+             ok       => 0,
+             action   => 'qbt_preferences_refresh',
+             seen     => 0,
+             stored   => 0,
+             problems => [
+                         {
+                          key   => undef,
+                          error => 'qBittorrent app/preferences request failed',
+                         },
+             ],} );
+      }
+
+      my $result =
+          $process->refresh_preferences(
+                               dbh         => $connect->{dbh},
+                               db          => $db,
+                               preferences => $preferences->{preferences} // {},
+          );
+
+      $connect->{dbh}->disconnect;
+
+      return $self->{renderer}->qbt_preferences( $result );
     }
 
     if ( $subcmd eq 'version' ) {

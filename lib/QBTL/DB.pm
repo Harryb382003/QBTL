@@ -332,6 +332,15 @@ sub promote_hash_key ( $self, $dbh, %arg ) {
     $column,
     $arg{value_type} // 'text', );
 
+  $self->upsert_key_accessor(
+    $dbh,
+    key    => $key,
+    kind   => 'core',
+    source => 'promoted_values.' . $column,
+    status => 'todo',
+    note   => 'Promoted from observed metadata key',
+  );
+
   my $rows = $dbh->selectall_arrayref(
     q{
       SELECT hash, value
@@ -377,6 +386,90 @@ sub promote_hash_key ( $self, $dbh, %arg ) {
           target_column => $column,
           promoted      => 1,
           backfilled    => $backfilled,};
+}
+
+
+sub qbt_preferences ( $self, $dbh ) {
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        "key",
+        value,
+        value_type,
+        first_seen_on,
+        last_seen_on
+      FROM qbt_preferences
+      ORDER BY "key" ASC
+    },
+    {Slice => {}}, );
+
+  return {
+          ok   => 1,
+          rows => $rows,};
+}
+
+
+sub qbt_preference_keys ( $self, $dbh ) {
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        "key",
+        value,
+        value_type,
+        last_seen_on
+      FROM qbt_preferences
+      ORDER BY "key" ASC
+    },
+    {Slice => {}}, );
+
+  return {
+          ok    => 1,
+          rows  => $rows,
+          count => scalar @{$rows},};
+}
+
+sub qbt_preferences_count ( $self, $dbh ) {
+  return $dbh->selectrow_array(
+    q{
+      SELECT COUNT(*)
+      FROM qbt_preferences
+    }
+  );
+}
+
+sub upsert_qbt_preference ( $self, $dbh, $row ) {
+  die 'qbt preference row requires key' if !defined $row->{key};
+
+  $dbh->do(
+    q{
+      INSERT INTO qbt_preferences
+        ("key", value, value_type, first_seen_on, last_seen_on)
+      VALUES
+        (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT("key")
+      DO UPDATE SET
+        value = excluded.value,
+        value_type = excluded.value_type,
+        last_seen_on = CURRENT_TIMESTAMP
+    },
+    undef,
+    $row->{key},
+    $row->{value},
+    $row->{value_type}, );
+
+  $self->upsert_key_accessor(
+    $dbh,
+    key      => $row->{key},
+    kind     => 'core',
+    source   => 'qbt_preferences.' . $row->{key},
+    accessor => 'qbtl qbt preferences',
+    status   => 'implemented',
+    note     => 'qBittorrent application preference',
+  );
+
+  return {
+          ok  => 1,
+          key => $row->{key},};
 }
 
 sub qbt_info_columns ( $self, $dbh ) {
@@ -628,6 +721,15 @@ sub set_manual_value ( $self, $dbh, %arg ) {
     $value_type,
     $note, );
 
+  $self->upsert_key_accessor(
+    $dbh,
+    key      => $key,
+    kind     => 'manual',
+    source   => 'manual_values',
+    accessor => 'qbtl meta get <hash>',
+    status   => 'implemented',
+  );
+
   return {
           ok    => 1,
           hash  => $hash,
@@ -765,6 +867,15 @@ sub upsert_hash_value ( $self, $dbh, %arg ) {
     $key,
     $value,
     $value_type, );
+
+  $self->upsert_key_accessor(
+    $dbh,
+    key      => $key,
+    kind     => 'observed',
+    source   => 'hash_values',
+    accessor => 'qbtl meta key ' . $key,
+    status   => 'implemented',
+  );
 
   return {
           ok    => 1,
@@ -995,6 +1106,102 @@ sub upsert_qbt_info ( $self, $dbh, $row ) {
   return {
           ok   => 1,
           hash => $row->{hash},};
+}
+
+
+sub key_accessors ( $self, $dbh ) {
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        "key",
+        kind,
+        source,
+        accessor,
+        status,
+        note,
+        first_seen_on,
+        last_seen_on
+      FROM key_accessors
+      ORDER BY kind ASC, "key" ASC
+    },
+    {Slice => {}}, );
+
+  return {
+          ok   => 1,
+          rows => $rows,};
+}
+
+sub upsert_key_accessor ( $self, $dbh, %arg ) {
+  my $key = $arg{key};
+
+  if ( !defined $key || $key eq '' ) {
+    return {
+            ok     => 0,
+            status => 'invalid_key',
+            error  => 'key is required',};
+  }
+
+  my $kind     = $arg{kind}     // 'observed';
+  my $source   = $arg{source};
+  my $accessor = $arg{accessor};
+  my $status   = $arg{status}   // 'todo';
+  my $note     = $arg{note};
+
+  $dbh->do(
+    q{
+      INSERT INTO key_accessors
+        ("key", kind, source, accessor, status, note)
+      VALUES
+        (?, ?, ?, ?, ?, ?)
+      ON CONFLICT("key")
+      DO UPDATE SET
+        kind = CASE
+          WHEN key_accessors.kind = 'core'
+           AND excluded.kind = 'observed'
+          THEN key_accessors.kind
+          ELSE COALESCE(excluded.kind, key_accessors.kind)
+        END,
+        source = CASE
+          WHEN key_accessors.kind = 'core'
+           AND excluded.kind = 'observed'
+          THEN key_accessors.source
+          ELSE COALESCE(excluded.source, key_accessors.source)
+        END,
+        accessor = CASE
+          WHEN key_accessors.kind = 'core'
+           AND excluded.kind = 'observed'
+          THEN key_accessors.accessor
+          ELSE COALESCE(excluded.accessor, key_accessors.accessor)
+        END,
+        status = CASE
+          WHEN key_accessors.kind = 'core'
+           AND excluded.kind = 'observed'
+          THEN key_accessors.status
+          ELSE COALESCE(excluded.status, key_accessors.status)
+        END,
+        note = CASE
+          WHEN key_accessors.kind = 'core'
+           AND excluded.kind = 'observed'
+          THEN key_accessors.note
+          ELSE COALESCE(excluded.note, key_accessors.note)
+        END,
+        last_seen_on = CURRENT_TIMESTAMP
+    },
+    undef,
+    $key,
+    $kind,
+    $source,
+    $accessor,
+    $status,
+    $note, );
+
+  return {
+          ok       => 1,
+          key      => $key,
+          kind     => $kind,
+          source   => $source,
+          accessor => $accessor,
+          status   => $status,};
 }
 
 sub verify_path ( $self ) {

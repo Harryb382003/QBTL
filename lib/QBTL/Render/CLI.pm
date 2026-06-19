@@ -322,6 +322,38 @@ sub metadata_keys ( $self, $result ) {
   return 0;
 }
 
+sub metadata_keys_all ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->db_error($result);
+  }
+
+  my $out = $self->{out};
+
+  say {$out} 'All metadata/evidence keys:';
+  say {$out} '';
+
+  if ( !@{ $result->{rows} // [] } ) {
+    say {$out} '  none';
+    return;
+  }
+
+  printf {$out} "%-32s %-10s %-32s %-12s %s\n",
+      'Key', 'Kind', 'Source', 'Status', 'Accessor';
+  printf {$out} "%-32s %-10s %-32s %-12s %s\n",
+      '-' x 32, '-' x 10, '-' x 32, '-' x 12, '-' x 24;
+
+  for my $row ( @{ $result->{rows} } ) {
+    printf {$out} "%-32s %-10s %-32s %-12s %s\n",
+        $row->{key}      // '',
+        $row->{kind}     // '',
+        $row->{source}   // '',
+        $row->{status}   // '',
+        $row->{accessor} // 'TODO';
+  }
+
+  return;
+}
+
 sub metadata_candidates ( $self, $result ) {
   if ( !$result->{ok} ) {
     return $self->db_error($result);
@@ -476,6 +508,77 @@ sub manual_value_unset ( $self, $result ) {
   say {$out} '  rows: ' . ( $result->{removed} // 0 );
 
   return;
+}
+
+
+
+sub qbt_preference_keys ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->db_error($result);
+  }
+
+  my $out = $self->{out};
+
+  say {$out} 'qBT preference keys:';
+  say {$out} '  count: ' . ( $result->{count} // scalar @{ $result->{rows} // [] } );
+  say {$out} '';
+
+  if ( !@{ $result->{rows} // [] } ) {
+    say {$out} '  none';
+    return 0;
+  }
+
+  printf {$out} "%-36s %-12s %-40s %s\n",
+      'Key', 'Value type', 'Value', 'Last seen';
+  printf {$out} "%-36s %-12s %-40s %s\n",
+      '-' x 36, '-' x 12, '-' x 40, '-' x 19;
+
+  for my $row ( @{ $result->{rows} } ) {
+    my $value = defined $row->{value} ? $row->{value} : '';
+    $value =~ s/\n/\\n/g;
+
+    if ( length $value > 40 ) {
+      $value = substr( $value, 0, 37 ) . '...';
+    }
+
+    printf {$out} "%-36s %-12s %-40s %s\n",
+        $row->{key} // '',
+        $row->{value_type} // '',
+        $value,
+        $row->{last_seen_on} // '';
+  }
+
+  return 0;
+}
+
+sub qbt_preferences ( $self, $result ) {
+  my $out = $self->{out};
+
+  if ( !$result->{ok} ) {
+    say {$out} "qBT preferences refresh failed.";
+  } else {
+    say {$out} "qBT preferences refresh complete.";
+  }
+
+  say {$out} "  seen:     " . ( $result->{seen}   // 0 );
+  say {$out} "  stored:   " . ( $result->{stored} // 0 );
+  say {$out} "  problems: " . scalar @{ $result->{problems} // [] };
+
+  if ( @{ $result->{problems} // [] } ) {
+    say {$out} "";
+    say {$out} "Problems:";
+
+    for my $problem ( @{ $result->{problems} } ) {
+      my $key   = defined $problem->{key} ? $problem->{key} : '(unknown)';
+      my $error = $problem->{error} // 'unknown error';
+
+      say {$out} "  $key: $error";
+    }
+
+    return 1;
+  }
+
+  return 0;
 }
 
 sub qbt_refresh ( $self, $result ) {

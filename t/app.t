@@ -28,6 +28,14 @@ my $out = '';
   sub get ( $self, $uri ) {
     push @{$self->{urls}}, "$uri";
 
+    if ( "$uri" =~ m{/api/v2/app/preferences} ) {
+      return
+          Local::FakeResponse->new(
+                   code => 200,
+                   body => '{"save_path":"/Downloads","queueing_enabled":true}',
+          );
+    }
+
     return Local::FakeResponse->new(
       code => 200,
       body => '[
@@ -132,6 +140,31 @@ like( $out, qr/stored:\s+2/,   'qbt refresh command renders stored count' );
 like( $out, qr/problems:\s+0/, 'qbt refresh command renders problem count' );
 
 $out = '';
+is( $app->run_cli( 'qbt', 'preferences' ),
+    0, 'qbt preferences command exits cleanly' );
+like( $out,
+      qr/qBT preferences refresh complete\./,
+      'qbt preferences command renders completion' );
+like( $out, qr/seen:\s+213\b/, 'qbt preferences command renders seen count' );
+like( $out, qr/stored:\s+213\b/,
+      'qbt preferences command renders stored count' );
+like( $out, qr/problems:\s+0/,
+      'qbt preferences command renders problem count' );
+
+$out = '';
+is( $app->run_cli( 'qbt', 'preferences', 'keys' ),
+    0, 'qbt preferences keys command exits cleanly' );
+like( $out,
+      qr/qBT preference keys:/,
+      'qbt preferences keys command renders heading' );
+like( $out,
+      qr/web_ui_username\s+string\s+admin/,
+      'qbt preferences keys command renders stored preference value' );
+like( $out,
+      qr/web_ui_username\s+string\s+admin/,
+      'qbt preferences keys command renders stored preference value' );
+
+$out = '';
 is( $app->run_cli( 'qbt', 'help' ), 0, 'qbt help command exits cleanly' );
 like( $out, qr/Usage:/,             'qbt help command renders usage heading' );
 like( $out, qr/qbtl qbt <command>/, 'qbt help command renders usage' );
@@ -139,6 +172,9 @@ like( $out, qr/help\s+Show this help/, 'qbt help command is listed' );
 like( $out,
       qr/info\s+Fetch qBittorrent torrents\/info/,
       'qbt info command is listed' );
+like( $out,
+      qr/preferences\s+.*app\/preferences/,
+      'qbt preferences command is listed' );
 like( $out,
       qr/refresh\s+Store qBittorrent torrents\/info rows/,
       'qbt refresh command is listed' );

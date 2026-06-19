@@ -48,7 +48,7 @@ sub topics ( $class ) {
           [
             candidates => 'list observed keys that are candidates for promotion'
           ],
-          [ keys     => 'list observed metadata keys' ],
+          [ keys     => 'list observed metadata keys; use keys all for key inventory' ],
           [ key      => 'inspect one observed metadata key' ],
           [ promote  => 'promote an observed metadata key to a real column' ],
           [ promoted => 'list promoted metadata keys' ],
@@ -58,6 +58,7 @@ sub topics ( $class ) {
         ],
         examples => [
                       'qbtl meta keys',
+                      'qbtl meta keys all',
                       'qbtl meta key qBt-savePath',
                       'qbtl meta set <hash> preferred_path /Volumes/Media',
                       'qbtl meta get <hash>',
@@ -71,14 +72,17 @@ sub topics ( $class ) {
             title    => 'QBT qBittorrent commands',
             usage    => 'qbtl qbt <command>',
             commands => [
-                          [ help    => 'Show this help' ],
-                          [ info    => 'Fetch qBittorrent torrents/info' ],
-                          [ refresh => 'Store qBittorrent torrents/info rows' ],
-                          [ version => 'Show qBittorrent version' ],
+                          [ help        => 'Show this help' ],
+                          [ info        => 'Fetch qBittorrent torrents/info' ],
+                          [ preferences => 'Store/list qBittorrent app/preferences' ],
+                          [ refresh     => 'Store qBittorrent torrents/info rows' ],
+                          [ version     => 'Show qBittorrent version' ],
             ],
             examples => [
                           'qbtl qbt help',
                           'qbtl qbt info',
+                          'qbtl qbt preferences',
+                          'qbtl qbt preferences keys',
                           'qbtl qbt refresh',
                           'qbtl qbt version',
             ],

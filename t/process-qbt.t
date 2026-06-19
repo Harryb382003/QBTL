@@ -138,6 +138,35 @@ is( $version_ua->urls->[0],
     'http://127.0.0.1:9090/api/v2/app/version',
     'qbt version process gets version URL' );
 
+
+# ------------------------------
+# Executable qBT actions: preferences
+# ------------------------------
+
+my $preferences_ua = Local::FakeUA->new(
+    get_body => '{"save_path":"/Downloads","queueing_enabled":true}',
+    get_code => 200,
+);
+
+my $preferences_api = QBTL::QBT::API->new(
+    base_url => 'http://127.0.0.1:9090',
+    ua       => $preferences_ua,
+);
+
+my $preferences_process = QBTL::Process::QBT->new( api => $preferences_api );
+
+my $preferences_result = $preferences_process->preferences;
+
+is( $preferences_result->{ok}, 1, 'qbt preferences process succeeds' );
+is( $preferences_result->{action},
+    'qbt_preferences', 'qbt preferences process returns action' );
+is( $preferences_result->{count}, 2, 'qbt preferences process returns count' );
+is( $preferences_result->{preferences}{save_path},
+    '/Downloads', 'qbt preferences process decodes save_path' );
+is( $preferences_ua->urls->[0],
+    'http://127.0.0.1:9090/api/v2/app/preferences',
+    'qbt preferences process gets preferences URL' );
+
 # ------------------------------
 # Executable qBT actions: info
 # ------------------------------

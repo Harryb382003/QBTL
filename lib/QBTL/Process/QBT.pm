@@ -4,7 +4,7 @@ use v5.40;
 use common::sense;
 use feature qw( signatures );
 
-use JSON::PP qw( decode_json );
+use JSON::PP qw( decode_json encode_json );
 
 use QBTL::QBT::API;
 
@@ -19,6 +19,22 @@ sub api ( $self ) {
 
 sub api ( $self ) {
   return $self->{api};
+}
+
+sub _decode_preferences ( $self, $result ) {
+  return {} if !$result->{ok};
+
+  my $body = $result->{body} // '';
+
+  return {} if !length $body;
+
+  my $preferences = eval { decode_json( $body ) };
+
+  if ( $@ || ref( $preferences ) ne 'HASH' ) {
+    return {};
+  }
+
+  return $preferences;
 }
 
 sub fake_info_rows ( $self ) {
@@ -113,6 +129,93 @@ sub login ( $self, %arg ) {
           action  => 'qbt_login',
           request => $request,
           result  => $result,};
+}
+
+sub preferences ( $self ) {
+  my $request = $self->{api}->app_preferences;
+  my $result  = $self->{api}->execute_request( $request );
+  my $login;
+  my $retried = 0;
+
+  if ( !$result->{ok} && ( $result->{code} // 0 ) =~ /\A(?:401|403)\z/ ) {
+    $login = $self->login;
+
+    if ( !$login->{ok} ) {
+      return {
+              ok      => 0,
+              action  => 'qbt_preferences',
+              request => $request,
+              result  => $result,
+              login   => $login,};
+    }
+
+    $result  = $self->{api}->execute_request( $request );
+    $retried = 1;
+  }
+
+  my $preferences = $self->_decode_preferences( $result );
+
+  my $response = {
+                  ok          => $result->{ok} ? 1 : 0,
+                  action      => 'qbt_preferences',
+                  request     => $request,
+                  result      => $result,
+                  preferences => $preferences,
+                  count       => scalar keys %{$preferences},};
+
+  if ( $login ) {
+    $response->{login} = $login;
+  }
+
+  if ( $retried ) {
+    $response->{retried} = 1;
+  }
+
+  return $response;
+}
+
+sub refresh_preferences ( $self, %arg ) {
+  my $db          = $arg{db}          // die 'db is required';
+  my $dbh         = $arg{dbh}         // die 'dbh is required';
+  my $preferences = $arg{preferences} // die 'preferences is required';
+
+  my $seen     = 0;
+  my $stored   = 0;
+  my @problems = ();
+
+  for my $key ( sort keys %{$preferences} ) {
+    $seen++;
+
+    my ( $value, $value_type ) =
+        $self->_preference_value( $preferences->{$key}, );
+
+    my $result = eval {
+      $db->upsert_qbt_preference(
+                                  $dbh,
+                                  {
+                                   key        => $key,
+                                   value      => $value,
+                                   value_type => $value_type,
+                                  } );
+    };
+
+    if ( !$result || !$result->{ok} ) {
+      push @problems,
+          {
+           key   => $key,
+           error => $@ || 'qbt_preferences upsert failed',};
+      next;
+    }
+
+    $stored++;
+  }
+
+  return {
+          ok       => @problems ? 0 : 1,
+          action   => 'qbt_preferences_refresh',
+          seen     => $seen,
+          stored   => $stored,
+          problems => \@problems,};
 }
 
 sub refresh_info_rows ( $self, %arg ) {
@@ -226,6 +329,30 @@ sub version ( $self ) {
   }
 
   return $response;
+}
+
+sub _preference_value ( $self, $value ) {
+  if ( !defined $value ) {
+    return ( undef, 'null' );
+  }
+
+  if ( JSON::PP::is_bool( $value ) ) {
+    return ( $value ? 1 : 0, 'bool' );
+  }
+
+  if ( ref( $value ) ) {
+    return ( encode_json( $value ), 'json' );
+  }
+
+  if ( $value =~ /\A-?[0-9]+\z/ ) {
+    return ( $value, 'integer' );
+  }
+
+  if ( $value =~ /\A-?(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+)\z/ ) {
+    return ( $value, 'number' );
+  }
+
+  return ( $value, 'string' );
 }
 
 sub _decode_info_rows ( $self, $result ) {
