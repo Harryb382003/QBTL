@@ -337,16 +337,17 @@ sub metadata_keys_all ( $self, $result ) {
     return;
   }
 
-  printf {$out} "%-32s %-10s %-32s %-12s %s\n",
-      'Key', 'Kind', 'Source', 'Status', 'Accessor';
-  printf {$out} "%-32s %-10s %-32s %-12s %s\n",
-      '-' x 32, '-' x 10, '-' x 32, '-' x 12, '-' x 24;
+  printf {$out} "%-45s %-10s %-50s %-12s %s\n",
+    'Key', 'Kind', 'Data', 'Status', 'Accessor';
+
+  printf {$out} "%-45s %-10s %-50s %-12s %s\n",
+    '-' x 45, '-' x 10, '-' x 50, '-' x 12, '-' x 24;
 
   for my $row ( @{ $result->{rows} } ) {
-    printf {$out} "%-32s %-10s %-32s %-12s %s\n",
+    printf {$out} "%-45s %-10s %-50s %-12s %s\n",
         $row->{key}      // '',
         $row->{kind}     // '',
-        $row->{source}   // '',
+        $row->{data}   // '',
         $row->{status}   // '',
         $row->{accessor} // 'TODO';
   }
@@ -509,7 +510,6 @@ sub manual_value_unset ( $self, $result ) {
 
   return;
 }
-
 
 
 sub qbt_preference_keys ( $self, $result ) {
@@ -759,6 +759,18 @@ sub setup ( $self, $result ) {
   }
 
   return 0;
+}
+
+sub _short_value ( $value, $limit = 40 ) {
+  return '' if !defined $value;
+
+  $value =~ s/\s+/ /g;
+
+  if ( length $value <= $limit ) {
+    return $value;
+  }
+
+  return substr( $value, 0, $limit - 3 ) . '...';
 }
 
 sub status ( $self, $result ) {

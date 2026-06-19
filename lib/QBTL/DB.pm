@@ -333,12 +333,12 @@ sub promote_hash_key ( $self, $dbh, %arg ) {
     $arg{value_type} // 'text', );
 
   $self->upsert_key_accessor(
-    $dbh,
-    key    => $key,
-    kind   => 'core',
-    source => 'promoted_values.' . $column,
-    status => 'todo',
-    note   => 'Promoted from observed metadata key',
+                              $dbh,
+                              key    => $key,
+                              kind   => 'core',
+                              source => 'promoted_values.' . $column,
+                              status => 'todo',
+                              note   => 'Promoted from observed metadata key',
   );
 
   my $rows = $dbh->selectall_arrayref(
@@ -388,7 +388,6 @@ sub promote_hash_key ( $self, $dbh, %arg ) {
           backfilled    => $backfilled,};
 }
 
-
 sub qbt_preferences ( $self, $dbh ) {
   my $rows = $dbh->selectall_arrayref(
     q{
@@ -407,7 +406,6 @@ sub qbt_preferences ( $self, $dbh ) {
           ok   => 1,
           rows => $rows,};
 }
-
 
 sub qbt_preference_keys ( $self, $dbh ) {
   my $rows = $dbh->selectall_arrayref(
@@ -458,13 +456,13 @@ sub upsert_qbt_preference ( $self, $dbh, $row ) {
     $row->{value_type}, );
 
   $self->upsert_key_accessor(
-    $dbh,
-    key      => $row->{key},
-    kind     => 'core',
-    source   => 'qbt_preferences.' . $row->{key},
-    accessor => 'qbtl qbt preferences',
-    status   => 'implemented',
-    note     => 'qBittorrent application preference',
+                              $dbh,
+                              key      => $row->{key},
+                              kind     => 'core',
+                              source   => 'qbt_preferences.' . $row->{key},
+                              accessor => 'qbtl qbt preferences',
+                              status   => 'implemented',
+                              note     => 'qBittorrent application preference',
   );
 
   return {
@@ -722,13 +720,12 @@ sub set_manual_value ( $self, $dbh, %arg ) {
     $note, );
 
   $self->upsert_key_accessor(
-    $dbh,
-    key      => $key,
-    kind     => 'manual',
-    source   => 'manual_values',
-    accessor => 'qbtl meta get <hash>',
-    status   => 'implemented',
-  );
+                              $dbh,
+                              key      => $key,
+                              kind     => 'manual',
+                              source   => 'manual_values',
+                              accessor => 'qbtl meta get <hash>',
+                              status   => 'implemented', );
 
   return {
           ok    => 1,
@@ -869,13 +866,12 @@ sub upsert_hash_value ( $self, $dbh, %arg ) {
     $value_type, );
 
   $self->upsert_key_accessor(
-    $dbh,
-    key      => $key,
-    kind     => 'observed',
-    source   => 'hash_values',
-    accessor => 'qbtl meta key ' . $key,
-    status   => 'implemented',
-  );
+                              $dbh,
+                              key      => $key,
+                              kind     => 'observed',
+                              source   => 'hash_values',
+                              accessor => 'qbtl meta key ' . $key,
+                              status   => 'implemented', );
 
   return {
           ok    => 1,
@@ -1108,7 +1104,6 @@ sub upsert_qbt_info ( $self, $dbh, $row ) {
           hash => $row->{hash},};
 }
 
-
 sub key_accessors ( $self, $dbh ) {
   my $rows = $dbh->selectall_arrayref(
     q{
@@ -1126,9 +1121,114 @@ sub key_accessors ( $self, $dbh ) {
     },
     {Slice => {}}, );
 
+  for my $row ( @{$rows} ) {
+    $row->{data} = $self->_key_accessor_data( $dbh, $row );
+  }
+
   return {
           ok   => 1,
           rows => $rows,};
+}
+
+sub _key_accessor_data ( $self, $dbh, $row ) {
+  my $key    = $row->{key};
+  my $source = $row->{source} // '';
+
+  if ( $source eq 'hash_values' ) {
+    my $summary = $dbh->selectrow_hashref(
+      q{
+        SELECT
+  COALESCE(SUM(seen_count), 0) AS seen,
+  COUNT(DISTINCT value) AS value_count,
+  COUNT(DISTINCT hash) AS hash_count
+FROM hash_values
+WHERE "key" = ?
+      },
+      undef,
+      $key, );
+
+    return
+          ( $summary->{seen} // 0 )
+        . ' seen / '
+        . ( $summary->{value_count} // 0 )
+        . ' values / '
+        . ( $summary->{hash_count} // 0 )
+        . ' hashes';
+  }
+
+  if ( $source =~ /\Aqbt_preferences\./ ) {
+    my $value = $dbh->selectrow_array(
+      q{
+        SELECT value
+        FROM qbt_preferences
+        WHERE "key" = ?
+      },
+      undef,
+      $key, );
+
+    return defined $value ? $value : '';
+  }
+
+  if ( $source =~ /\Alocal_torrent_files\.([A-Za-z_][A-Za-z0-9_]*)\z/ ) {
+    return $self->_column_value_summary( $dbh, 'local_torrent_files', $1 );
+  }
+
+  if ( $source =~ /\Alocal_fastresume_files\.([A-Za-z_][A-Za-z0-9_]*)\z/ ) {
+    return $self->_column_value_summary( $dbh, 'local_fastresume_files', $1 );
+  }
+
+  if ( $source =~ /\Aqbt_info\.([A-Za-z_][A-Za-z0-9_]*)\z/ ) {
+    return $self->_column_value_summary( $dbh, 'qbt_info', $1 );
+  }
+
+  if ( $source =~ /\Apromoted_values\.([A-Za-z_][A-Za-z0-9_]*)\z/ ) {
+    return $self->_column_value_summary( $dbh, 'promoted_values', $1 );
+  }
+
+  if ( $source eq 'manual_values' ) {
+    my $count = $dbh->selectrow_array(
+      q{
+        SELECT COUNT(*)
+        FROM manual_values
+        WHERE "key" = ?
+      },
+      undef,
+      $key, );
+
+    return ( $count // 0 ) . ' values';
+  }
+
+  return '';
+}
+
+sub _column_value_summary ( $self, $dbh, $table, $column ) {
+  my %allowed_table = map { $_ => 1 } qw(
+      local_torrent_files
+      local_fastresume_files
+      qbt_info
+      promoted_values
+  );
+
+  return '' if !$allowed_table{$table};
+
+  my $quoted_table  = '"' . $table . '"';
+  my $quoted_column = '"' . $column . '"';
+
+  my $summary = $dbh->selectrow_hashref(
+    qq{
+      SELECT
+        COUNT($quoted_column) AS value_count,
+        COUNT(DISTINCT $quoted_column) AS distinct_values
+      FROM $quoted_table
+      WHERE $quoted_column IS NOT NULL
+        AND $quoted_column != ''
+    } );
+
+  return
+        ( $summary->{value_count} // 0 )
+      . ' values / '
+      . ( $summary->{distinct_count} // 0 )
+      . ' distinct';
 }
 
 sub upsert_key_accessor ( $self, $dbh, %arg ) {
@@ -1141,10 +1241,10 @@ sub upsert_key_accessor ( $self, $dbh, %arg ) {
             error  => 'key is required',};
   }
 
-  my $kind     = $arg{kind}     // 'observed';
+  my $kind     = $arg{kind} // 'observed';
   my $source   = $arg{source};
   my $accessor = $arg{accessor};
-  my $status   = $arg{status}   // 'todo';
+  my $status   = $arg{status} // 'todo';
   my $note     = $arg{note};
 
   $dbh->do(
