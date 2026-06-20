@@ -9,6 +9,7 @@ use File::Basename qw( dirname );
 use File::Path     qw( make_path );
 use File::Spec;
 
+use QBTL::Install::Application;
 use QBTL::Config;
 use QBTL::DB;
 use QBTL::Render::CLI;
@@ -19,6 +20,14 @@ sub new ( $class, %arg ) {
       QBTL::Render::CLI->new( time_format => $arg{config}->time_format, );
 
   return bless \%arg, $class;
+}
+
+sub _application ( $self ) {
+  return $self->{application} //=
+      QBTL::Install::Application->new(
+                                       home      => $self->home,
+                                       user_home => $self->{user_home},
+                                       repo_root => $self->{repo_root}, );
 }
 
 sub _command_path ( $self, $command ) {
@@ -139,14 +148,23 @@ sub _prompt_path ( $self, $question, $default ) {
 }
 
 sub query_installation_paths ( $self, %arg ) {
+  my $discovery =
+      $arg{local_search} && $arg{local_search}{ok}
+      ? $self->_application->discover_user_configs(
+                                       local_search => $arg{local_search}, )
+      : {ok => 1, paths => [], configs => [], count => 0};
+  my $existing = $self->_preferred_installation_config( $discovery );
   my $default_root =
-      $self->_expand_home_path( $self->{default_root} // $self->home );
+      $self->_expand_home_path(
+                    $existing->{root} // $self->{default_root} // $self->home );
 
   my $root = $self->_expand_home_path(
                   $self->_prompt_path( 'Install QBTL where?', $default_root ) );
 
   my $default_config_dir =
-        $self->{default_config_dir}
+        $existing->{config_dir}
+      ? $self->_expand_home_path( $existing->{config_dir} )
+      : $self->{default_config_dir}
       ? $self->_expand_home_path( $self->{default_config_dir} )
       : $self->_default_config_dir( $root, $default_root );
 
@@ -161,9 +179,27 @@ sub query_installation_paths ( $self, %arg ) {
      config_path        => $config_path,
      default_root       => $default_root,
      default_config_dir => $default_config_dir,
+     discovery          => $discovery,
      changed => ( $root ne $default_root || $config_dir ne $default_config_dir )
      ? 1
      : 0,};
+}
+
+sub _preferred_installation_config ( $self, $discovery ) {
+  my @configs = grep { $_->{has_installation} } @{ $discovery->{configs} // [] };
+
+  return {} if !@configs;
+
+  my $config = $configs[0];
+  my $root   = $self->_expand_home_path( $config->{root} );
+  my $path   = $self->_expand_home_path( $config->{config} // $config->{path} );
+
+  my $dir = defined $path ? dirname( $path ) : undef;
+
+  return {
+          root       => $root,
+          config_dir => $dir,
+          config     => $path,};
 }
 
 sub write_installation_config ( $self, $installation ) {
