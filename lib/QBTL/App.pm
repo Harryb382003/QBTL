@@ -4,6 +4,8 @@ use v5.40;
 use common::sense;
 use feature qw( signatures );
 
+use File::Path qw( make_path );
+
 use QBTL;
 use QBTL::QBT::API;
 use QBTL::Config;
@@ -32,6 +34,20 @@ sub browse ( $self ) {
   return $self->{browse};
 }
 
+sub _installer ( $self ) {
+  $self->{installer} //=
+      QBTL::Install::Setup->new(
+                          home         => $self->{config}->installation_root,
+                          user_home    => $self->{config}->home,
+                          default_root => $self->{config}->installation_root,
+                          repo_config_path => $self->{config}->repo_config_path,
+                          exists $self->{setup_interactive}
+                          ? ( interactive => $self->{setup_interactive} )
+                          : (), );
+
+  return $self->{installer};
+}
+
 sub local ( $self ) {
   $self->{local} //=
       QBTL::Process::Local->new(
@@ -55,6 +71,70 @@ sub _qbtl_home ( $self ) {
   $db_path =~ s{/[^/]+\z}{};
 
   return $db_path;
+}
+
+sub setup ( $self ) {
+  my $installer    = $self->_installer;
+  my $local_search = $installer->_detect_local_search_tool;
+  my $installation =
+      $installer->query_installation_paths( local_search => $local_search, );
+  my $home        = $installation->{root};
+  my $config_path = $installation->{config_path};
+
+  my @dirs = ( $home, "$home/logs", "$home/backups", "$home/tmp", );
+
+  my @created;
+  my @existing;
+
+  for my $dir ( @dirs ) {
+    if ( -d $dir ) {
+      push @existing, $dir;
+      next;
+    }
+
+    make_path( $dir );
+    push @created, $dir;
+  }
+
+  my $config_result = $installer->write_installation_config( $installation );
+  my $db_result;
+  my $db = $self->{db}
+      // QBTL::DB->new( db_path => File::Spec->catfile( $home, 'qbtl.db' ) );
+
+  if ( defined $db ) {
+
+    my $connect = $db->connect;
+
+    if ( !$connect->{ok} ) {
+      return {
+              ok           => 0,
+              home         => $home,
+              created      => \@created,
+              existing     => \@existing,
+              db_result    => $connect,
+              local_search => $local_search,};
+    }
+
+    my $migration = $db->migrate( $connect->{dbh} );
+
+    $connect->{dbh}->disconnect;
+
+    $db_result = {
+                  ok            => 1,
+                  migration     => $migration,
+                  config_path   => $config_path,
+                  config_result => $config_result,};
+  }
+
+  return {
+          ok            => 1,
+          config_path   => $config_path,
+          config_result => $config_result,
+          created       => \@created,
+          db_result     => $db_result,
+          existing      => \@existing,
+          home          => $home,
+          local_search  => $local_search,};
 }
 
 sub run_cli ( $self, @argv ) {
@@ -222,9 +302,7 @@ sub run_cli ( $self, @argv ) {
                           ? ( interactive => $self->{setup_interactive} )
                           : (), );
 
-    my $result = $setup->run;
-
-    return $self->{renderer}->setup( $result );
+    return $self->{renderer}->setup( $self->setup );
   }
 
   if ( $cmd eq 'status' ) {

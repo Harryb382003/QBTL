@@ -138,7 +138,7 @@ sub _prompt_path ( $self, $question, $default ) {
   return length $answer ? $answer : $default;
 }
 
-sub query_installation_paths ( $self ) {
+sub query_installation_paths ( $self, %arg ) {
   my $default_root =
       $self->_expand_home_path( $self->{default_root} // $self->home );
 
@@ -164,68 +164,6 @@ sub query_installation_paths ( $self ) {
      changed => ( $root ne $default_root || $config_dir ne $default_config_dir )
      ? 1
      : 0,};
-}
-
-sub run ( $self ) {
-  my $local_search = $self->_detect_local_search_tool;
-  my $installation = $self->query_installation_paths;
-  my $home         = $installation->{root};
-  my $config_path  = $installation->{config_path};
-
-  my @dirs = ( $home, "$home/logs", "$home/backups", "$home/tmp", );
-
-  my @created;
-  my @existing;
-
-  for my $dir ( @dirs ) {
-    if ( -d $dir ) {
-      push @existing, $dir;
-      next;
-    }
-
-    make_path( $dir );
-    push @created, $dir;
-  }
-
-  my $config_result = $self->write_installation_config( $installation );
-  my $db_result;
-  my $db = $self->{db}
-      // QBTL::DB->new( db_path => File::Spec->catfile( $home, 'qbtl.db' ) );
-
-  if ( defined $db ) {
-
-    my $connect = $db->connect;
-
-    if ( !$connect->{ok} ) {
-      return {
-              ok           => 0,
-              home         => $home,
-              created      => \@created,
-              existing     => \@existing,
-              db_result    => $connect,
-              local_search => $local_search,};
-    }
-
-    my $migration = $db->migrate( $connect->{dbh} );
-
-    $connect->{dbh}->disconnect;
-
-    $db_result = {
-                  ok            => 1,
-                  migration     => $migration,
-                  config_path   => $config_path,
-                  config_result => $config_result,};
-  }
-
-  return {
-          ok            => 1,
-          config_path   => $config_path,
-          config_result => $config_result,
-          created       => \@created,
-          db_result     => $db_result,
-          existing      => \@existing,
-          home          => $home,
-          local_search  => $local_search,};
 }
 
 sub write_installation_config ( $self, $installation ) {
