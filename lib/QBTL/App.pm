@@ -214,14 +214,13 @@ sub run_cli ( $self, @argv ) {
   if ( $cmd eq 'setup' ) {
     my $setup =
         QBTL::Process::Setup->new(
-               home                => $self->{config}->installation_root,
-               user_home           => $self->{config}->home,
-               default_root        => $self->{config}->installation_root,
-               default_config_path => $self->{config}->installation_config_path,
-               repo_config_path    => $self->{config}->repo_config_path,
-               exists $self->{setup_interactive}
-               ? ( interactive => $self->{setup_interactive} )
-               : (), );
+                          home         => $self->{config}->installation_root,
+                          user_home    => $self->{config}->home,
+                          default_root => $self->{config}->installation_root,
+                          repo_config_path => $self->{config}->repo_config_path,
+                          exists $self->{setup_interactive}
+                          ? ( interactive => $self->{setup_interactive} )
+                          : (), );
 
     my $result = $setup->run;
 

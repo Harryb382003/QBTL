@@ -42,6 +42,12 @@ sub _contract_home_path ( $self, $path ) {
   return $path;
 }
 
+sub _default_config_dir ( $self, $root, $default_root ) {
+  return $root if $root eq $default_root;
+
+  return File::Spec->catdir( $root, 'QBTL' );
+}
+
 sub _detect_local_search_tool ( $self ) {
   my @tools = (
                 {name => 'mdfind',  indexed => 1},
@@ -95,6 +101,20 @@ sub _detect_local_search_tool ( $self ) {
           warning     => $warning,};
 }
 
+sub _expand_home_path ( $self, $path ) {
+  return if !defined $path;
+
+  my $home = $self->{user_home} // $ENV{HOME} // '';
+  return $path if !length $home;
+
+  $path =~ s{\A~(?=/|$)}{$home};
+  $path =~ s{\A\$home(?=/|$)}{$home}i;
+  $path =~ s{\A\$\{home\}(?=/|$)}{$home}i;
+  $path =~ s{\A\$ENV\{HOME\}(?=/|$)}{$home};
+
+  return $path;
+}
+
 sub home ( $self ) {
   return $self->{home};
 }
@@ -119,25 +139,31 @@ sub _prompt_path ( $self, $question, $default ) {
 }
 
 sub query_installation_paths ( $self ) {
-  my $default_root = $self->{default_root} // $self->home;
-  my $root = $self->_prompt_path( 'Install QBTL where?', $default_root );
-  my $default_config = $self->{default_config_path}
-      // File::Spec->catfile( $root, '.qbtlrc' );
+  my $default_root =
+      $self->_expand_home_path( $self->{default_root} // $self->home );
 
-  my $config_path =
-      $self->_prompt_path( 'Store .qbtlrc where?', $default_config );
+  my $root = $self->_expand_home_path(
+                  $self->_prompt_path( 'Install QBTL where?', $default_root ) );
+
+  my $default_config_dir =
+        $self->{default_config_dir}
+      ? $self->_expand_home_path( $self->{default_config_dir} )
+      : $self->_default_config_dir( $root, $default_root );
+
+  my $config_dir = $self->_expand_home_path(
+           $self->_prompt_path( 'Store .qbtlrc where?', $default_config_dir ) );
+
+  my $config_path = File::Spec->catfile( $config_dir, '.qbtlrc' );
 
   return {
-    root           => $root,
-    config_path    => $config_path,
-    default_root   => $default_root,
-    default_config => $default_config,
-    changed => ( $root ne $default_root || $config_path ne $default_config )
-    ? 1
-    : 0,
-
-  };
-
+     root               => $root,
+     config_dir         => $config_dir,
+     config_path        => $config_path,
+     default_root       => $default_root,
+     default_config_dir => $default_config_dir,
+     changed => ( $root ne $default_root || $config_dir ne $default_config_dir )
+     ? 1
+     : 0,};
 }
 
 sub run ( $self ) {
@@ -220,9 +246,10 @@ sub write_installation_config ( $self, $installation ) {
       $self->_contract_home_path( $installation->{root} );
   $config{installation}{config} =
       $self->_contract_home_path( $installation->{config_path} );
-  $config{database}{path} =
-      $self->_contract_home_path(
-                      File::Spec->catfile( $installation->{root}, 'qbtl.db' ) );
+
+#   $config{database}{path} =
+#       $self->_contract_home_path(
+#                       File::Spec->catfile( $installation->{root}, 'qbtl.db' ) );
 
   write_config %config => $path;
 
