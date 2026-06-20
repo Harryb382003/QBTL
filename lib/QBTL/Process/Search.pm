@@ -17,6 +17,61 @@ sub db_process ( $self ) {
   return $self->{db_process};
 }
 
+sub discover_user_configs ( $self, %arg ) {
+    my $local_search = $arg{local_search} // {};
+    my $repo_root    = $self->{repo_root};
+
+    my @paths;
+
+    if ( ( $local_search->{search_tool} // '' ) eq 'mdfind' ) {
+        @paths = $self->_discover_user_configs_mdfind;
+    } else {
+        @paths = $self->_discover_user_configs_find;
+    }
+
+    @paths = grep { defined $_ && -f $_ } @paths;
+
+    if ( defined $repo_root && length $repo_root ) {
+        @paths = grep {
+            $_ ne $repo_root
+                && index( $_, "$repo_root/" ) != 0
+        } @paths;
+    }
+
+    my %seen;
+    @paths = grep { !$seen{$_}++ } sort @paths;
+
+    return {
+        ok    => 1,
+        paths => \@paths,
+        count => scalar @paths,
+    };
+}
+
+sub _discover_user_configs_mdfind ($self) {
+    open my $fh, '-|', 'mdfind', 'kMDItemFSName == ".qbtlrc"'
+        or return;
+
+    my @paths = <$fh>;
+    close $fh;
+
+    chomp @paths;
+    return @paths;
+}
+
+sub _discover_user_configs_find ($self) {
+    my $home = $self->{user_home} // $ENV{HOME} // $self->home;
+
+    open my $fh, '-|', 'find', $home, '-name', '.qbtlrc', '-type', 'f'
+        or return;
+
+    my @paths = <$fh>;
+    close $fh;
+
+    chomp @paths;
+    return @paths;
+}
+
 sub search_list ( $self ) {
   return $self->db_process->with_db(
     sub ( $db, $dbh ) {

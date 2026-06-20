@@ -11,7 +11,9 @@ use_ok( 'QBTL::QBT::API' );
 use_ok( 'QBTL::App' );
 use_ok( 'QBTL::Config' );
 use_ok( 'QBTL::DB' );
-use_ok('QBTL::Help');
+use_ok( 'QBTL::Help' );
+
+use_ok( 'QBTL::Install::Setup' );
 
 use_ok( 'QBTL::Local::Parser' );
 use_ok( 'QBTL::Local::Scanner' );
@@ -21,7 +23,6 @@ use_ok( 'QBTL::Process::Local' );
 use_ok( 'QBTL::Process::Metadata' );
 use_ok( 'QBTL::Process::QBT' );
 use_ok( 'QBTL::Process::Search' );
-use_ok( 'QBTL::Process::Setup' );
 use_ok( 'QBTL::Process::WithDB' );
 
 use_ok( 'QBTL::Render::Chandra' );

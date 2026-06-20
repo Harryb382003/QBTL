@@ -8,7 +8,7 @@ use File::Spec;
 use File::Path qw( remove_tree );
 
 use QBTL::DB;
-use QBTL::Process::Setup;
+use QBTL::Install::Setup;
 
 my $root    = tempdir( CLEANUP => 0 );
 my $home    = File::Spec->catdir( $root, 'QBTL' );
@@ -23,12 +23,12 @@ my $db = QBTL::DB->new(
                    migration_dir => File::Spec->catdir( 'share', 'migrations' ),
 );
 
-my $setup = QBTL::Process::Setup->new(
+my $setup = QBTL::Install::Setup->new(
                                        home        => $home,
                                        db          => $db,
                                        interactive => 0, );
 
-isa_ok( $setup, 'QBTL::Process::Setup' );
+isa_ok( $setup, 'QBTL::Install::Setup' );
 is( $setup->home, $home, 'home stored' );
 
 my $result = $setup->run;
@@ -103,7 +103,7 @@ open my $in_fh,  '<', \$prompt_in  or die "open scalar input: $!";
 open my $out_fh, '>', \$prompt_out or die "open scalar output: $!";
 
 my $prompt_setup =
-    QBTL::Process::Setup->new(
+    QBTL::Install::Setup->new(
                  home                => $home,
                  default_root        => $home,
                  default_config_path => File::Spec->catfile( $home, '.qbtlrc' ),
@@ -155,7 +155,7 @@ open my $in_fh,  '<', \$prompt_in  or die "open scalar input: $!";
 open my $out_fh, '>', \$prompt_out or die "open scalar output: $!";
 
 my $prompt_setup =
-    QBTL::Process::Setup->new(
+    QBTL::Install::Setup->new(
                  home                => $home,
                  default_root        => $home,
                  default_config_path => File::Spec->catfile( $home, '.qbtlrc' ),

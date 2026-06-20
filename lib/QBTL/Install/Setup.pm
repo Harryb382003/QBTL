@@ -1,4 +1,4 @@
-package QBTL::Process::Setup;
+package QBTL::Install::Setup;
 
 use v5.40;
 use common::sense;
@@ -167,6 +167,7 @@ sub query_installation_paths ( $self ) {
 }
 
 sub run ( $self ) {
+  my $local_search = $self->_detect_local_search_tool;
   my $installation = $self->query_installation_paths;
   my $home         = $installation->{root};
   my $config_path  = $installation->{config_path};
@@ -187,7 +188,6 @@ sub run ( $self ) {
   }
 
   my $config_result = $self->write_installation_config( $installation );
-  my $local_search  = $self->_detect_local_search_tool;
   my $db_result;
   my $db = $self->{db}
       // QBTL::DB->new( db_path => File::Spec->catfile( $home, 'qbtl.db' ) );

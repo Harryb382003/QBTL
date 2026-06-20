@@ -9,12 +9,12 @@ use QBTL::QBT::API;
 use QBTL::Config;
 use QBTL::DB;
 use QBTL::Help;
+use QBTL::Install::Setup;
 use QBTL::Process::Local;
 use QBTL::Process::Metadata;
 use QBTL::Process::Browse;
 use QBTL::Process::QBT;
 use QBTL::Process::Search;
-use QBTL::Process::Setup;
 use QBTL::Render::CLI;
 
 sub new ( $class, %arg ) {
@@ -213,7 +213,7 @@ sub run_cli ( $self, @argv ) {
 
   if ( $cmd eq 'setup' ) {
     my $setup =
-        QBTL::Process::Setup->new(
+        QBTL::Install::Setup->new(
                           home         => $self->{config}->installation_root,
                           user_home    => $self->{config}->home,
                           default_root => $self->{config}->installation_root,
