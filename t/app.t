@@ -93,9 +93,10 @@ my $config = QBTL::Config->new( db_path => $db_path,
 my $qbt_ua   = Local::FakeUA->new;
 my $renderer = QBTL::Render::CLI->new( out => $fh );
 my $app = QBTL::App->new(
-                          config   => $config,
-                          renderer => $renderer,
-                          qbt_ua   => $qbt_ua, );
+                          config            => $config,
+                          renderer          => $renderer,
+                          qbt_ua            => $qbt_ua,
+                          setup_interactive => 0, );
 
 isa_ok( $app, 'QBTL::App' );
 

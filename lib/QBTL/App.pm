@@ -21,8 +21,8 @@ sub new ( $class, %arg ) {
   $arg{config} //= QBTL::Config->new;
   $arg{renderer} //=
       QBTL::Render::CLI->new( time_format => $arg{config}->time_format, );
-
   return bless \%arg, $class;
+
 }
 
 sub browse ( $self ) {
@@ -212,11 +212,16 @@ sub run_cli ( $self, @argv ) {
   }
 
   if ( $cmd eq 'setup' ) {
-    my $db = QBTL::DB->new( db_path => $self->{config}->db_path );
-
     my $setup =
-        QBTL::Process::Setup->new( home => $self->_qbtl_home,
-                                   db   => $db, );
+        QBTL::Process::Setup->new(
+               home                => $self->{config}->installation_root,
+               user_home           => $self->{config}->home,
+               default_root        => $self->{config}->installation_root,
+               default_config_path => $self->{config}->installation_config_path,
+               repo_config_path    => $self->{config}->repo_config_path,
+               exists $self->{setup_interactive}
+               ? ( interactive => $self->{setup_interactive} )
+               : (), );
 
     my $result = $setup->run;
 
