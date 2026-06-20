@@ -12,6 +12,10 @@ time = ymd
 # time =   time
 # = 20:03:38
 
+[installation]
+root = $home/QBTL
+config = $home/QBTL/.qbtlrc
+
 [qbt]
 url = http://localhost:8080
 
