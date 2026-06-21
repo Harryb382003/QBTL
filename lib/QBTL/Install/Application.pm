@@ -14,14 +14,9 @@ sub new ( $class, %arg ) {
 sub discover_user_configs ( $self, %arg ) {
     my $local_search = $arg{local_search} // {};
     my $repo_root    = $self->{repo_root};
-
     my @paths;
 
-    if ( ( $local_search->{search_tool} // '' ) eq 'mdfind' ) {
-        @paths = $self->_discover_user_configs_mdfind;
-    } else {
-        @paths = $self->_discover_user_configs_find;
-    }
+    @paths = $self->_discover_user_configs_find;
 
     @paths = grep { defined $_ && -f $_ } @paths;
 
@@ -31,6 +26,14 @@ sub discover_user_configs ( $self, %arg ) {
                 && index( $_, "$repo_root/" ) != 0
         } @paths;
     }
+    my $trash = File::Spec->catdir(
+        $self->{user_home} // $ENV{HOME} // $self->home,'.Trash'
+        );
+
+@paths = grep {
+    $_ ne $trash
+        && index( $_, "$trash/" ) != 0
+} @paths;
 
     my %seen;
     @paths = grep { !$seen{$_}++ } sort @paths;
@@ -71,7 +74,12 @@ sub _discover_user_configs_mdfind ($self) {
 sub _discover_user_configs_find ($self) {
     my $home = $self->{user_home} // $ENV{HOME} // $self->home;
 
-    open my $fh, '-|', 'find', $home, '-name', '.qbtlrc', '-type', 'f'
+    (my $safe_home = $home) =~ s/'/'\\''/g;
+
+    my $out = $self->{out} // \*STDOUT;
+say {$out} "Searching for existing QBTL installations... this may take a while";
+
+    open my $fh, '-|', "find '$safe_home' -name .qbtlrc -type f 2>/dev/null"
         or return;
 
     my @paths = <$fh>;

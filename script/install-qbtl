@@ -1,0 +1,10 @@
+#!/usr/bin/env perl
+
+use v5.40;
+use common::sense;
+use feature qw( signatures );
+
+use lib 'lib';
+use QBTL::App;
+
+exit QBTL::App->new->install;

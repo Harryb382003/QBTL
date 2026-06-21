@@ -40,6 +40,7 @@ sub _installer ( $self ) {
                           home         => $self->{config}->installation_root,
                           user_home    => $self->{config}->home,
                           default_root => $self->{config}->installation_root,
+                          repo_root    => $self->{config}->_repo_root,
                           repo_config_path => $self->{config}->repo_config_path,
                           exists $self->{setup_interactive}
                           ? ( interactive => $self->{setup_interactive} )
@@ -73,7 +74,7 @@ sub _qbtl_home ( $self ) {
   return $db_path;
 }
 
-sub setup ( $self ) {
+sub install ( $self ) {
   my $installer    = $self->_installer;
   my $local_search = $installer->_detect_local_search_tool;
   my $installation =
@@ -302,7 +303,7 @@ sub run_cli ( $self, @argv ) {
                           ? ( interactive => $self->{setup_interactive} )
                           : (), );
 
-    return $self->{renderer}->setup( $self->setup );
+    return $self->{renderer}->setup( $self->install );
   }
 
   if ( $cmd eq 'status' ) {

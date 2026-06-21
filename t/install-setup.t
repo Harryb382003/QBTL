@@ -5,7 +5,7 @@ use feature qw( signatures );
 use Test::More;
 use File::Temp qw( tempdir );
 use File::Spec;
-use File::Path qw( remove_tree );
+use File::Path qw( remove_tree make_path );
 
 use QBTL::Install::Setup;
 
@@ -126,9 +126,25 @@ is( $result->{config_path},
 
 package main;
 
-my $discovered_root = File::Spec->catdir( $root, 'Discovered' );
-my $discovered_config =
-    File::Spec->catfile( $discovered_root, 'QBTL', '.qbtlrc' );
+my $discovered_root   = File::Spec->catdir( $root,            'Discovered' );
+my $discovered_dir    = File::Spec->catdir( $discovered_root, 'QBTL' );
+my $discovered_config = File::Spec->catfile( $discovered_dir, '.qbtlrc' );
+
+make_path( $discovered_dir );
+
+open my $discovered_fh, '>', $discovered_config
+    or die "write $discovered_config: $!";
+
+say {$discovered_fh} "[installation]";
+say {$discovered_fh} "root = \$home/Discovered";
+say {$discovered_fh} "config = \$home/Discovered/QBTL/.qbtlrc";
+
+close $discovered_fh;
+
+$discovered_config = Cwd::abs_path( $discovered_config );
+$discovered_dir    = Cwd::abs_path( $discovered_dir );
+$discovered_root   = Cwd::abs_path( $discovered_root );
+
 my $discovery_setup =
     QBTL::Install::Setup->new(
                                home        => $home,

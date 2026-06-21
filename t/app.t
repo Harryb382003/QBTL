@@ -77,6 +77,23 @@ my $out = '';
   }
 }
 
+{
+
+  package Local::EmptyApplication;
+
+  sub new {
+    return bless {}, shift;
+  }
+
+  sub discover_user_configs {
+    return {
+            ok      => 1,
+            paths   => [],
+            configs => [],
+            count   => 0,};
+  }
+}
+
 open my $fh, '>', \$out or die "open scalar fh: $!";
 
 my $root = tempdir( CLEANUP => 0 );
@@ -93,6 +110,13 @@ my $config = QBTL::Config->new( db_path => $db_path,
 my $qbt_ua   = Local::FakeUA->new;
 my $renderer = QBTL::Render::CLI->new( out => $fh );
 my $app = QBTL::App->new(
+                          installer =>
+                              QBTL::Install::Setup->new(
+                             home        => File::Spec->catdir( $root, 'QBTL' ),
+                             user_home   => $root,
+                             interactive => 0,
+                             application => Local::EmptyApplication->new,
+                              ),
                           config            => $config,
                           renderer          => $renderer,
                           qbt_ua            => $qbt_ua,
