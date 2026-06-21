@@ -425,11 +425,12 @@ sub write_installation_config ( $self, $installation ) {
   $config{installation}{config} =
       $self->_contract_home_path( $installation->{config_path} );
 
-#   $config{database}{path} =
-#       $self->_contract_home_path(
-#                       File::Spec->catfile( $installation->{root}, 'qbtl.db' ) );
-
   write_config %config => $path;
+
+  if ( $installation->{bt_backup} && $installation->{bt_backup}{path} ) {
+    $config{installation}{bt_backup} =
+        $self->_contract_home_path( $installation->{bt_backup}{path} );
+  }
 
   return {
           ok      => 1,

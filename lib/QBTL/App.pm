@@ -68,6 +68,7 @@ sub install ( $self ) {
     push @created, $dir;
   }
 
+  $installation->{bt_backup} = $bt_backup;
   my $config_result = $installer->write_installation_config( $installation );
   my $db_result;
   my $db = $self->{db}
