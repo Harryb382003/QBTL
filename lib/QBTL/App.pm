@@ -315,7 +315,7 @@ sub run_cli ( $self, @argv ) {
                           ? ( interactive => $self->{setup_interactive} )
                           : (), );
 
-    return $self->{renderer}->setup( $self->install );
+    return $self->{renderer}->setup( $self->setup );
   }
 
   if ( $cmd eq 'status' ) {
@@ -544,6 +544,31 @@ sub search ( $self ) {
       QBTL::Process::Search->new( db_path => $self->{config}->db_path, );
 
   return $self->{search};
+}
+
+sub setup ( $self ) {
+  my $root        = $self->{config}->installation_root;
+  my $config_path = $self->{config}->installation_config_path;
+
+  if ( !-d $root || !-f $config_path ) {
+    say {$self->{renderer}->{out}} 'QBTL is not installed; starting
+installation.';
+
+    my $install = $self->install;
+
+    return $install if !$install->{ok};
+
+    $root = $install->{home};
+  }
+
+  my $queue_dirs = $self->_installer->ensure_queue_dirs( $root );
+
+  return {
+          ok         => 1,
+          home       => $root,
+          created    => $queue_dirs->{created},
+          existing   => $queue_dirs->{existing},
+          queue_dirs => $queue_dirs,};
 }
 
 1;

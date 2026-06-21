@@ -148,6 +148,33 @@ sub _detect_local_search_tool ( $self ) {
           warning     => $warning,};
 }
 
+sub ensure_queue_dirs ( $self, $root ) {
+  my $root = $self->{config}->installation_root;
+
+  my @dirs = (
+               File::Spec->catdir( $root, 'queued_for_deletion' ),
+               File::Spec->catdir( $root, 'queued_for_restoration' ), );
+
+  my @created;
+  my @existing;
+
+  for my $dir ( @dirs ) {
+    if ( -d $dir ) {
+      push @existing, $dir;
+      next;
+    }
+
+    make_path( $dir );
+    push @created, $dir;
+  }
+
+  return {
+          ok       => 1,
+          created  => \@created,
+          existing => \@existing,
+          dirs     => \@dirs,};
+}
+
 sub _expand_home_path ( $self, $path ) {
   return if !defined $path;
 

@@ -166,7 +166,7 @@ $result =
                                                           search_tool => 'find',
                                                 }, );
 
-is( $result->{root}, $discovered_root,
+is( $result->{root}, $discovered_dir,
     'discovered installation root becomes default root' );
 is( $result->{config_dir},
     File::Spec->catdir( $discovered_root, 'QBTL' ),

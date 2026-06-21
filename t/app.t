@@ -85,6 +85,13 @@ my $out = '';
     return bless {}, shift;
   }
 
+  sub discover_bt_backup {
+    return {
+            ok     => 1,
+            source => 'test',
+            path   => '/tmp/qbtl-test/BT_backup',};
+  }
+
   sub discover_user_configs {
     return {
             ok      => 1,
