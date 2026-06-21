@@ -93,5 +93,102 @@ sub home ( $self ) {
   return $self->{home};
 }
 
+# lib/QBTL/Install/Application.pm
+
+sub discover_bt_backup ( $self, %arg ) {
+  my $local_search = $arg{local_search} // {};
+  my $out          = $self->{out} // \*STDOUT;
+
+  for my $path ( $self->_bt_backup_probe_paths ) {
+    say {$out} "checking $path for BT_backup.";
+
+    if ( -d $path ) {
+      return {
+              ok     => 1,
+              source => 'probe',
+              path   => $path,};
+    }
+  }
+
+  if ( ( $local_search->{search_tool} // '' ) eq 'mdfind' ) {
+    say {$out} 'searching for BT_backup with mdfind.';
+
+    my @paths = $self->_discover_bt_backup_mdfind;
+
+    if ( @paths ) {
+      return {
+              ok     => 1,
+              source => 'mdfind',
+              path   => $paths[0],};
+    }
+  }
+
+  if ( ( $local_search->{search_tool} // '' ) ne 'find' ) {
+    say {$out} 'searching for BT_backup with find.';
+  }
+
+  my @paths = $self->_discover_bt_backup_find;
+
+  if ( @paths ) {
+    return {
+            ok     => 1,
+            source => 'find',
+            path   => $paths[0],};
+  }
+
+  return {
+          ok       => 0,
+          status   => 'bt_backup_not_found',
+          problems => [
+            'no BT_backup directory found, check your qBittorrent installation',
+          ],};
+}
+
+sub _bt_backup_probe_paths ( $self ) {
+  my $home = $self->{user_home} // $ENV{HOME} // $self->home;
+
+  if ( $^O eq 'darwin' ) {
+    return (
+      File::Spec->catdir(
+                          $home,
+                          'Library',
+                          'Application Support',
+                          'qBittorrent',
+                          'BT_backup',
+      ),
+    );
+  }
+
+  return;
+}
+
+sub _discover_bt_backup_mdfind ( $self ) {
+  open my $fh, '-|', 'mdfind', 'kMDItemFSName == "BT_backup"'
+      or return;
+
+  my @paths = <$fh>;
+  close $fh;
+
+  chomp @paths;
+
+  return grep { -d $_ && ( File::Spec->splitdir($_) )[-1] eq 'BT_backup' }
+      @paths;
+}
+
+sub _discover_bt_backup_find ( $self ) {
+  my $home = $self->{user_home} // $ENV{HOME} // $self->home;
+  ( my $safe_home = $home ) =~ s/'/'\\''/g;
+
+  open my $fh, '-|', "find '$safe_home' -name BT_backup -type d 2>/dev/null"
+      or return;
+
+  my @paths = <$fh>;
+  close $fh;
+
+  chomp @paths;
+
+  return @paths;
+}
+
 
 1;

@@ -34,49 +34,20 @@ sub browse ( $self ) {
   return $self->{browse};
 }
 
-sub _installer ( $self ) {
-  $self->{installer} //=
-      QBTL::Install::Setup->new(
-                          home         => $self->{config}->installation_root,
-                          user_home    => $self->{config}->home,
-                          default_root => $self->{config}->installation_root,
-                          repo_root    => $self->{config}->_repo_root,
-                          repo_config_path => $self->{config}->repo_config_path,
-                          exists $self->{setup_interactive}
-                          ? ( interactive => $self->{setup_interactive} )
-                          : (), );
-
-  return $self->{installer};
-}
-
-sub local ( $self ) {
-  $self->{local} //=
-      QBTL::Process::Local->new(
-                              db_path     => $self->{config}->db_path,
-                              search_tool => $self->{config}->local_search_tool,
-      );
-
-  return $self->{local};
-}
-
-sub metadata ( $self ) {
-  $self->{metadata} //=
-      QBTL::Process::Metadata->new( db_path => $self->{config}->db_path, );
-
-  return $self->{metadata};
-}
-
-sub _qbtl_home ( $self ) {
-  my $db_path = $self->{config}->db_path;
-
-  $db_path =~ s{/[^/]+\z}{};
-
-  return $db_path;
-}
-
 sub install ( $self ) {
   my $installer    = $self->_installer;
   my $local_search = $installer->_detect_local_search_tool;
+  my $bt_backup = $installer->_application->discover_bt_backup(
+                                               local_search => $local_search, );
+
+  if ( !$bt_backup->{ok} ) {
+    return {
+            ok           => 0,
+            status       => $bt_backup->{status},
+            bt_backup    => $bt_backup,
+            local_search => $local_search,
+            problems     => $bt_backup->{problems},};
+  }
   my $installation =
       $installer->query_installation_paths( local_search => $local_search, );
   my $home        = $installation->{root};
@@ -135,7 +106,48 @@ sub install ( $self ) {
           db_result     => $db_result,
           existing      => \@existing,
           home          => $home,
-          local_search  => $local_search,};
+          local_search  => $local_search,
+          bt_backup     => $bt_backup,};
+}
+
+sub _installer ( $self ) {
+  $self->{installer} //=
+      QBTL::Install::Setup->new(
+                          home         => $self->{config}->installation_root,
+                          user_home    => $self->{config}->home,
+                          default_root => $self->{config}->installation_root,
+                          repo_root    => $self->{config}->_repo_root,
+                          repo_config_path => $self->{config}->repo_config_path,
+                          exists $self->{setup_interactive}
+                          ? ( interactive => $self->{setup_interactive} )
+                          : (), );
+
+  return $self->{installer};
+}
+
+sub local ( $self ) {
+  $self->{local} //=
+      QBTL::Process::Local->new(
+                              db_path     => $self->{config}->db_path,
+                              search_tool => $self->{config}->local_search_tool,
+      );
+
+  return $self->{local};
+}
+
+sub metadata ( $self ) {
+  $self->{metadata} //=
+      QBTL::Process::Metadata->new( db_path => $self->{config}->db_path, );
+
+  return $self->{metadata};
+}
+
+sub _qbtl_home ( $self ) {
+  my $db_path = $self->{config}->db_path;
+
+  $db_path =~ s{/[^/]+\z}{};
+
+  return $db_path;
 }
 
 sub run_cli ( $self, @argv ) {

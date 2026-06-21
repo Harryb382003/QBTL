@@ -181,7 +181,7 @@ sub _installation_config_defaults ( $self, $config ) {
   if ( defined $path && -f $path ) {
     my $config_dir = dirname( $path );
 
-    if ( ( File::Spec->splitdir( $config_dir ) )[-1] eq 'QBTL' ) {
+    if ( ( File::Spec->splitdir( $config_dir ) ) eq 'QBTL' ) {
       $root = dirname( $config_dir );
     } else {
       $root = $config_dir;
