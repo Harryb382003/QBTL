@@ -34,6 +34,27 @@ sub browse ( $self ) {
   return $self->{browse};
 }
 
+sub init ( $self ) {
+  my $db      = QBTL::DB->new( db_path => $self->{config}->db_path );
+  my $connect = $db->connect;
+
+  return {ok => 0, status => 'db_connect_failed', db_result => $connect}
+      if !$connect->{ok};
+
+  my $migration = $db->migrate( $connect->{dbh} );
+
+  $connect->{dbh}->disconnect;
+
+  my $preferences = $self->qbt->preferences;
+  my $refresh     = $self->qbt->refresh;
+
+  return {
+          ok          => 1,
+          migration   => $migration,
+          preferences => $preferences,
+          qbt_refresh => $refresh,};
+}
+
 sub install ( $self ) {
   my $installer    = $self->_installer;
   my $local_search = $installer->_detect_local_search_tool;
@@ -69,6 +90,7 @@ sub install ( $self ) {
   }
 
   $installation->{bt_backup} = $bt_backup;
+
   my $config_result = $installer->write_installation_config( $installation );
   my $db_result;
   my $db = $self->{db}
@@ -143,6 +165,17 @@ sub metadata ( $self ) {
   return $self->{metadata};
 }
 
+sub qbt ( $self ) {
+  my $api = QBTL::QBT::API->new(
+                               base_url => $self->{config}->qbt_url,
+                               $self->{qbt_ua} ? ( ua => $self->{qbt_ua} ) : (),
+  );
+
+  return
+      QBTL::Process::QBT->new( api     => $api,
+                               db_path => $self->{config}->db_path, );
+}
+
 sub _qbtl_home ( $self ) {
   my $db_path = $self->{config}->db_path;
 
@@ -176,6 +209,10 @@ sub run_cli ( $self, @argv ) {
     }
 
     return $self->{renderer}->help( QBTL::Help->topic( 'meta' ) );
+  }
+
+  if ( $cmd eq 'init' ) {
+    return $self->{renderer}->init( $self->init );
   }
 
   if ( $cmd eq 'local' ) {

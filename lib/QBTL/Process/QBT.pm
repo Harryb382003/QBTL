@@ -17,10 +17,6 @@ sub api ( $self ) {
   return $self->{api};
 }
 
-sub api ( $self ) {
-  return $self->{api};
-}
-
 sub _decode_preferences ( $self, $result ) {
   return {} if !$result->{ok};
 

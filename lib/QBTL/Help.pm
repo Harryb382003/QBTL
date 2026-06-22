@@ -16,12 +16,13 @@ sub topics ( $class ) {
              usage    => 'qbtl <command> [options]',
              commands => [
                            [ help    => 'Show this help' ],
-                           [ version => 'Show QBTL version' ],
-                           [ setup   => 'create/update the QBTL database' ],
-                           [ qbt     => 'qBittorrent API commands' ],
+                           [ init    => 'initialize/update the QBTL database'],
                            [ local   => 'local scan and summary commands' ],
-                           [ search  => 'search qBT data' ],
                            [ meta    => 'hash-centered metadata commands' ],
+                           [ qbt     => 'qBittorrent API commands' ],
+                           [ search  => 'search qBT data' ],
+                           [ setup   => 'create/update the QBTL database' ],
+                           [ version => 'Show QBTL version' ],
              ],
     },
 

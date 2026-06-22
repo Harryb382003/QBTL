@@ -151,6 +151,42 @@ sub help ( $self, $help ) {
   return 0;
 }
 
+sub init ( $self, $result ) {
+  my $out = $self->{out};
+
+  if ( !$result->{ok} ) {
+    say {$out} 'QBTL init failed.';
+
+    for my $problem ( @{ $result->{problems} // [] } ) {
+      say {$out} "  problem: $problem";
+    }
+
+    return 1;
+  }
+
+  say {$out} 'QBTL init complete.';
+
+  if ( $result->{migration} && $result->{migration}{ok} ) {
+    say {$out} '';
+    say {$out} 'Database:';
+    say {$out} '  schema ready';
+  }
+
+  if ( $result->{preferences} && $result->{preferences}{ok} ) {
+    say {$out} '';
+    say {$out} 'qBT preferences:';
+    say {$out} '  refreshed';
+  }
+
+  if ( $result->{qbt_refresh} && $result->{qbt_refresh}{ok} ) {
+    say {$out} '';
+    say {$out} 'qBT inventory:';
+    say {$out} '  refreshed';
+  }
+
+  return 0;
+}
+
 sub local_scan ( $self, $result ) {
   my $out = $self->{out};
 
@@ -510,7 +546,6 @@ sub manual_value_unset ( $self, $result ) {
 
   return;
 }
-
 
 sub qbt_preference_keys ( $self, $result ) {
   if ( !$result->{ok} ) {
