@@ -22,6 +22,49 @@ sub clear_current_qbt ( $self, $dbh ) {
   return {ok => 1};
 }
 
+sub _column_exists ( $dbh, $table, $column ) {
+  my $columns = $dbh->selectall_arrayref( qq{PRAGMA table_info("$table")},
+                                          {Slice => {}}, );
+
+  for my $row ( @{$columns} ) {
+    if ( $row->{name} eq $column ) {
+      return 1;
+    }
+  }
+
+  return 0;
+}
+
+sub _column_value_summary ( $self, $dbh, $table, $column ) {
+  my %allowed_table = map { $_ => 1 } qw(
+      local_torrent_files
+      local_fastresume_files
+      qbt_info
+      promoted_values
+  );
+
+  return '' if !$allowed_table{$table};
+
+  my $quoted_table  = '"' . $table . '"';
+  my $quoted_column = '"' . $column . '"';
+
+  my $summary = $dbh->selectrow_hashref(
+    qq{
+      SELECT
+        COUNT($quoted_column) AS value_count,
+        COUNT(DISTINCT $quoted_column) AS distinct_values
+      FROM $quoted_table
+      WHERE $quoted_column IS NOT NULL
+        AND $quoted_column != ''
+    } );
+
+  return
+        ( $summary->{value_count} // 0 )
+      . ' values / '
+      . ( $summary->{distinct_count} // 0 )
+      . ' distinct';
+}
+
 sub connect ( $self ) {
   my @problems = $self->verify_path;
 
@@ -121,6 +164,103 @@ sub hash_key_detail ( $self, $dbh, %arg ) {
           rows    => $rows,};
 }
 
+sub key_accessors ( $self, $dbh ) {
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        "key",
+        kind,
+        source,
+        accessor,
+        status,
+        note,
+        first_seen_on,
+        last_seen_on
+      FROM key_accessors
+      ORDER BY kind ASC, "key" ASC
+    },
+    {Slice => {}}, );
+
+  for my $row ( @{$rows} ) {
+    $row->{data} = $self->_key_accessor_data( $dbh, $row );
+  }
+
+  return {
+          ok   => 1,
+          rows => $rows,};
+}
+
+sub _key_accessor_data ( $self, $dbh, $row ) {
+  my $key    = $row->{key};
+  my $source = $row->{source} // '';
+
+  if ( $source eq 'hash_values' ) {
+    my $summary = $dbh->selectrow_hashref(
+      q{
+        SELECT
+  COALESCE(SUM(seen_count), 0) AS seen,
+  COUNT(DISTINCT value) AS value_count,
+  COUNT(DISTINCT hash) AS hash_count
+FROM hash_values
+WHERE "key" = ?
+      },
+      undef,
+      $key, );
+
+    return
+          ( $summary->{seen} // 0 )
+        . ' seen / '
+        . ( $summary->{value_count} // 0 )
+        . ' values / '
+        . ( $summary->{hash_count} // 0 )
+        . ' hashes';
+  }
+
+  if ( $source =~ /\Aqbt_preferences\./ ) {
+    my $value = $dbh->selectrow_array(
+      q{
+        SELECT value
+        FROM qbt_preferences
+        WHERE "key" = ?
+      },
+      undef,
+      $key, );
+
+    return defined $value ? $value : '';
+  }
+
+  if ( $source =~ /\Alocal_torrent_files\.([A-Za-z_][A-Za-z0-9_]*)\z/ ) {
+    return $self->_column_value_summary( $dbh, 'local_torrent_files', $1 );
+  }
+
+  if ( $source =~ /\Alocal_fastresume_files\.([A-Za-z_][A-Za-z0-9_]*)\z/ ) {
+    return $self->_column_value_summary( $dbh, 'local_fastresume_files', $1 );
+  }
+
+  if ( $source =~ /\Aqbt_info\.([A-Za-z_][A-Za-z0-9_]*)\z/ ) {
+    return $self->_column_value_summary( $dbh, 'qbt_info', $1 );
+  }
+
+  if ( $source =~ /\Apromoted_values\.([A-Za-z_][A-Za-z0-9_]*)\z/ ) {
+    return $self->_column_value_summary( $dbh, 'promoted_values', $1 );
+  }
+
+  if ( $source eq 'manual_values' ) {
+    my $count = $dbh->selectrow_array(
+      q{
+        SELECT COUNT(*)
+        FROM manual_values
+        WHERE "key" = ?
+      },
+      undef,
+      $key, );
+
+    return ( $count // 0 ) . ' values';
+  }
+
+  return '';
+}
+
 sub local_fastresume_file_count ( $self, $dbh ) {
   return $dbh->selectrow_array(
     q{
@@ -193,22 +333,35 @@ sub local_torrent_summary ( $self, $dbh ) {
           parse_problems => $parse_problems // 0,};
 }
 
-sub migration_dir ( $self ) {
-  return $self->{migration_dir};
-}
+sub manual_values_for_hash ( $self, $dbh, $hash ) {
+  if ( !defined $hash || $hash !~ /\A[0-9a-f]{40}\z/ ) {
+    return {
+            ok     => 0,
+            status => 'invalid_hash',
+            error  => 'hash must be a 40-character lowercase hex value',};
+  }
 
-sub migration_files ( $self ) {
-  my $dir = $self->migration_dir;
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        hash,
+        "key",
+        value,
+        value_type,
+        note,
+        created_on,
+        updated_on
+      FROM manual_values
+      WHERE hash = ?
+      ORDER BY "key" ASC
+    },
+    {Slice => {}},
+    $hash, );
 
-  opendir my $dh, $dir or die "opendir migration dir $dir: $!";
-
-  my @files = sort
-      map { File::Spec->catfile( $dir, $_ ) }
-      grep {/\A\d+_.+\.sql\z/} readdir $dh;
-
-  closedir $dh;
-
-  return @files;
+  return {
+          ok   => 1,
+          hash => $hash,
+          rows => $rows,};
 }
 
 sub migrate ( $self, $dbh ) {
@@ -251,6 +404,24 @@ sub migrate ( $self, $dbh ) {
   return {
           ok              => 1,
           migration_count => $ran,};
+}
+
+sub migration_dir ( $self ) {
+  return $self->{migration_dir};
+}
+
+sub migration_files ( $self ) {
+  my $dir = $self->migration_dir;
+
+  opendir my $dh, $dir or die "opendir migration dir $dir: $!";
+
+  my @files = sort
+      map { File::Spec->catfile( $dir, $_ ) }
+      grep {/\A\d+_.+\.sql\z/} readdir $dh;
+
+  closedir $dh;
+
+  return @files;
 }
 
 sub promote_hash_key ( $self, $dbh, %arg ) {
@@ -388,6 +559,47 @@ sub promote_hash_key ( $self, $dbh, %arg ) {
           backfilled    => $backfilled,};
 }
 
+sub qbt_hash_as_name_count ( $self, $dbh ) {
+  my ( $count ) = $dbh->selectrow_array(
+    q{
+      SELECT COUNT(*)
+      FROM qbt_info
+      WHERE current_qbt = 1
+        AND total_size = -1
+        AND LENGTH(name) = 40
+        AND LOWER(name) = name
+        AND name NOT GLOB '*[^0123456789abcdef]*'
+    }
+  );
+
+  return $count // 0;
+}
+
+sub qbt_info_columns ( $self, $dbh ) {
+  my $columns = $dbh->selectall_arrayref( q{PRAGMA table_info(qbt_info)},
+                                          {Slice => {}}, );
+
+  return map { $_->{name} } @{$columns};
+}
+
+sub qbt_info_column_map ( $self, $dbh ) {
+  return map { $_ => 1 } $self->qbt_info_columns( $dbh );
+}
+
+sub qbt_info_exists ( $self, $dbh, $hash ) {
+  my ( $exists ) = $dbh->selectrow_array(
+    q{
+      SELECT 1
+      FROM qbt_info
+      WHERE hash = ?
+      LIMIT 1
+    },
+    undef,
+    $hash, );
+
+  return $exists ? 1 : 0;
+}
+
 sub qbt_preferences ( $self, $dbh ) {
   my $rows = $dbh->selectall_arrayref(
     q{
@@ -435,66 +647,6 @@ sub qbt_preferences_count ( $self, $dbh ) {
   );
 }
 
-sub upsert_qbt_preference ( $self, $dbh, $row ) {
-  die 'qbt preference row requires key' if !defined $row->{key};
-
-  $dbh->do(
-    q{
-      INSERT INTO qbt_preferences
-        ("key", value, value_type, first_seen_on, last_seen_on)
-      VALUES
-        (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      ON CONFLICT("key")
-      DO UPDATE SET
-        value = excluded.value,
-        value_type = excluded.value_type,
-        last_seen_on = CURRENT_TIMESTAMP
-    },
-    undef,
-    $row->{key},
-    $row->{value},
-    $row->{value_type}, );
-
-  $self->upsert_key_accessor(
-                              $dbh,
-                              key      => $row->{key},
-                              kind     => 'core',
-                              source   => 'qbt_preferences.' . $row->{key},
-                              accessor => 'qbtl qbt preferences',
-                              status   => 'implemented',
-                              note     => 'qBittorrent application preference',
-  );
-
-  return {
-          ok  => 1,
-          key => $row->{key},};
-}
-
-sub qbt_info_columns ( $self, $dbh ) {
-  my $columns = $dbh->selectall_arrayref( q{PRAGMA table_info(qbt_info)},
-                                          {Slice => {}}, );
-
-  return map { $_->{name} } @{$columns};
-}
-
-sub qbt_info_column_map ( $self, $dbh ) {
-  return map { $_ => 1 } $self->qbt_info_columns( $dbh );
-}
-
-sub qbt_info_exists ( $self, $dbh, $hash ) {
-  my ( $exists ) = $dbh->selectrow_array(
-    q{
-      SELECT 1
-      FROM qbt_info
-      WHERE hash = ?
-      LIMIT 1
-    },
-    undef,
-    $hash, );
-
-  return $exists ? 1 : 0;
-}
-
 sub qbt_summary ( $self, $dbh ) {
   my ( $total ) = $dbh->selectrow_array( q{SELECT COUNT(*) FROM qbt_info} );
 
@@ -510,47 +662,6 @@ sub qbt_summary ( $self, $dbh ) {
           removed => $removed // 0,};
 }
 
-sub random_qbt_info ( $self, $dbh ) {
-  return $dbh->selectrow_hashref(
-    q{
-      SELECT *
-      FROM qbt_info
-      ORDER BY RANDOM()
-      LIMIT 1
-    }
-  );
-}
-
-sub removed_qbt_count ( $self, $dbh ) {
-  my ( $count ) = $dbh->selectrow_array(
-    q{SELECT COUNT(*)
-    FROM qbt_info
-    WHERE current_qbt = 0
-    AND seen = 1}
-  );
-
-  return $count // 0;
-}
-
-sub _safe_promoted_column_name ( $key ) {
-  my $column = lc $key;
-
-  $column =~ s/[^a-z0-9]+/_/g;
-  $column =~ s/\A_+//;
-  $column =~ s/_+\z//;
-  $column =~ s/_+/_/g;
-
-  if ( $column eq '' ) {
-    $column = 'metadata_value';
-  }
-
-  if ( $column !~ /\A[a-z]/ ) {
-    $column = "metadata_$column";
-  }
-
-  return $column;
-}
-
 sub qbt_status ( $self, $dbh ) {
   my $summary = $dbh->selectrow_hashref(
     q{
@@ -558,22 +669,12 @@ sub qbt_status ( $self, $dbh ) {
         SUM(CASE WHEN current_qbt = 1 THEN 1 ELSE 0 END) AS current_count,
         SUM(CASE WHEN current_qbt = 0 THEN 1 ELSE 0 END) AS removed_count,
         COUNT(*) AS total_count,
-        SUM(
-          CASE
-            WHEN current_qbt = 1
-            AND total_size = -1
-            AND LENGTH(name) = 40
-            AND LOWER(name) = name
-            AND name NOT GLOB '*[^0123456789abcdef]*'
-            THEN 1
-            ELSE 0
-          END
-        ) AS questionable_count,
+        0 AS hash_as_name_count,
         NULL AS latest_seen_on
         FROM qbt_info
       },
     {Slice => {}}, );
-
+  $summary->{hash_as_name_count} = $self->qbt_hash_as_name_count( $dbh );
   my $states = $dbh->selectall_arrayref(
     q{
       SELECT state, COUNT(*) AS count
@@ -617,17 +718,106 @@ sub qbt_status ( $self, $dbh ) {
           categories => $categories // {},};
 }
 
-sub _column_exists ( $dbh, $table, $column ) {
-  my $columns = $dbh->selectall_arrayref( qq{PRAGMA table_info("$table")},
-                                          {Slice => {}}, );
+sub promoted_hash_keys ( $self, $dbh ) {
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        "key",
+        target_column,
+        value_type,
+        created_on
+      FROM promoted_keys
+      ORDER BY "key" ASC
+    },
+    {Slice => {}}, );
 
-  for my $row ( @{$columns} ) {
-    if ( $row->{name} eq $column ) {
-      return 1;
-    }
+  return {
+          ok   => 1,
+          rows => $rows,};
+}
+
+sub promotion_candidates ( $self, $dbh, %arg ) {
+  my $threshold = $arg{threshold} // 20;
+
+  if ( $threshold !~ /\A[0-9]+\z/ ) {
+    return {
+            ok     => 0,
+            status => 'invalid_threshold',
+            error  => 'threshold must be a non-negative integer',};
   }
 
-  return 0;
+  $threshold = 0 + $threshold;
+
+  if ( $threshold == 0 ) {
+    return {
+            ok         => 1,
+            threshold  => 0,
+            candidates => [],};
+  }
+
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        hv."key",
+        COUNT(DISTINCT hv.hash) AS hashes,
+        COUNT(DISTINCT hv.value) AS values_seen,
+        SUM(hv.seen_count) AS seen
+      FROM hash_values hv
+      LEFT JOIN promoted_keys pk
+        ON pk."key" = hv."key"
+      WHERE pk."key" IS NULL
+      GROUP BY hv."key"
+            HAVING SUM(hv.seen_count) >= CAST(? AS INTEGER)
+      ORDER BY seen DESC, hv."key" ASC
+    },
+    {Slice => {}},
+    $threshold, );
+
+  return {
+          ok         => 1,
+          threshold  => $threshold,
+          candidates => $rows,};
+}
+
+sub random_qbt_info ( $self, $dbh ) {
+  return $dbh->selectrow_hashref(
+    q{
+      SELECT *
+      FROM qbt_info
+      ORDER BY RANDOM()
+      LIMIT 1
+    }
+  );
+}
+
+sub removed_qbt_count ( $self, $dbh ) {
+  my ( $count ) = $dbh->selectrow_array(
+    q{SELECT COUNT(*)
+    FROM qbt_info
+    WHERE current_qbt = 0
+    AND seen = 1}
+  );
+
+  return $count // 0;
+}
+
+sub _safe_promoted_column_name ( $key ) {
+  my $column = lc $key;
+
+  $column =~ s/[^a-z0-9]+/_/g;
+  $column =~ s/\A_+//;
+  $column =~ s/_+\z//;
+  $column =~ s/_+/_/g;
+
+  if ( $column eq '' ) {
+    $column = 'metadata_value';
+  }
+
+  if ( $column !~ /\A[a-z]/ ) {
+    $column = "metadata_$column";
+  }
+
+  return $column;
 }
 
 sub search_qbt_info ( $self, $dbh, $field, $input, %arg ) {
@@ -800,98 +990,6 @@ sub set_manual_value ( $self, $dbh, %arg ) {
           value => $value,};
 }
 
-sub manual_values_for_hash ( $self, $dbh, $hash ) {
-  if ( !defined $hash || $hash !~ /\A[0-9a-f]{40}\z/ ) {
-    return {
-            ok     => 0,
-            status => 'invalid_hash',
-            error  => 'hash must be a 40-character lowercase hex value',};
-  }
-
-  my $rows = $dbh->selectall_arrayref(
-    q{
-      SELECT
-        hash,
-        "key",
-        value,
-        value_type,
-        note,
-        created_on,
-        updated_on
-      FROM manual_values
-      WHERE hash = ?
-      ORDER BY "key" ASC
-    },
-    {Slice => {}},
-    $hash, );
-
-  return {
-          ok   => 1,
-          hash => $hash,
-          rows => $rows,};
-}
-
-sub promoted_hash_keys ( $self, $dbh ) {
-  my $rows = $dbh->selectall_arrayref(
-    q{
-      SELECT
-        "key",
-        target_column,
-        value_type,
-        created_on
-      FROM promoted_keys
-      ORDER BY "key" ASC
-    },
-    {Slice => {}}, );
-
-  return {
-          ok   => 1,
-          rows => $rows,};
-}
-
-sub promotion_candidates ( $self, $dbh, %arg ) {
-  my $threshold = $arg{threshold} // 20;
-
-  if ( $threshold !~ /\A[0-9]+\z/ ) {
-    return {
-            ok     => 0,
-            status => 'invalid_threshold',
-            error  => 'threshold must be a non-negative integer',};
-  }
-
-  $threshold = 0 + $threshold;
-
-  if ( $threshold == 0 ) {
-    return {
-            ok         => 1,
-            threshold  => 0,
-            candidates => [],};
-  }
-
-  my $rows = $dbh->selectall_arrayref(
-    q{
-      SELECT
-        hv."key",
-        COUNT(DISTINCT hv.hash) AS hashes,
-        COUNT(DISTINCT hv.value) AS values_seen,
-        SUM(hv.seen_count) AS seen
-      FROM hash_values hv
-      LEFT JOIN promoted_keys pk
-        ON pk."key" = hv."key"
-      WHERE pk."key" IS NULL
-      GROUP BY hv."key"
-            HAVING SUM(hv.seen_count) >= CAST(? AS INTEGER)
-      ORDER BY seen DESC, hv."key" ASC
-    },
-    {Slice => {}},
-    $threshold, );
-
-  return {
-          ok         => 1,
-          threshold  => $threshold,
-          candidates => $rows,};
-}
-
 sub upsert_hash_value ( $self, $dbh, %arg ) {
   my $hash = $arg{hash};
   my $key  = $arg{key};
@@ -981,31 +1079,6 @@ sub unset_manual_value ( $self, $dbh, %arg ) {
           deleted => $rows + 0,};
 }
 
-sub upsert_local_fastresume_file ( $self, $dbh, $row ) {
-  $dbh->do(
-    q{
-      INSERT INTO local_fastresume_files
-        (path, size, mtime, backend, seen_on)
-      VALUES
-        (?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(path)
-      DO UPDATE SET
-        size    = excluded.size,
-        mtime   = excluded.mtime,
-        backend = excluded.backend,
-        seen_on = CURRENT_TIMESTAMP
-    },
-    undef,
-    $row->{path},
-    $row->{size},
-    $row->{mtime},
-    $row->{backend}, );
-
-  return {
-          ok   => 1,
-          path => $row->{path},};
-}
-
 sub update_local_fastresume_parse ( $self, $dbh, $row ) {
   $dbh->do(
     q{
@@ -1055,6 +1128,104 @@ sub update_local_torrent_parse ( $self, $dbh, $row ) {
     $row->{parse_ok},
     $row->{parse_problem},
     $row->{path}, );
+
+  return {
+          ok   => 1,
+          path => $row->{path},};
+}
+
+sub upsert_key_accessor ( $self, $dbh, %arg ) {
+  my $key = $arg{key};
+
+  if ( !defined $key || $key eq '' ) {
+    return {
+            ok     => 0,
+            status => 'invalid_key',
+            error  => 'key is required',};
+  }
+
+  my $kind     = $arg{kind} // 'observed';
+  my $source   = $arg{source};
+  my $accessor = $arg{accessor};
+  my $status   = $arg{status} // 'todo';
+  my $note     = $arg{note};
+
+  $dbh->do(
+    q{
+      INSERT INTO key_accessors
+        ("key", kind, source, accessor, status, note)
+      VALUES
+        (?, ?, ?, ?, ?, ?)
+      ON CONFLICT("key")
+      DO UPDATE SET
+        kind = CASE
+          WHEN key_accessors.kind = 'core'
+           AND excluded.kind = 'observed'
+          THEN key_accessors.kind
+          ELSE COALESCE(excluded.kind, key_accessors.kind)
+        END,
+        source = CASE
+          WHEN key_accessors.kind = 'core'
+           AND excluded.kind = 'observed'
+          THEN key_accessors.source
+          ELSE COALESCE(excluded.source, key_accessors.source)
+        END,
+        accessor = CASE
+          WHEN key_accessors.kind = 'core'
+           AND excluded.kind = 'observed'
+          THEN key_accessors.accessor
+          ELSE COALESCE(excluded.accessor, key_accessors.accessor)
+        END,
+        status = CASE
+          WHEN key_accessors.kind = 'core'
+           AND excluded.kind = 'observed'
+          THEN key_accessors.status
+          ELSE COALESCE(excluded.status, key_accessors.status)
+        END,
+        note = CASE
+          WHEN key_accessors.kind = 'core'
+           AND excluded.kind = 'observed'
+          THEN key_accessors.note
+          ELSE COALESCE(excluded.note, key_accessors.note)
+        END,
+        last_seen_on = CURRENT_TIMESTAMP
+    },
+    undef,
+    $key,
+    $kind,
+    $source,
+    $accessor,
+    $status,
+    $note, );
+
+  return {
+          ok       => 1,
+          key      => $key,
+          kind     => $kind,
+          source   => $source,
+          accessor => $accessor,
+          status   => $status,};
+}
+
+sub upsert_local_fastresume_file ( $self, $dbh, $row ) {
+  $dbh->do(
+    q{
+      INSERT INTO local_fastresume_files
+        (path, size, mtime, backend, seen_on)
+      VALUES
+        (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(path)
+      DO UPDATE SET
+        size    = excluded.size,
+        mtime   = excluded.mtime,
+        backend = excluded.backend,
+        seen_on = CURRENT_TIMESTAMP
+    },
+    undef,
+    $row->{path},
+    $row->{size},
+    $row->{mtime},
+    $row->{backend}, );
 
   return {
           ok   => 1,
@@ -1170,204 +1341,39 @@ sub upsert_qbt_info ( $self, $dbh, $row ) {
           hash => $row->{hash},};
 }
 
-sub key_accessors ( $self, $dbh ) {
-  my $rows = $dbh->selectall_arrayref(
-    q{
-      SELECT
-        "key",
-        kind,
-        source,
-        accessor,
-        status,
-        note,
-        first_seen_on,
-        last_seen_on
-      FROM key_accessors
-      ORDER BY kind ASC, "key" ASC
-    },
-    {Slice => {}}, );
-
-  for my $row ( @{$rows} ) {
-    $row->{data} = $self->_key_accessor_data( $dbh, $row );
-  }
-
-  return {
-          ok   => 1,
-          rows => $rows,};
-}
-
-sub _key_accessor_data ( $self, $dbh, $row ) {
-  my $key    = $row->{key};
-  my $source = $row->{source} // '';
-
-  if ( $source eq 'hash_values' ) {
-    my $summary = $dbh->selectrow_hashref(
-      q{
-        SELECT
-  COALESCE(SUM(seen_count), 0) AS seen,
-  COUNT(DISTINCT value) AS value_count,
-  COUNT(DISTINCT hash) AS hash_count
-FROM hash_values
-WHERE "key" = ?
-      },
-      undef,
-      $key, );
-
-    return
-          ( $summary->{seen} // 0 )
-        . ' seen / '
-        . ( $summary->{value_count} // 0 )
-        . ' values / '
-        . ( $summary->{hash_count} // 0 )
-        . ' hashes';
-  }
-
-  if ( $source =~ /\Aqbt_preferences\./ ) {
-    my $value = $dbh->selectrow_array(
-      q{
-        SELECT value
-        FROM qbt_preferences
-        WHERE "key" = ?
-      },
-      undef,
-      $key, );
-
-    return defined $value ? $value : '';
-  }
-
-  if ( $source =~ /\Alocal_torrent_files\.([A-Za-z_][A-Za-z0-9_]*)\z/ ) {
-    return $self->_column_value_summary( $dbh, 'local_torrent_files', $1 );
-  }
-
-  if ( $source =~ /\Alocal_fastresume_files\.([A-Za-z_][A-Za-z0-9_]*)\z/ ) {
-    return $self->_column_value_summary( $dbh, 'local_fastresume_files', $1 );
-  }
-
-  if ( $source =~ /\Aqbt_info\.([A-Za-z_][A-Za-z0-9_]*)\z/ ) {
-    return $self->_column_value_summary( $dbh, 'qbt_info', $1 );
-  }
-
-  if ( $source =~ /\Apromoted_values\.([A-Za-z_][A-Za-z0-9_]*)\z/ ) {
-    return $self->_column_value_summary( $dbh, 'promoted_values', $1 );
-  }
-
-  if ( $source eq 'manual_values' ) {
-    my $count = $dbh->selectrow_array(
-      q{
-        SELECT COUNT(*)
-        FROM manual_values
-        WHERE "key" = ?
-      },
-      undef,
-      $key, );
-
-    return ( $count // 0 ) . ' values';
-  }
-
-  return '';
-}
-
-sub _column_value_summary ( $self, $dbh, $table, $column ) {
-  my %allowed_table = map { $_ => 1 } qw(
-      local_torrent_files
-      local_fastresume_files
-      qbt_info
-      promoted_values
-  );
-
-  return '' if !$allowed_table{$table};
-
-  my $quoted_table  = '"' . $table . '"';
-  my $quoted_column = '"' . $column . '"';
-
-  my $summary = $dbh->selectrow_hashref(
-    qq{
-      SELECT
-        COUNT($quoted_column) AS value_count,
-        COUNT(DISTINCT $quoted_column) AS distinct_values
-      FROM $quoted_table
-      WHERE $quoted_column IS NOT NULL
-        AND $quoted_column != ''
-    } );
-
-  return
-        ( $summary->{value_count} // 0 )
-      . ' values / '
-      . ( $summary->{distinct_count} // 0 )
-      . ' distinct';
-}
-
-sub upsert_key_accessor ( $self, $dbh, %arg ) {
-  my $key = $arg{key};
-
-  if ( !defined $key || $key eq '' ) {
-    return {
-            ok     => 0,
-            status => 'invalid_key',
-            error  => 'key is required',};
-  }
-
-  my $kind     = $arg{kind} // 'observed';
-  my $source   = $arg{source};
-  my $accessor = $arg{accessor};
-  my $status   = $arg{status} // 'todo';
-  my $note     = $arg{note};
+sub upsert_qbt_preference ( $self, $dbh, $row ) {
+  die 'qbt preference row requires key' if !defined $row->{key};
 
   $dbh->do(
     q{
-      INSERT INTO key_accessors
-        ("key", kind, source, accessor, status, note)
+      INSERT INTO qbt_preferences
+        ("key", value, value_type, first_seen_on, last_seen_on)
       VALUES
-        (?, ?, ?, ?, ?, ?)
+        (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       ON CONFLICT("key")
       DO UPDATE SET
-        kind = CASE
-          WHEN key_accessors.kind = 'core'
-           AND excluded.kind = 'observed'
-          THEN key_accessors.kind
-          ELSE COALESCE(excluded.kind, key_accessors.kind)
-        END,
-        source = CASE
-          WHEN key_accessors.kind = 'core'
-           AND excluded.kind = 'observed'
-          THEN key_accessors.source
-          ELSE COALESCE(excluded.source, key_accessors.source)
-        END,
-        accessor = CASE
-          WHEN key_accessors.kind = 'core'
-           AND excluded.kind = 'observed'
-          THEN key_accessors.accessor
-          ELSE COALESCE(excluded.accessor, key_accessors.accessor)
-        END,
-        status = CASE
-          WHEN key_accessors.kind = 'core'
-           AND excluded.kind = 'observed'
-          THEN key_accessors.status
-          ELSE COALESCE(excluded.status, key_accessors.status)
-        END,
-        note = CASE
-          WHEN key_accessors.kind = 'core'
-           AND excluded.kind = 'observed'
-          THEN key_accessors.note
-          ELSE COALESCE(excluded.note, key_accessors.note)
-        END,
+        value = excluded.value,
+        value_type = excluded.value_type,
         last_seen_on = CURRENT_TIMESTAMP
     },
     undef,
-    $key,
-    $kind,
-    $source,
-    $accessor,
-    $status,
-    $note, );
+    $row->{key},
+    $row->{value},
+    $row->{value_type}, );
+
+  $self->upsert_key_accessor(
+                              $dbh,
+                              key      => $row->{key},
+                              kind     => 'core',
+                              source   => 'qbt_preferences.' . $row->{key},
+                              accessor => 'qbtl qbt preferences',
+                              status   => 'implemented',
+                              note     => 'qBittorrent application preference',
+  );
 
   return {
-          ok       => 1,
-          key      => $key,
-          kind     => $kind,
-          source   => $source,
-          accessor => $accessor,
-          status   => $status,};
+          ok  => 1,
+          key => $row->{key},};
 }
 
 sub verify_path ( $self ) {

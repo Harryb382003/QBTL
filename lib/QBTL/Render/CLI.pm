@@ -740,14 +740,14 @@ sub qbt_status ( $self, $result ) {
 
   say {$out} '';
   say {$out} 'qBT inventory:';
-  say {$out} '  currently loaded:        ' . ( $summary->{current_count}      // 0
-);
-  say {$out} '  previously seen/removed: ' . ( $summary->{removed_count}      // 0
-);
-  say {$out} '  questionable:            ' . ( $summary->{questionable_count} // 0
-);
-  say {$out} '  total known:             ' . ( $summary->{total_count}        // 0
-);
+  say {$out} '  currently loaded:        '
+    . ( $summary->{current_count} // 0);
+  say {$out} '  previously seen/removed: '
+    . ( $summary->{removed_count} // 0);
+  say {$out} '  hash_as_name:            '
+    . ( $summary->{hash_as_name_count} // 0);
+  say {$out} '  total known:             '
+    . ($summary->{total_count} // 0 );
 
   say {$out} '';
   say {$out} 'States:';
