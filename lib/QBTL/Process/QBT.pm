@@ -235,6 +235,20 @@ sub refresh_info_rows ( $self, %arg ) {
           problems => $store->{problems},};
 }
 
+sub status ( $self, %arg ) {
+  my $db  = $arg{db}  // die 'db is required';
+  my $dbh = $arg{dbh} // die 'dbh is required';
+
+  my $status = $db->qbt_status($dbh);
+
+  return {
+          ok         => $status->{ok},
+          action     => 'qbt_status',
+          summary    => $status->{summary},
+          states     => $status->{states},
+          categories => $status->{categories},};
+}
+
 sub store_info_rows ( $self, %arg ) {
   my $db   = $arg{db}   // die 'db is required';
   my $dbh  = $arg{dbh}  // die 'dbh is required';

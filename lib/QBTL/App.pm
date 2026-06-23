@@ -35,24 +35,73 @@ sub browse ( $self ) {
 }
 
 sub init ( $self ) {
+  my $started = time;
   my $db      = QBTL::DB->new( db_path => $self->{config}->db_path );
   my $connect = $db->connect;
 
-  return {ok => 0, status => 'db_connect_failed', db_result => $connect}
-      if !$connect->{ok};
+  if (!$connect->{ok}) {
+    return {
+          ok       => 0,
+          status   => 'db_connect_failed',
+          problems => $connect->{problems} // [],
+          db_result => $connect,
+        }
+      };
 
-  my $migration = $db->migrate( $connect->{dbh} );
+  my $dbh = $connect->{dbh};
+  my $migration = $db->migrate($dbh);
+  my $qbt = $self->qbt;
+  my $raw_preferences = $qbt->preferences;
+  my $preferences = $raw_preferences->{ok}
+      ? $qbt->refresh_preferences(
+          dbh         => $dbh,
+          db          => $db,
+          preferences => $raw_preferences->{preferences} // {},
+        )
+      : {
+          ok       => 0,
+          action   => 'qbt_preferences_refresh',
+          problems => [
+            { error => 'qBittorrent app/preferences request failed' },
+          ],
+        };
 
-  $connect->{dbh}->disconnect;
+  my $info = $qbt->info;
 
-  my $preferences = $self->qbt->preferences;
-  my $refresh     = $self->qbt->refresh;
+  my $refresh = $info->{ok}
+      ? $qbt->refresh_info_rows(
+          dbh  => $dbh,
+          db   => $db,
+          rows => $info->{rows} // [],
+        )
+      : {
+          ok       => 0,
+          action   => 'qbt_refresh',
+          problems => [
+            { error => 'qBittorrent torrents/info request failed' },
+          ],
+        };
+
+    my $qbt_status = $qbt->status(
+    dbh => $dbh,
+    db  => $db,
+  );
+
+  my $local_scan = $self->local->scan(
+    threshold => $self->{config}->metadata_promoter_threshold,
+  );
+
+  $dbh->disconnect;
+  my $elapsed = time - $started;
 
   return {
-          ok          => 1,
+          ok          => $migration->{ok} && $preferences->{ok} && $refresh->{ok} ?
+1 : 0,
           migration   => $migration,
           preferences => $preferences,
-          qbt_refresh => $refresh,};
+          qbt_refresh => $refresh,
+          local_scan => $local_scan,
+          elapsed => sprintf( '%.3f', $elapsed ),};
 }
 
 sub install ( $self ) {
@@ -557,6 +606,29 @@ sub run_cli ( $self, @argv ) {
 
       return $self->{renderer}->qbt_preferences( $result );
     }
+
+    if ( $subcmd eq 'status' ) {
+  my $db      = QBTL::DB->new( db_path => $self->{config}->db_path );
+  my $connect = $db->connect;
+
+  if ( !$connect->{ok} ) {
+    return $self->{renderer}->qbt_status(
+      {
+        ok       => 0,
+        problems => $connect->{problems} // [],
+      }
+    );
+  }
+
+  my $result = $self->qbt->status(
+    dbh => $connect->{dbh},
+    db  => $db,
+  );
+
+  $connect->{dbh}->disconnect;
+
+  return $self->{renderer}->qbt_status($result);
+}
 
     if ( $subcmd eq 'version' ) {
       my $api = QBTL::QBT::API->new( base_url => $self->{config}->qbt_url, );

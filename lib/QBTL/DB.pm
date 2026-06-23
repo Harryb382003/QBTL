@@ -551,6 +551,72 @@ sub _safe_promoted_column_name ( $key ) {
   return $column;
 }
 
+sub qbt_status ( $self, $dbh ) {
+  my $summary = $dbh->selectrow_hashref(
+    q{
+      SELECT
+        SUM(CASE WHEN current_qbt = 1 THEN 1 ELSE 0 END) AS current_count,
+        SUM(CASE WHEN current_qbt = 0 THEN 1 ELSE 0 END) AS removed_count,
+        COUNT(*) AS total_count,
+        SUM(
+          CASE
+            WHEN current_qbt = 1
+            AND total_size = -1
+            AND LENGTH(name) = 40
+            AND LOWER(name) = name
+            AND name NOT GLOB '*[^0123456789abcdef]*'
+            THEN 1
+            ELSE 0
+          END
+        ) AS questionable_count,
+        NULL AS latest_seen_on
+        FROM qbt_info
+      },
+    {Slice => {}}, );
+
+  my $states = $dbh->selectall_arrayref(
+    q{
+      SELECT state, COUNT(*) AS count
+      FROM qbt_info
+      WHERE current_qbt = 1
+        AND state IS NOT NULL
+        AND state != ''
+      GROUP BY state
+      ORDER BY count DESC, state ASC
+    },
+    {Slice => {}}, );
+
+  my $categories = $dbh->selectrow_hashref(
+    q{
+      SELECT
+        SUM(
+          CASE
+            WHEN current_qbt = 1
+             AND category IS NOT NULL
+             AND category != ''
+            THEN 1
+            ELSE 0
+          END
+        ) AS categorized,
+        SUM(
+          CASE
+            WHEN current_qbt = 1
+             AND (category IS NULL OR category = '')
+            THEN 1
+            ELSE 0
+          END
+        ) AS uncategorized
+      FROM qbt_info
+    },
+    {Slice => {}}, );
+
+  return {
+          ok         => 1,
+          summary    => $summary    // {},
+          states     => $states     // [],
+          categories => $categories // {},};
+}
+
 sub _column_exists ( $dbh, $table, $column ) {
   my $columns = $dbh->selectall_arrayref( qq{PRAGMA table_info("$table")},
                                           {Slice => {}}, );

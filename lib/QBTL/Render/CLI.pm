@@ -184,6 +184,26 @@ sub init ( $self, $result ) {
     say {$out} '  refreshed';
   }
 
+  if ( $result->{local_scan} ) {
+  my $scan = $result->{local_scan};
+
+  say {$out} '';
+  say {$out} 'Local scan:';
+  say {$out} '  backend:          ' . ( $scan->{backend} // '' );
+  say {$out} '  seen:             ' . ( $scan->{seen} // 0 );
+  say {$out} '  torrent stored:   ' . ( $scan->{stored} // 0 );
+  say {$out} '  torrent parsed:   ' . ( $scan->{parsed} // 0 );
+  say {$out} '  torrent problems: ' . ( $scan->{parse_problems} // 0 );
+  say {$out} '  torrent total:    ' . ( $scan->{total} // 0 );
+  say {$out} '  fastres stored:   ' . ( $scan->{fastresume_stored} // 0 );
+  say {$out} '  fastres parsed:   ' . ( $scan->{fastresume_parsed} // 0 );
+  say {$out} '  fastres problems: ' . ( $scan->{fastresume_parse_problems} // 0 );
+  say {$out} '  fastres total:    ' . ( $scan->{fastresume_total} // 0 );
+}
+
+  say {$out} '';
+say {$out} 'Elapsed: ' . ( $result->{elapsed} // '' ) . 's';
+
   return 0;
 }
 
@@ -689,6 +709,63 @@ sub qbt_result ( $self, $result ) {
 
   return $result->{ok} ? 0 : 1;
 
+}
+
+sub qbt_status ( $self, $result ) {
+  my $out = $self->{out};
+
+  if ( !$result->{ok} ) {
+    say {$out} 'qBT status failed.';
+
+    for my $problem ( @{ $result->{problems} // [] } ) {
+      if ( ref $problem eq 'HASH' ) {
+        say {$out} '  problem: ' . ( $problem->{error} // '' );
+      } else {
+        say {$out} "  problem: $problem";
+      }
+    }
+
+    return 1;
+  }
+
+  my $summary    = $result->{summary}    // {};
+  my $categories = $result->{categories} // {};
+  my $states     = $result->{states}     // [];
+
+  say {$out} 'qBT status';
+
+  if ( $summary->{latest_seen_on} ) {
+    say {$out} '  timestamp: ' . $summary->{latest_seen_on};
+  }
+
+  say {$out} '';
+  say {$out} 'qBT inventory:';
+  say {$out} '  currently loaded:        ' . ( $summary->{current_count}      // 0
+);
+  say {$out} '  previously seen/removed: ' . ( $summary->{removed_count}      // 0
+);
+  say {$out} '  questionable:            ' . ( $summary->{questionable_count} // 0
+);
+  say {$out} '  total known:             ' . ( $summary->{total_count}        // 0
+);
+
+  say {$out} '';
+  say {$out} 'States:';
+
+  if ( @{$states} ) {
+    for my $row ( @{$states} ) {
+      say {$out} '  ' . ( $row->{state} // '' ) . ': ' . ( $row->{count} // 0 );
+    }
+  } else {
+    say {$out} '  none';
+  }
+
+  say {$out} '';
+  say {$out} 'Categories:';
+  say {$out} '  categorized:   ' . ( $categories->{categorized}   // 0 );
+  say {$out} '  uncategorized: ' . ( $categories->{uncategorized} // 0 );
+
+  return 0;
 }
 
 sub search_list ( $self, $result ) {
