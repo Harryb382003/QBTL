@@ -6,6 +6,9 @@ use feature qw( signatures );
 
 use QBTL::Util qw( epoch_time human_bytes );
 
+binmode STDOUT, ':encoding(UTF-8)';
+binmode STDERR, ':encoding(UTF-8)';
+
 sub new ( $class, %arg ) {
   $arg{out}         //= \*STDOUT;
   $arg{time_format} //= 'full';
@@ -207,6 +210,33 @@ say {$out} 'Elapsed: ' . ( $result->{elapsed} // '' ) . 's';
   return 0;
 }
 
+sub local_flush ( $self, $result ) {
+  my $out = $self->{out};
+
+  if ( !$result->{ok} ) {
+    say {$out} 'Local flush failed.';
+
+    for my $problem ( @{ $result->{problems} // [] } ) {
+      say {$out} "  problem: $problem";
+    }
+
+    return 1;
+  }
+
+  my $flush = $result->{flush} // {};
+
+  say {$out} 'Local evidence flushed.';
+  say {$out} '  torrent rows deleted:    ' . ( $flush->{torrent_deleted} // 0 );
+  say {$out} '  fastresume rows deleted: ' . ( $flush->{fastres_deleted} // 0 );
+
+  if ( $result->{scan} ) {
+    say {$out} '';
+    return $self->local_scan( $result->{scan} );
+  }
+
+  return 0;
+}
+
 sub local_scan ( $self, $result ) {
   my $out = $self->{out};
 
@@ -244,8 +274,8 @@ sub local_scan ( $self, $result ) {
   } else {
     say {$out} 'Local scan complete.';
   }
-  say {$out} '  backend:  ' . ( $result->{backend} // '' );
-  say {$out} '  seen:     ' . ( $result->{seen} // 0 );
+  say {$out} '  scanner backend:  ' . ( $result->{scanner_backend} // 'unknown' );
+  say {$out} '  seen:             ' . ( $result->{seen} // 0 );
   say {$out} '  torrent stored:   ' . ( $result->{stored} // 0 );
   say {$out} '  torrent parsed:   ' . ( $result->{parsed} // 0 );
   say {$out} '  torrent problems: ' . ( $result->{parse_problems} // 0 );
@@ -298,11 +328,11 @@ sub local_summary ( $self, $result ) {
   my $summary = $result->{summary} // {};
 
   say {$out} 'Local torrent files:';
-say {$out} '  total paths:     ' . ( $summary->{total} // 0 );
-say {$out} '  parsed:          ' . ( $summary->{parsed} // 0 );
-say {$out} '  parse problems:  ' . ( $summary->{parse_problems} // 0 );
-say {$out} '  backend count:   ' . ( $summary->{backend_count} // 0 );
-say {$out} '  latest scan:     ' . ( $summary->{latest_seen} // '' );
+  say {$out} '  scanner backend: ' . ( $summary->{scanner_backend} // 'unknown' );
+  say {$out} '  latest scan:     ' . ( $summary->{latest_seen} // '' );
+  say {$out} '  total paths:     ' . ( $summary->{total} // 0 );
+  say {$out} '  parsed:          ' . ( $summary->{parsed} // 0 );
+  say {$out} '  parse problems:  ' . ( $summary->{parse_problems} // 0 );
 
   return;
 }

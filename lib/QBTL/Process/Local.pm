@@ -6,6 +6,7 @@ use feature qw( signatures );
 
 use Time::HiRes qw( time );
 
+use QBTL::DB;
 use QBTL::Local::Parser;
 use QBTL::Local::Scanner;
 use QBTL::Process::WithDB;
@@ -13,9 +14,8 @@ use QBTL::Process::WithDB;
 sub new ( $class, %arg ) {
   $arg{db_process} //= QBTL::Process::WithDB->new( db_path => $arg{db_path}, );
   $arg{parser}     //= QBTL::Local::Parser->new;
-  $arg{scanner}    //= QBTL::Local::Scanner->new(
-    search_tool => $arg{search_tool},
-  );
+  $arg{scanner} //=
+      QBTL::Local::Scanner->new( search_tool => $arg{search_tool}, );
 
   return bless \%arg, $class;
 }
@@ -26,6 +26,34 @@ sub db_process ( $self ) {
 
 sub _elapsed ( $started ) {
   return sprintf( '%.2f', time - $started );
+}
+
+sub flush ( $self, %arg ) {
+  my $db      = QBTL::DB->new( db_path => $self->{db_path} );
+  my $connect = $db->connect;
+
+  return {
+          ok       => 0,
+          status   => 'db_connect_failed',
+          problems => $connect->{problems} // [],}
+      if !$connect->{ok};
+
+  my $flush = $db->local_flush_evidence( $connect->{dbh} );
+
+  $connect->{dbh}->disconnect;
+
+  return {
+          ok    => 0,
+          flush => $flush,
+          scan  => undef,}
+      if !$flush->{ok};
+
+  my $scan = $self->scan( threshold => $arg{threshold}, );
+
+  return {
+          ok    => $scan->{ok} ? 1 : 0,
+          flush => $flush,
+          scan  => $scan,};
 }
 
 sub parser ( $self ) {
@@ -256,12 +284,12 @@ sub scan ( $self, %arg ) {
           $db->promotion_candidates( $dbh, threshold => $threshold, );
 
       return {
-        ok      => @problem ? 0 : 1,
-        action  => 'local_scan',
-        backend => $scan->{backend},
-        target  => $scan->{path},
+        ok          => @problem ? 0 : 1,
+        action      => 'local_scan',
+        backend     => $scan->{backend},
+        target      => $scan->{path},
         search_tool => $scan->{search_tool},
-        seen    => $scan->{count},
+        seen        => $scan->{count},
 
         torrent_seen    => $scan->{types}{torrent}{count} // 0,
         stored          => $stored,

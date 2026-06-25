@@ -284,6 +284,16 @@ sub local_fastresume_summary ( $self, $dbh ) {
   );
 }
 
+sub local_flush_evidence ( $self, $dbh ) {
+  my $torrent_rows = $dbh->do( q{DELETE FROM local_torrent_files} );
+  my $fastres_rows = $dbh->do( q{DELETE FROM local_fastresume_files} );
+
+  return {
+          ok              => 1,
+          torrent_deleted => $torrent_rows eq '0E0' ? 0 : $torrent_rows,
+          fastres_deleted => $fastres_rows eq '0E0' ? 0 : $fastres_rows,};
+}
+
 sub local_torrent_file_count ( $self, $dbh ) {
   my ( $count ) =
       $dbh->selectrow_array( q{SELECT COUNT(*) FROM local_torrent_files} );
@@ -295,9 +305,9 @@ sub local_torrent_summary ( $self, $dbh ) {
   my ( $total ) =
       $dbh->selectrow_array( q{SELECT COUNT(*) FROM local_torrent_files} );
 
-  my ( $backend_count ) = $dbh->selectrow_array(
+  my ( $scanner_backend ) = $dbh->selectrow_array(
     q{
-      SELECT COUNT(DISTINCT backend)
+      SELECT GROUP_CONCAT(DISTINCT backend)
       FROM local_torrent_files
     }
   );
@@ -327,7 +337,7 @@ sub local_torrent_summary ( $self, $dbh ) {
 
   return {
           total          => $total          // 0,
-          backend_count  => $backend_count  // 0,
+          scanner_backend => $scanner_backend // 'unknown',
           latest_seen    => $latest_seen    // '',
           parsed         => $parsed         // 0,
           parse_problems => $parse_problems // 0,};
@@ -1268,6 +1278,109 @@ sub upsert_local_torrent_file ( $self, $dbh, $row ) {
           path => $row->{path},};
 }
 
+sub restoration_queue_totals ( $self, $dbh, %arg ) {
+  my $classified = $self->_classified_local_torrent_rows( $dbh, %arg );
+
+  my $should_restore        = 0;
+  my $should_queue_deletion = 0;
+
+  for my $row ( @{$classified->{restoration}} ) {
+    if ( $classified->{loose_hash}{$row->{infohash}} ) {
+      $should_queue_deletion++;
+    } else {
+      $should_restore++;
+    }
+  }
+
+  return {
+          ok                    => 1,
+          queue                 => 'restoration',
+          total                 => scalar @{$classified->{restoration}},
+          should_restore        => $should_restore,
+          should_queue_deletion => $should_queue_deletion,};
+}
+
+sub deletion_queue_totals ( $self, $dbh, %arg ) {
+  my $classified = $self->_classified_local_torrent_rows( $dbh, %arg );
+
+  my $should_restore       = 0;
+  my $should_remain_queued = 0;
+
+  for my $row ( @{$classified->{deletion}} ) {
+    if ( $classified->{loose_hash}{$row->{infohash}} ) {
+      $should_remain_queued++;
+    } else {
+      $should_restore++;
+    }
+  }
+
+  return {
+          ok                   => 1,
+          queue                => 'deletion',
+          total                => scalar @{$classified->{deletion}},
+          should_restore       => $should_restore,
+          should_remain_queued => $should_remain_queued,};
+}
+
+sub _classified_local_torrent_rows ( $self, $dbh, %arg ) {
+  my $root = $arg{root} // die 'root is required';
+
+  my $deletion_dir    = File::Spec->catdir( $root, 'queued_for_deletion' );
+  my $restoration_dir = File::Spec->catdir( $root, 'queued_for_restoration' );
+
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        path,
+        infohash,
+        torrent_name
+      FROM local_torrent_files
+      WHERE parse_ok = 1
+        AND infohash IS NOT NULL
+        AND infohash != ''
+    },
+    {Slice => {}}, );
+
+  my @deletion;
+  my @restoration;
+  my @loose;
+  my %loose_hash;
+
+  for my $row ( @{$rows} ) {
+    if ( $self->_path_is_under( $row->{path}, $deletion_dir ) ) {
+      push @deletion, $row;
+      next;
+    }
+
+    if ( $self->_path_is_under( $row->{path}, $restoration_dir ) ) {
+      push @restoration, $row;
+      next;
+    }
+
+    push @loose, $row;
+    $loose_hash{$row->{infohash}} = 1;
+  }
+
+  return {
+          deletion    => \@deletion,
+          restoration => \@restoration,
+          loose       => \@loose,
+          loose_hash  => \%loose_hash,};
+}
+
+sub _path_is_under ( $self, $path, $dir ) {
+  return 0 if !defined $path || !defined $dir;
+
+  my $clean_path = File::Spec->rel2abs( $path );
+  my $clean_dir  = File::Spec->rel2abs( $dir );
+
+  $clean_path =~ s{/+\z}{};
+  $clean_dir  =~ s{/+\z}{};
+
+  return 1 if $clean_path eq $clean_dir;
+  return index( $clean_path, "$clean_dir/" ) == 0 ? 1 : 0;
+}
+
 sub upsert_qbt_info ( $self, $dbh, $row ) {
   die 'qbt info row requires hash' if !defined $row->{hash};
 
@@ -1391,4 +1504,76 @@ sub verify_path ( $self ) {
   return @problems;
 }
 
+sub restoration_queue_totals ( $self, $dbh, %arg ) {
+  my $root = $arg{root} // die 'root is required';
+
+  my $queued_for_restoration = $arg{queued_for_restoration}
+      // File::Spec->catdir( $root, 'queued_for_restoration' );
+
+  my $queued_for_deletion = $arg{queued_for_deletion}
+      // File::Spec->catdir( $root, 'queued_for_deletion' );
+
+  my @exclude_dir = (
+                      $queued_for_restoration,
+                      $queued_for_deletion, @{$arg{exclude_dirs} // []}, );
+
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT path, infohash
+      FROM local_torrent_files
+      WHERE parse_ok = 1
+        AND infohash IS NOT NULL
+        AND infohash != ''
+    },
+    {Slice => {}}, );
+
+  my %loose_hash;
+  my @restoration;
+
+  for my $row ( @{$rows} ) {
+    my $path = $row->{path}     // next;
+    my $hash = $row->{infohash} // next;
+
+    if ( $self->_path_is_under( $path, $queued_for_restoration ) ) {
+      push @restoration, $row;
+      next;
+    }
+
+    next if $self->_path_is_under_any( $path, \@exclude_dir );
+
+    $loose_hash{$hash} = 1;
+  }
+
+  my $should_restore        = 0;
+  my $should_queue_deletion = 0;
+
+  for my $row ( @restoration ) {
+    if ( $loose_hash{$row->{infohash}} ) {
+      $should_queue_deletion++;
+      next;
+    }
+
+    $should_restore++;
+  }
+
+  return {
+          ok                    => 1,
+          should_restore        => $should_restore,
+          should_queue_deletion => $should_queue_deletion,};
+}
+
+sub _path_is_under_any ( $self, $path, $dirs ) {
+  for my $dir ( @{$dirs} ) {
+    return 1 if $self->_path_is_under( $path, $dir );
+  }
+
+  return 0;
+}
+
+sub _path_is_under ( $self, $path, $dir ) {
+  return 0 if !defined $path || !defined $dir || $dir eq '';
+
+  return 1 if $path eq $dir;
+  return index( $path, "$dir/" ) == 0 ? 1 : 0;
+}
 1;

@@ -2,7 +2,9 @@ package QBTL::Local::Scanner;
 
 use v5.40;
 use common::sense;
-use feature qw( signatures );
+use feature            qw( signatures );
+use Encode             qw(decode);
+use String::ShellQuote qw( shell_quote );
 
 use File::Spec;
 
@@ -72,7 +74,7 @@ whole filesystem'
   my @problem;
 
   for my $kind ( @type ) {
-    my $suffix eq 'fastresume' ? 'fastresume' : 'torrent';
+    my $suffix = _suffix_for_type( $kind );
     my @path;
 
     open my $fh, '-|', $find, $path, '-type', 'f', '-iname', "*.$suffix"
@@ -138,7 +140,7 @@ sub _locate_torrents ( $self, %arg ) {
   my @problem;
 
   for my $kind ( @type ) {
-    my $suffix eq 'fastresume' ? 'fastresume' : 'torrent';
+    my $suffix = _suffix_for_type( $kind );
     my @path;
 
     open my $fh, '-|', $tool, "*.$suffix"
@@ -202,9 +204,9 @@ sub _mdfind_torrents ( $self, %arg ) {
   my @problem;
 
   for my $kind ( @type ) {
-    my $suffix eq 'fastresume' ? 'fastresume' : 'torrent';
-    my $query = qq{kMDItemFSName == "*.$suffix"cd};
-    my @cmd   = ( $mdfind );
+    my $suffix = _suffix_for_type( $kind );
+    my $query  = qq{kMDItemFSName == "*.$suffix"cd};
+    my @cmd    = ( $mdfind );
 
     if ( defined $path && $path ne '' ) {
       push @cmd, '-onlyin', $path;
@@ -224,6 +226,7 @@ sub _mdfind_torrents ( $self, %arg ) {
       chomp $found;
       next if $found eq '';
 
+      $found = decode( 'UTF-8', $found, 1 );
       push @path, File::Spec->rel2abs( $found );
     }
 
@@ -272,7 +275,7 @@ sub _path_torrents ( $self, $path ) {
     my $matched;
 
     for my $kind ( @type ) {
-      my $suffix eq 'fastresume' ? 'fastresume' : 'torrent';
+      my $suffix = _suffix_for_type( $kind );
 
       if ( $path =~ /\.\Q$suffix\E\z/i ) {
         push @{$type->{$kind}{paths}}, File::Spec->rel2abs( $path );
@@ -311,6 +314,10 @@ sub _path_torrents ( $self, $path ) {
   }
 
   if ( -d $path ) {
+    if ( File::Spec->rel2abs( $path ) eq '/' ) {
+      return $self->_scan_global;
+    }
+
     return $self->_scan_directory( $path );
   }
 
@@ -394,6 +401,10 @@ sub scan_torrents ( $self, %arg ) {
   }
 
   return $self->_scan_global;
+}
+
+sub _suffix_for_type ( $type ) {
+  return $type eq 'fastresume' ? 'fastresume' : 'torrent';
 }
 
 1;

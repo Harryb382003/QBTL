@@ -267,9 +267,13 @@ sub run_cli ( $self, @argv ) {
   if ( $cmd eq 'local' ) {
     my $subcmd = shift @argv // 'help';
 
-    if ( $subcmd eq 'summary' ) {
-      return $self->{renderer}->local_summary( $self->local->summary );
-    }
+    if ( $subcmd eq 'flush' ) {
+  return $self->{renderer}->local_flush(
+    $self->local->flush(
+      threshold => $self->{config}->metadata_promoter_threshold,
+    )
+  );
+}
 
     if ( $subcmd eq 'scan' ) {
       my $path = shift @argv;
@@ -280,6 +284,10 @@ sub run_cli ( $self, @argv ) {
                       path      => $path,
                       threshold => $self->{config}->metadata_promoter_threshold,
                     ) );
+    }
+
+    if ( $subcmd eq 'summary' ) {
+      return $self->{renderer}->local_summary( $self->local->summary );
     }
 
     return $self->{renderer}->help( QBTL::Help->topic( 'local' ) );
