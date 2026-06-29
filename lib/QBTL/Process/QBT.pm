@@ -4,7 +4,7 @@ use v5.40;
 use common::sense;
 use feature qw( signatures );
 
-use JSON::PP qw( decode_json encode_json );
+use JSON::PP       qw( decode_json encode_json );
 use File::Basename qw( dirname basename );
 use File::Spec;
 
@@ -309,9 +309,9 @@ sub refresh_preferences ( $self, %arg ) {
 }
 
 sub refresh_info_rows ( $self, %arg ) {
-  my $db               = $arg{db}   // die 'db is required';
-  my $dbh              = $arg{dbh}  // die 'dbh is required';
-  my $rows             = $arg{rows} // die 'rows is required';
+  my $db               = $arg{db}               // die 'db is required';
+  my $dbh              = $arg{dbh}              // die 'dbh is required';
+  my $rows             = $arg{rows}             // die 'rows is required';
   my $fetch_properties = $arg{fetch_properties} // 0;
 
   my $store = $self->store_info_rows(
@@ -319,33 +319,35 @@ sub refresh_info_rows ( $self, %arg ) {
                                       db   => $db,
                                       rows => $rows, );
 
-  my $api_values = $self->store_api_values_for_info_rows(
-                                      dbh              => $dbh,
-                                      db               => $db,
-                                      rows             => $rows,
-                                      fetch_properties => $fetch_properties, );
+  my $api_values =
+      $self->store_api_values_for_info_rows(
+                                          dbh              => $dbh,
+                                          db               => $db,
+                                          rows             => $rows,
+                                          fetch_properties => $fetch_properties,
+      );
 
-  my @problems = ( @{$store->{problems} // []},
-                   @{$api_values->{problems} // []}, );
+  my @problems =
+      ( @{$store->{problems} // []}, @{$api_values->{problems} // []}, );
 
   return {
-          ok                       => @problems ? 0 : 1,
-          action                   => 'qbt_refresh',
-          seen                     => $store->{seen},
-          stored                   => $store->{stored},
-          new                      => $store->{new},
-          existing                 => $store->{existing},
-          removed                  => $store->{removed},
-          qbt_api_info_keys        => $api_values->{info_keys_stored},
-          qbt_properties_seen      => $api_values->{properties_seen},
-          qbt_properties_keys      => $api_values->{properties_keys_stored},
-          problems                 => \@problems,};
+          ok                  => @problems ? 0 : 1,
+          action              => 'qbt_refresh',
+          seen                => $store->{seen},
+          stored              => $store->{stored},
+          new                 => $store->{new},
+          existing            => $store->{existing},
+          removed             => $store->{removed},
+          qbt_api_info_keys   => $api_values->{info_keys_stored},
+          qbt_properties_seen => $api_values->{properties_seen},
+          qbt_properties_keys => $api_values->{properties_keys_stored},
+          problems            => \@problems,};
 }
 
 sub store_api_values_for_info_rows ( $self, %arg ) {
-  my $db               = $arg{db}   // die 'db is required';
-  my $dbh              = $arg{dbh}  // die 'dbh is required';
-  my $rows             = $arg{rows} // die 'rows is required';
+  my $db               = $arg{db}               // die 'db is required';
+  my $dbh              = $arg{dbh}              // die 'dbh is required';
+  my $rows             = $arg{rows}             // die 'rows is required';
   my $fetch_properties = $arg{fetch_properties} // 0;
 
   my $info_keys_stored       = 0;
@@ -398,10 +400,11 @@ sub store_api_values_for_info_rows ( $self, %arg ) {
 
     my $properties_store = eval {
       $db->replace_qbt_api_values(
-                                 $dbh,
-                                 hash     => $hash,
-                                 endpoint => 'torrents_properties',
-                                 data     => $properties->{properties} // {}, );
+                                   $dbh,
+                                   hash     => $hash,
+                                   endpoint => 'torrents_properties',
+                                   data     => $properties->{properties} // {},
+      );
     };
 
     if ( !$properties_store || !$properties_store->{ok} ) {
@@ -416,13 +419,12 @@ sub store_api_values_for_info_rows ( $self, %arg ) {
   }
 
   return {
-          ok                       => @problems ? 0 : 1,
-          info_keys_stored         => $info_keys_stored,
-          properties_seen          => $properties_seen,
-          properties_keys_stored   => $properties_keys_stored,
-          problems                 => \@problems,};
+          ok                     => @problems ? 0 : 1,
+          info_keys_stored       => $info_keys_stored,
+          properties_seen        => $properties_seen,
+          properties_keys_stored => $properties_keys_stored,
+          problems               => \@problems,};
 }
-
 
 sub with_qbt_log_context ( $self, %arg ) {
   my $caller = $arg{caller} // die 'caller is required';
@@ -444,15 +446,15 @@ sub with_qbt_log_context ( $self, %arg ) {
                      info     => 1,
                      warning  => 1,
                      critical => 1,
-                     %{$fetch_params},
-  );
+                     %{$fetch_params}, );
 
   $log_params{last_known_id} = $last_id if defined $last_id;
 
   my $log_response = $self->log_main( %log_params );
   my $log_entries  = $self->_decode_log_entries( $log_response->{result} );
 
-  my $action_ok = !$action_error
+  my $action_ok =
+         !$action_error
       && ref( $action_result ) eq 'HASH'
       && ( $action_result->{ok} // 0 ) ? 1 : 0;
 
@@ -470,16 +472,16 @@ sub with_qbt_log_context ( $self, %arg ) {
 }
 
 sub add ( $self, %arg ) {
-  my $db     = $arg{db}     // die 'db is required';
-  my $dbh    = $arg{dbh}    // die 'dbh is required';
-  my $input  = $arg{input}  // die 'add input is required';
+  my $db     = $arg{db}    // die 'db is required';
+  my $dbh    = $arg{dbh}   // die 'dbh is required';
+  my $input  = $arg{input} // die 'add input is required';
   my $search = $arg{search_tool} // $self->{search_tool} // 'mdfind';
 
-  my $target = $self->_resolve_add_target(
-                                           dbh   => $dbh,
-                                           db    => $db,
-                                           input => $input,
-  );
+  my $target =
+      $self->_resolve_add_target(
+                                  dbh   => $dbh,
+                                  db    => $db,
+                                  input => $input, );
 
   return $target if !$target->{ok};
 
@@ -487,9 +489,11 @@ sub add ( $self, %arg ) {
   my $torrent = $target->{torrent};
   my $qbt_row = $db->qbt_info_by_hash( $dbh, $hash );
 
-  if ( $qbt_row && ( $qbt_row->{current_qbt} // 0 )
+  if (    $qbt_row
+       && ( $qbt_row->{current_qbt} // 0 )
        && defined $qbt_row->{total_size}
-       && $qbt_row->{total_size} != -1 ) {
+       && $qbt_row->{total_size} != -1 )
+  {
     return {
             ok      => 1,
             action  => 'qbt_add',
@@ -499,15 +503,15 @@ sub add ( $self, %arg ) {
             target  => $target,};
   }
 
-  my $loaded_broken = $qbt_row
+  my $loaded_broken =
+         $qbt_row
       && ( $qbt_row->{current_qbt} // 0 )
       && defined $qbt_row->{total_size}
       && $qbt_row->{total_size} == -1 ? 1 : 0;
 
-  my $search_result = $self->_search_payload_root(
-                                                   torrent     => $torrent,
-                                                   search_tool => $search,
-  );
+  my $search_result =
+      $self->_search_payload_root( torrent     => $torrent,
+                                   search_tool => $search, );
 
   my %add_param;
   my $used_path;
@@ -530,44 +534,44 @@ sub add ( $self, %arg ) {
   my $add_context = $self->with_qbt_log_context(
     caller => 'ADD',
     code   => sub {
-      my $request = $self->{api}->torrents_add_file(
-                                                     $torrent->{path},
-                                                     %add_param,
-      );
+      my $request =
+          $self->{api}->torrents_add_file( $torrent->{path}, %add_param, );
       my $result = $self->{api}->execute_request( $request );
       return {
               ok      => $result->{ok} ? 1 : 0,
               action  => 'qbt_add_file',
               request => $request,
               result  => $result,};
-    },
-  );
+    }, );
 
-  my $interpret = $self->_interpret_add_context($add_context);
+  my $interpret = $self->_interpret_add_context( $add_context );
 
   my $info = $self->info( hashes => $hash );
-  my $refresh = $info->{ok}
+  my $refresh =
+      $info->{ok}
       ? $self->refresh_info_rows(
                                   dbh              => $dbh,
                                   db               => $db,
                                   rows             => $info->{rows} // [],
-                                  fetch_properties => 1,
-      )
+                                  fetch_properties => 1, )
       : {
-          ok       => 0,
-          action   => 'qbt_refresh',
-          problems => [ { hash => $hash, error => 'qBittorrent torrents/info request failed after add' } ],
-      };
+         ok       => 0,
+         action   => 'qbt_refresh',
+         problems => [
+                  {
+                   hash  => $hash,
+                   error => 'qBittorrent torrents/info request failed after add'
+                  }
+         ],};
 
   if ( $interpret->{ok} ) {
     $db->update_qbt_last( $dbh, hash => $hash, caller => 'ADD' );
   } else {
     $db->update_qbt_last(
                           $dbh,
-                          hash  => $hash,
+                          hash   => $hash,
                           caller => 'ADD',
-                          error => $interpret->{error} // 'qBT add failed',
-    );
+                          error  => $interpret->{error} // 'qBT add failed', );
   }
 
   return {
@@ -601,7 +605,12 @@ sub _resolve_add_target ( $self, %arg ) {
             action   => 'qbt_add',
             status   => 'no_torrent_file_for_hash',
             hash     => $hash,
-            problems => [ { hash => $hash, error => 'No parsed local .torrent file found for hash' } ],}
+            problems => [
+                        {
+                         hash  => $hash,
+                         error => 'No parsed local .torrent file found for hash'
+                        }
+            ],}
         if !$row;
 
     return {
@@ -612,30 +621,42 @@ sub _resolve_add_target ( $self, %arg ) {
             torrent    => $row,};
   }
 
-  my $path = File::Spec->rel2abs($input);
+  my $path = File::Spec->rel2abs( $input );
 
   return {
           ok       => 0,
           action   => 'qbt_add',
           status   => 'torrent_file_not_readable',
-          problems => [ { error => "Torrent file is not readable: $input" } ],}
+          problems => [ {error => "Torrent file is not readable: $input"} ],}
       if !-f $path || !-r $path;
 
   my $row = $db->local_torrent_file_by_path( $dbh, $path );
 
   return {
-          ok       => 0,
-          action   => 'qbt_add',
-          status   => 'torrent_file_not_scanned',
-          problems => [ { error => 'Torrent file is not in the local scan DB; run qbtl local scan first' } ],}
+    ok       => 0,
+    action   => 'qbt_add',
+    status   => 'torrent_file_not_scanned',
+    problems => [
+      {
+       error =>
+           'Torrent file is not in the local scan DB; run qbtl local scan first'
+      }
+    ],}
       if !$row;
 
   return {
-          ok       => 0,
-          action   => 'qbt_add',
-          status   => 'torrent_file_not_parsed',
-          problems => [ { path => $path, error => $row->{parse_problem} // 'Torrent file did not parse cleanly' } ],}
-      if !( $row->{parse_ok} // 0 ) || !defined $row->{infohash} || $row->{infohash} eq '';
+       ok       => 0,
+       action   => 'qbt_add',
+       status   => 'torrent_file_not_parsed',
+       problems => [
+         {
+          path  => $path,
+          error => $row->{parse_problem} // 'Torrent file did not parse cleanly'
+         }
+       ],}
+      if !( $row->{parse_ok} // 0 )
+      || !defined $row->{infohash}
+      || $row->{infohash} eq '';
 
   return {
           ok         => 1,
@@ -648,7 +669,7 @@ sub _resolve_add_target ( $self, %arg ) {
 sub _search_payload_root ( $self, %arg ) {
   my $torrent = $arg{torrent}     // {};
   my $tool    = $arg{search_tool} // 'mdfind';
-  my @target  = _payload_search_targets($torrent);
+  my @target  = _payload_search_targets( $torrent );
 
   return {
           ok                 => 1,
@@ -661,7 +682,7 @@ sub _search_payload_root ( $self, %arg ) {
       if !@target;
 
   if ( $tool eq 'mdfind' ) {
-    my $mdfind = _command_path('mdfind');
+    my $mdfind = _command_path( 'mdfind' );
 
     return {
             ok                 => 0,
@@ -676,7 +697,7 @@ sub _search_payload_root ( $self, %arg ) {
     my @candidate;
     my @problem;
 
-    for my $target (@target) {
+    for my $target ( @target ) {
       my $name = $target->{name};
       next if !defined $name || $name eq '';
 
@@ -684,33 +705,33 @@ sub _search_payload_root ( $self, %arg ) {
 
       open my $fh, '-|', @cmd
           or do {
-                push @problem, "mdfind failed for $name: $!";
-                next;
-              };
+        push @problem, "mdfind failed for $name: $!";
+        next;
+          };
 
       while ( my $found = <$fh> ) {
         chomp $found;
         next if $found eq '';
-        next if !_usable_payload_candidate($found);
+        next if !_usable_payload_candidate( $found );
 
-        my $absolute = File::Spec->rel2abs($found);
+        my $absolute = File::Spec->rel2abs( $found );
         push @candidate,
             {
              path               => $absolute,
              matched_name       => $name,
              match_kind         => $target->{kind},
-             suggested_savepath => _suggested_savepath_for_payload_match(
-                                                        $absolute,
-                                                        $target,
-                                                        $torrent,
-             ),};
+             suggested_savepath =>
+                 _suggested_savepath_for_payload_match(
+                                                   $absolute, $target, $torrent,
+                 ),};
       }
 
       close $fh;
     }
 
     @candidate = sort {
-             ( _payload_match_rank( $a->{match_kind} ) <=> _payload_match_rank( $b->{match_kind} ) )
+      ( _payload_match_rank( $a->{match_kind} )
+        <=> _payload_match_rank( $b->{match_kind} ) )
           || ( $a->{path} cmp $b->{path} )
     } @candidate;
 
@@ -738,19 +759,19 @@ sub _search_payload_root ( $self, %arg ) {
           problems           => ["unsupported payload search tool: $tool"],};
 }
 
-sub _payload_search_targets ($torrent) {
+sub _payload_search_targets ( $torrent ) {
   my @target;
   my %seen;
 
   for my $pair (
-    [ root  => $torrent->{payload_root_name} ],
-    [ probe => $torrent->{payload_probe_name} ],
-    [ root  => $torrent->{torrent_name} ],
-  ) {
+                 [ payload_root_name => $torrent->{payload_root_name} ],
+                 [ probe             => $torrent->{payload_probe_name} ],
+                 [ payload_root_name => $torrent->{torrent_name} ], )
+  {
     my ( $kind, $name ) = @{$pair};
     next if !defined $name || $name eq '';
-    next if _is_metadata_evidence_path($name);
-    next if $seen{ lc "$kind\0$name" }++;
+    next if _is_metadata_evidence_path( $name );
+    next if $seen{lc "$kind\0$name"}++;
 
     push @target,
         {
@@ -761,20 +782,20 @@ sub _payload_search_targets ($torrent) {
   return @target;
 }
 
-sub _payload_match_rank ($kind) {
+sub _payload_match_rank ( $kind ) {
   return 0 if defined $kind && $kind eq 'root';
   return 1 if defined $kind && $kind eq 'probe';
   return 9;
 }
 
-sub _usable_payload_candidate ($path) {
+sub _usable_payload_candidate ( $path ) {
   return 0 if !defined $path || $path eq '';
   return 0 if !-e $path;
-  return 0 if _is_metadata_evidence_path($path);
+  return 0 if _is_metadata_evidence_path( $path );
   return 1;
 }
 
-sub _is_metadata_evidence_path ($path) {
+sub _is_metadata_evidence_path ( $path ) {
   return 0 if !defined $path;
   return $path =~ /\.(?:torrent|fastresume)\z/i ? 1 : 0;
 }
@@ -783,31 +804,34 @@ sub _suggested_savepath_for_payload_match ( $found_path, $target, $torrent ) {
   return undef if !defined $found_path || $found_path eq '';
 
   if ( ( $target->{kind} // '' ) eq 'root' ) {
-    return dirname($found_path);
+    return dirname( $found_path );
   }
 
-  my $root = _infer_payload_root_from_probe( $found_path, $torrent->{payload_probe_path} );
-  return dirname($root) if defined $root && $root ne '';
+  my $root =
+      _infer_payload_root_from_probe( $found_path,
+                                      $torrent->{payload_probe_path} );
+  return dirname( $root ) if defined $root && $root ne '';
 
-  return dirname($found_path);
+  return dirname( $found_path );
 }
 
 sub _infer_payload_root_from_probe ( $found_path, $probe_path ) {
   return undef if !defined $found_path || $found_path eq '';
   return undef if !defined $probe_path || $probe_path eq '';
 
-  my @part = grep { defined $_ && $_ ne '' } File::Spec->splitdir($probe_path);
+  my @part =
+      grep { defined $_ && $_ ne '' } File::Spec->splitdir( $probe_path );
   return undef if !@part;
 
   my $root = $found_path;
   for ( 1 .. scalar @part ) {
-    $root = dirname($root);
+    $root = dirname( $root );
   }
 
   return $root;
 }
 
-sub _command_path ($command) {
+sub _command_path ( $command ) {
   for my $dir ( File::Spec->path ) {
     next if !defined $dir || $dir eq '';
     my $path = File::Spec->catfile( $dir, $command );
@@ -819,25 +843,28 @@ sub _command_path ($command) {
 
 sub _interpret_add_context ( $self, $context ) {
   my $action = $context->{action_result} // {};
-  my $result = $action->{result} // {};
-  my $body   = $result->{body} // '';
+  my $result = $action->{result}         // {};
+  my $body   = $result->{body}           // '';
 
-  for my $entry ( @{ $context->{log_entries} // [] } ) {
+  for my $entry ( @{$context->{log_entries} // []} ) {
     my $message = $entry->{message} // '';
 
     if ( $message =~ /duplicate torrent/i ) {
-      return { ok => 1, status => 'ok', detail => 'duplicate torrent parsed as ok' };
+      return {
+              ok     => 1,
+              status => 'ok',
+              detail => 'duplicate torrent parsed as ok'};
     }
   }
 
-  return { ok => 1, status => 'ok' }
+  return {ok => 1, status => 'ok'}
       if ( $action->{ok} // 0 ) && $body !~ /fail/i;
 
   my @message = grep { defined $_ && $_ ne '' }
-      map { $_->{message} } @{ $context->{log_entries} // [] };
+      map { $_->{message} } @{$context->{log_entries} // []};
 
-  push @message, $body if $body ne '';
-  push @message, $result->{status} if defined $result->{status};
+  push @message, $body                    if $body ne '';
+  push @message, $result->{status}        if defined $result->{status};
   push @message, $context->{action_error} if defined $context->{action_error};
 
   return {
@@ -850,7 +877,7 @@ sub status ( $self, %arg ) {
   my $db  = $arg{db}  // die 'db is required';
   my $dbh = $arg{dbh} // die 'dbh is required';
 
-  my $status = $db->qbt_status($dbh);
+  my $status = $db->qbt_status( $dbh );
 
   return {
           ok         => $status->{ok},
@@ -975,7 +1002,6 @@ sub _preference_value ( $self, $value ) {
 
   return ( $value, 'string' );
 }
-
 
 sub _decode_log_entries ( $self, $result ) {
   return [] if !$result || !$result->{ok};

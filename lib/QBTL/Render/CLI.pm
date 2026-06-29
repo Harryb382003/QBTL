@@ -770,7 +770,7 @@ sub qbt_add ( $self, $result ) {
     say {$out} '  payload:  ' . $found;
 
     if ( $result->{search}{match_kind} ) {
-      say {$out} '  match:   ' . $result->{search}{match_kind};
+      say {$out} '  matched via:   ' . $result->{search}{match_kind};
     }
   }
 
