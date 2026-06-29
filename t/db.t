@@ -26,7 +26,7 @@ is( $db->migration_dir,
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 15, 'fifteen migration files discovered' );
+is( scalar @migration_files, 17, 'seventeen migration files discovered' );
 
 like( $migration_files[0], qr/001_initial\.sql\z/,
       'initial migration discovered' );
@@ -81,6 +81,14 @@ like( $migration_files[14],
       qr/015_qbt_api_values\.sql\z/,
       'qbt_api_values migration discovered' );
 
+like( $migration_files[15],
+      qr/016_qbt_last\.sql\z/,
+      'qbt_last migration discovered' );
+
+like( $migration_files[16],
+      qr/017_local_torrent_payload_metadata\.sql\z/,
+      'local_torrent_payload_metadata migration discovered' );
+
 my @problems = $db->verify_path;
 
 is_deeply( \@problems, [], 'valid temp DB directory has no path problems' );
@@ -95,12 +103,12 @@ my $dbh = $result->{dbh};
 my $migration = $db->migrate( $result->{dbh} );
 
 ok( $migration->{ok}, 'migration result ok' );
-is( $migration->{migration_count}, 15, 'fifteen migrations ran' );
+is( $migration->{migration_count}, 17, 'seventeen migrations ran' );
 
 my ( $version ) = $result->{dbh}
     ->selectrow_array( 'SELECT version FROM schema_version WHERE id = 1' );
 
-is( $version, 15, 'schema version stored' );
+is( $version, 17, 'schema version stored' );
 
 my $hash = '7ba7c0f31cd3ae7186c8d08353cfa87291b825e4';
 
@@ -239,6 +247,25 @@ ok( $column{current_qbt},   'qbt_info has current_qbt column' );
 ok( $column{discovered_on}, 'qbt_info has discovered_on column' );
 ok( $column{discovered_by}, 'qbt_info has discovered_by column' );
 ok( $column{comment},       'qbt_info has comment column' );
+ok( $column{qbt_last},      'qbt_info has qbt_last column' );
+
+my $local_torrent_columns = $result->{dbh}->selectall_arrayref(
+             q{PRAGMA table_info(local_torrent_files)}, {Slice => {}}, );
+
+my %local_torrent_column = map { $_->{name} => 1 } @{$local_torrent_columns};
+
+ok( $local_torrent_column{payload_kind},
+    'local_torrent_files has payload_kind column' );
+ok( $local_torrent_column{payload_root_name},
+    'local_torrent_files has payload_root_name column' );
+ok( $local_torrent_column{payload_file_count},
+    'local_torrent_files has payload_file_count column' );
+ok( $local_torrent_column{payload_total_size},
+    'local_torrent_files has payload_total_size column' );
+ok( $local_torrent_column{payload_probe_path},
+    'local_torrent_files has payload_probe_path column' );
+ok( $local_torrent_column{payload_probe_name},
+    'local_torrent_files has payload_probe_name column' );
 my $upsert = $db->upsert_qbt_info(
                          $result->{dbh},
                          {
@@ -312,6 +339,31 @@ my ( $updated_name ) =
                                      undef, 'abc123', );
 
 is( $updated_name, 'Example Torrent Renamed', 'qbt_info row updated' );
+
+my $qbt_last = $db->update_qbt_last(
+                                     $result->{dbh},
+                                     hash   => 'abc123',
+                                     caller => 'ADD', );
+
+ok( $qbt_last->{ok}, 'qbt_last update result ok' );
+is( $qbt_last->{qbt_last}, 'ADD', 'qbt_last stores caller on ok' );
+is( $qbt_last->{updated}, 1, 'qbt_last updated one qbt_info row' );
+
+my ( $stored_qbt_last ) = $result->{dbh}->selectrow_array(
+                          'SELECT qbt_last FROM qbt_info WHERE hash = ?',
+                          undef, 'abc123', );
+
+is( $stored_qbt_last, 'ADD', 'qbt_last caller stored in qbt_info' );
+
+my $qbt_last_error = $db->update_qbt_last(
+                              $result->{dbh},
+                              hash   => 'abc123',
+                              caller => 'ADD',
+                              error  => 'unexpected qBT add error', );
+
+is( $qbt_last_error->{qbt_last},
+    'ADD: unexpected qBT add error',
+    'qbt_last stores caller and raw error message' );
 
 
 my $api_values = $db->replace_qbt_api_values(

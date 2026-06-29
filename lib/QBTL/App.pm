@@ -434,6 +434,61 @@ sub run_cli ( $self, @argv ) {
       return $self->{renderer}->help( QBTL::Help->topic( 'qbt' ) );
     }
 
+    if ( $subcmd eq 'add' ) {
+      my $input = shift @argv;
+
+      if ( !defined $input || $input eq '' ) {
+        return $self->{renderer}->help( QBTL::Help->topic( 'qbt' ) );
+      }
+
+      my $db      = QBTL::DB->new( db_path => $self->{config}->db_path );
+      my $connect = $db->connect;
+
+      if ( !$connect->{ok} ) {
+        return $self->{renderer}->qbt_add(
+          {
+            ok       => 0,
+            action   => 'qbt_add',
+            problems => $connect->{problems} // [],
+          }
+        );
+      }
+
+      my $migration = $db->migrate( $connect->{dbh} );
+
+      if ( !$migration->{ok} ) {
+        $connect->{dbh}->disconnect;
+
+        return $self->{renderer}->qbt_add(
+          {
+            ok       => 0,
+            action   => 'qbt_add',
+            problems => [ { error => 'database schema update failed' } ],
+          }
+        );
+      }
+
+      my $api = QBTL::QBT::API->new(
+                               base_url => $self->{config}->qbt_url,
+                               $self->{qbt_ua} ? ( ua => $self->{qbt_ua} ) : (),
+      );
+      my $process = QBTL::Process::QBT->new(
+                                             api         => $api,
+                                             search_tool => $self->{config}->local_search_tool,
+      );
+
+      my $result = $process->add(
+                                  dbh         => $connect->{dbh},
+                                  db          => $db,
+                                  input       => $input,
+                                  search_tool => $self->{config}->local_search_tool,
+      );
+
+      $connect->{dbh}->disconnect;
+
+      return $self->{renderer}->qbt_add($result);
+    }
+
     if ( $subcmd eq 'info' ) {
       my $api = QBTL::QBT::API->new(
                                base_url => $self->{config}->qbt_url,

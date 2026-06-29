@@ -246,6 +246,49 @@ like( $log_ua->urls->[0],
       qr{/api/v2/log/main\?},
       'qbt log main process gets log URL' );
 
+my $context_ua = Local::FakeUA->new(
+    get_responses => [
+      {
+       code => 200,
+       body => '[{"id":41,"message":"before","type":1}]',
+      },
+      {
+       code => 200,
+       body => '[{"id":42,"message":"duplicate torrent","type":2}]',
+      },
+    ],
+    post_code => 200,
+    post_body => 'Fails.',
+);
+
+my $context_api = QBTL::QBT::API->new(
+                                      base_url => 'http://127.0.0.1:9090',
+                                      ua       => $context_ua, );
+my $context_process = QBTL::Process::QBT->new( api => $context_api );
+
+my $context_result = $context_process->with_qbt_log_context(
+    caller => 'ADD',
+    code   => sub {
+      my $request = $context_process->api->torrents_add( urls => 'magnet:fake' );
+      return $context_process->api->execute_request( $request );
+    },
+);
+
+is( $context_result->{ok}, 1, 'generic qbt log context reports action ok' );
+is( $context_result->{action}, 'qbt_log_context', 'generic qbt log context action' );
+is( $context_result->{caller}, 'ADD', 'generic qbt log context caller stored' );
+is( $context_result->{last_known_id},
+    41, 'generic qbt log context snapshots high-water log id' );
+is( $context_result->{log_count}, 1, 'generic qbt log context returns new log count' );
+is( $context_result->{log_entries}[0]{message},
+    'duplicate torrent', 'generic qbt log context returns new log message' );
+like( $context_ua->urls->[0],
+      qr{/api/v2/log/main}, 'generic qbt log context snapshots qbt log' );
+like( $context_ua->posts->[0]{url},
+      qr{/api/v2/torrents/add}, 'generic qbt log context runs caller action' );
+like( $context_ua->urls->[1],
+      qr/last_known_id=41/, 'generic qbt log context fetches logs after snapshot' );
+
 # ------------------------------
 # Executable qBT actions: info auth retry
 # ------------------------------

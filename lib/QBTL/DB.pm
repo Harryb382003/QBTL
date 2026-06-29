@@ -751,6 +751,54 @@ sub qbt_info_exists ( $self, $dbh, $hash ) {
   return $exists ? 1 : 0;
 }
 
+sub qbt_info_by_hash ( $self, $dbh, $hash ) {
+  return undef if !defined $hash || $hash eq '';
+
+  return $dbh->selectrow_hashref(
+    q{
+      SELECT *
+      FROM qbt_info
+      WHERE hash = ?
+      LIMIT 1
+    },
+    undef,
+    $hash, );
+}
+
+sub local_torrent_file_by_path ( $self, $dbh, $path ) {
+  return undef if !defined $path || $path eq '';
+
+  return $dbh->selectrow_hashref(
+    q{
+      SELECT *
+      FROM local_torrent_files
+      WHERE path = ?
+      LIMIT 1
+    },
+    undef,
+    $path, );
+}
+
+sub best_local_torrent_file_for_hash ( $self, $dbh, $hash ) {
+  return undef if !defined $hash || $hash eq '';
+
+  return $dbh->selectrow_hashref(
+    q{
+      SELECT *
+      FROM local_torrent_files
+      WHERE infohash = ?
+        AND COALESCE(parse_ok, 0) = 1
+      ORDER BY
+        CASE WHEN path LIKE '%/BT_backup/%' THEN 0 ELSE 1 END,
+        parsed_on DESC,
+        seen_on DESC,
+        path ASC
+      LIMIT 1
+    },
+    undef,
+    lc $hash, );
+}
+
 sub qbt_preferences ( $self, $dbh ) {
   my $rows = $dbh->selectall_arrayref(
     q{
@@ -1203,6 +1251,12 @@ sub update_local_torrent_parse ( $self, $dbh, $row ) {
         announce = ?,
         created_by = ?,
         creation_date = ?,
+        payload_kind = ?,
+        payload_root_name = ?,
+        payload_file_count = ?,
+        payload_total_size = ?,
+        payload_probe_path = ?,
+        payload_probe_name = ?,
         parsed_on = datetime('now'),
         parse_ok = ?,
         parse_problem = ?
@@ -1215,6 +1269,12 @@ sub update_local_torrent_parse ( $self, $dbh, $row ) {
     $row->{announce},
     $row->{created_by},
     $row->{creation_date},
+    $row->{payload_kind},
+    $row->{payload_root_name},
+    $row->{payload_file_count},
+    $row->{payload_total_size},
+    $row->{payload_probe_path},
+    $row->{payload_probe_name},
     $row->{parse_ok},
     $row->{parse_problem},
     $row->{path}, );
@@ -1704,6 +1764,31 @@ sub qbt_api_values ( $self, $dbh, %arg ) {
           count => scalar @{$rows},};
 }
 
+
+sub update_qbt_last ( $self, $dbh, %arg ) {
+  my $hash   = $arg{hash}   // die 'qbt_last update requires hash';
+  my $caller = $arg{caller} // die 'qbt_last update requires caller';
+  my $error  = $arg{error};
+
+  my $value = defined $error && $error ne '' ? "$caller: $error" : $caller;
+
+  my $sth = $dbh->prepare(
+    q{
+      UPDATE qbt_info
+      SET qbt_last = ?
+      WHERE hash = ?
+    }
+  );
+
+  $sth->execute( $value, $hash );
+
+  return {
+          ok        => 1,
+          hash      => $hash,
+          qbt_last  => $value,
+          updated   => $sth->rows,};
+}
+
 sub upsert_qbt_info ( $self, $dbh, $row ) {
   die 'qbt info row requires hash' if !defined $row->{hash};
 
@@ -1715,6 +1800,7 @@ sub upsert_qbt_info ( $self, $dbh, $row ) {
       seen
       discovered_on
       discovered_by
+      qbt_last
   );
 
   my @qbt_field =

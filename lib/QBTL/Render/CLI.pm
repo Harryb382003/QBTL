@@ -729,6 +729,54 @@ sub qbt_preferences ( $self, $result ) {
   return 0;
 }
 
+sub qbt_add ( $self, $result ) {
+  my $out = $self->{out};
+
+  if ( ( $result->{status} // '' ) eq 'already_loaded_running' ) {
+    say {$out} $result->{message} // 'Torrent already loaded and running';
+    return 0;
+  }
+
+  if ( !$result->{ok} ) {
+    say {$out} 'qBT add failed.';
+
+    for my $problem ( @{ $result->{problems} // [] } ) {
+      if ( ref $problem eq 'HASH' ) {
+        say {$out} '  problem: ' . ( $problem->{error} // '' );
+      } else {
+        say {$out} "  problem: $problem";
+      }
+    }
+
+    if ( $result->{add_result} && $result->{add_result}{error} ) {
+      say {$out} '  problem: ' . $result->{add_result}{error};
+    }
+
+    return 1;
+  }
+
+  say {$out} 'qBT add complete.';
+  say {$out} '  hash:    ' . ( $result->{hash} // '' );
+  say {$out} '  torrent: ' . ( $result->{torrent_path} // '' );
+
+  if ( defined $result->{used_savepath} && $result->{used_savepath} ne '' ) {
+    say {$out} '  savepath: ' . $result->{used_savepath};
+  } else {
+    say {$out} '  savepath: qBT default';
+  }
+
+  if ( $result->{search} && $result->{search}{searched} ) {
+    my $found = $result->{search}{found_path} // '(not found)';
+    say {$out} '  payload:  ' . $found;
+
+    if ( $result->{search}{match_kind} ) {
+      say {$out} '  match:   ' . $result->{search}{match_kind};
+    }
+  }
+
+  return 0;
+}
+
 sub qbt_refresh ( $self, $result ) {
   my $out = $self->{out};
 

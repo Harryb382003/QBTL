@@ -230,9 +230,15 @@ sub scan ( $self, %arg ) {
                       comment       => $parse->{comment},
                       announce      => $parse->{announce},
                       created_by    => $parse->{created_by},
-                      creation_date => $parse->{creation_date},
-                      parse_ok      => $parse->{ok} ? 1     : 0,
-                      parse_problem => $parse->{ok} ? undef : $parse->{problem},
+                      creation_date      => $parse->{creation_date},
+                      payload_kind       => $parse->{payload_kind},
+                      payload_root_name  => $parse->{payload_root_name},
+                      payload_file_count => $parse->{payload_file_count},
+                      payload_total_size => $parse->{payload_total_size},
+                      payload_probe_path => $parse->{payload_probe_path},
+                      payload_probe_name => $parse->{payload_probe_name},
+                      parse_ok           => $parse->{ok} ? 1     : 0,
+                      parse_problem      => $parse->{ok} ? undef : $parse->{problem},
                      } );
           };
 
