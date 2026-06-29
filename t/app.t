@@ -36,6 +36,14 @@ my $out = '';
           );
     }
 
+    if ( "$uri" =~ m{/api/v2/torrents/properties} ) {
+      return
+          Local::FakeResponse->new(
+                   code => 200,
+                   body => '{"save_path":"/Downloads","total_size":1000}',
+          );
+    }
+
     return Local::FakeResponse->new(
       code => 200,
       body => '[

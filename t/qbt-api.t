@@ -28,11 +28,12 @@ my $default_api = QBTL::QBT::API->new;
                                   body => 'v5.0.0', );
   }
 
-  sub post ( $self, $url, $params ) {
+  sub post ( $self, $url, @arg ) {
     push @{$self->{posts}},
         {
          url    => $url,
-         params => $params,};
+         params => $arg[0],
+         args   => \@arg,};
 
     return
         Local::FakeResponse->new( code => 200,
@@ -107,6 +108,18 @@ is( $custom_api->endpoint( 'torrents_info' ),
     'http://127.0.0.1:9090/api/v2/torrents/info',
     'torrents_info endpoint' );
 
+is( $custom_api->endpoint( 'rss_refresh_item' ),
+    'http://127.0.0.1:9090/api/v2/rss/refreshItem',
+    'rss_refresh_item endpoint' );
+
+is( $custom_api->endpoint( 'torrents_properties' ),
+    'http://127.0.0.1:9090/api/v2/torrents/properties',
+    'torrents_properties endpoint' );
+
+is( $custom_api->endpoint( 'log_main' ),
+    'http://127.0.0.1:9090/api/v2/log/main',
+    'log_main endpoint' );
+
 eval { $custom_api->endpoint( 'bogus' ) };
 
 like( $@, qr/Unknown qBT endpoint: bogus/, 'unknown endpoint dies clearly' );
@@ -173,6 +186,23 @@ is_deeply(
            {hash => 'abc123',},
            'torrents_files params' );
 
+my $properties_request = $default_api->torrents_properties( 'abc123' );
+
+is( $properties_request->{endpoint},
+    'torrents_properties', 'torrents_properties endpoint' );
+is_deeply(
+           $properties_request->{params},
+           {hash => 'abc123',},
+           'torrents_properties params' );
+
+my $log_request = $default_api->log_main( last_known_id => 42, warning => 1 );
+
+is( $log_request->{endpoint}, 'log_main', 'log_main endpoint' );
+is_deeply(
+           $log_request->{params},
+           {last_known_id => 42, warning => 1,},
+           'log_main params' );
+
 my $recheck_request = $default_api->torrents_recheck( 'abc123' );
 
 is( $recheck_request->{endpoint},
@@ -208,6 +238,29 @@ is_deeply(
             savepath => '/tmp/downloads',
            },
            'torrents_add params' );
+
+my $add_file_request =
+    $default_api->torrents_add_file(
+                                     '/tmp/example.torrent',
+                                     savepath => '/tmp/downloads',
+                                     category => 'repair',
+                                     tags     => 'qbtl,mismatch',
+    );
+
+is( $add_file_request->{endpoint}, 'torrents_add',
+    'torrents_add_file endpoint' );
+is( $add_file_request->{method}, 'POST', 'torrents_add_file method' );
+is( $add_file_request->{file}, '/tmp/example.torrent',
+    'torrents_add_file stores file path' );
+is_deeply(
+           $add_file_request->{form_data},
+           [
+             torrents => ['/tmp/example.torrent'],
+             category => 'repair',
+             savepath => '/tmp/downloads',
+             tags     => 'qbtl,mismatch',
+           ],
+           'torrents_add_file form data' );
 
 my $pause_request = $default_api->torrents_pause( 'abc123' );
 
@@ -276,6 +329,19 @@ is_deeply(
            },
            'torrents_rename_folder params' );
 
+my $rss_refresh_item_request =
+    $default_api->rss_refresh_item( 'Feeds/Example Feed' );
+
+is( $rss_refresh_item_request->{endpoint},
+    'rss_refresh_item', 'rss_refresh_item endpoint' );
+is( $rss_refresh_item_request->{method}, 'POST', 'rss_refresh_item method' );
+is_deeply(
+           $rss_refresh_item_request->{params},
+           {
+            itemPath => 'Feeds/Example Feed',
+           },
+           'rss_refresh_item params' );
+
 my $fake_lwp = Local::FakeLWP->new;
 
 my $realish_api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090',
@@ -330,5 +396,31 @@ is( $fake_post_lwp->posts->[0]{params}{username},
 
 is( $fake_post_lwp->posts->[0]{params}{password},
     'adminadmin', 'execute POST sends password param' );
+
+$fake_post_lwp = Local::FakeLWP->new;
+
+$post_api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090',
+                                 ua       => $fake_post_lwp, );
+
+$post_result =
+    $post_api->execute_request(
+      $post_api->torrents_add_file( '/tmp/example.torrent',
+                                    savepath => '/tmp/downloads', ) );
+
+is( $post_result->{ok}, 1, 'execute multipart POST succeeds' );
+is( $fake_post_lwp->posts->[0]{url},
+    'http://127.0.0.1:9090/api/v2/torrents/add',
+    'execute multipart POST calls torrents/add URL' );
+is( $fake_post_lwp->posts->[0]{args}[0],
+    'Content_Type', 'execute multipart POST sets content type key' );
+is( $fake_post_lwp->posts->[0]{args}[1],
+    'form-data', 'execute multipart POST sets form-data content type' );
+is_deeply(
+           $fake_post_lwp->posts->[0]{args}[3],
+           [
+             torrents => ['/tmp/example.torrent'],
+             savepath => '/tmp/downloads',
+           ],
+           'execute multipart POST sends form data' );
 
 done_testing;

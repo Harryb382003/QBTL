@@ -210,11 +210,11 @@ say {$out} 'Elapsed: ' . ( $result->{elapsed} // '' ) . 's';
   return 0;
 }
 
-sub local_flush ( $self, $result ) {
+sub local_reset ( $self, $result ) {
   my $out = $self->{out};
 
   if ( !$result->{ok} ) {
-    say {$out} 'Local flush failed.';
+    say {$out} 'Local reset failed.';
 
     for my $problem ( @{ $result->{problems} // [] } ) {
       say {$out} "  problem: $problem";
@@ -223,11 +223,11 @@ sub local_flush ( $self, $result ) {
     return 1;
   }
 
-  my $flush = $result->{flush} // {};
+  my $reset = $result->{reset} // {};
 
-  say {$out} 'Local evidence flushed.';
-  say {$out} '  torrent rows deleted:    ' . ( $flush->{torrent_deleted} // 0 );
-  say {$out} '  fastresume rows deleted: ' . ( $flush->{fastres_deleted} // 0 );
+  say {$out} 'Local evidence reset.';
+  say {$out} '  torrent rows deleted:    ' . ( $reset->{torrent_deleted} // 0 );
+  say {$out} '  fastresume rows deleted: ' . ( $reset->{fastres_deleted} // 0 );
 
   if ( $result->{scan} ) {
     say {$out} '';
@@ -274,7 +274,7 @@ sub local_scan ( $self, $result ) {
   } else {
     say {$out} 'Local scan complete.';
   }
-  say {$out} '  scanner backend:  ' . ( $result->{scanner_backend} // 'unknown' );
+  say {$out} '  scanner backend:  ' . ( $result->{scanner_backend} // $result->{backend} // 'unknown' );
   say {$out} '  seen:             ' . ( $result->{seen} // 0 );
   say {$out} '  torrent stored:   ' . ( $result->{stored} // 0 );
   say {$out} '  torrent parsed:   ' . ( $result->{parsed} // 0 );
@@ -326,6 +326,7 @@ sub local_summary ( $self, $result ) {
   }
 
   my $summary = $result->{summary} // {};
+  my $qbt_mismatch = $result->{qbt_mismatch} // 0;
 
   say {$out} 'Local torrent files:';
   say {$out} '  scanner backend: ' . ( $summary->{scanner_backend} // 'unknown' );
@@ -334,7 +335,69 @@ sub local_summary ( $self, $result ) {
   say {$out} '  parsed:          ' . ( $summary->{parsed} // 0 );
   say {$out} '  parse problems:  ' . ( $summary->{parse_problems} // 0 );
 
+  my $deletion = $result->{deletion};
+  if ( $deletion && $deletion->{ok} ) {
+    say {$out} '';
+    say {$out} 'queued_for_deletion:';
+    say {$out} '  total:                ' . ( $deletion->{total} // 0 );
+    say {$out} '  should restore:       ' . ( $deletion->{should_restore} // 0 );
+    say {$out} '  should remain queued: ' . ( $deletion->{should_remain_queued} // 0 );
+  }
+
+  my $restoration = $result->{restoration};
+  if ( $restoration && $restoration->{ok} ) {
+    say {$out} '';
+    say {$out} 'queued_for_restoration:';
+    say {$out} '  total:                 ' . ( $restoration->{total} // 0 );
+    say {$out} '  should restore:        ' . ( $restoration->{should_restore} // 0 );
+    say {$out} '  should queue deletion: ' . ( $restoration->{should_queue_deletion} // 0 );
+  }
+
+  say {$out} '';
+  say {$out} 'qBT mis-match:      ' . $qbt_mismatch;
+
   return;
+}
+
+sub qbt_mismatch ( $self, $result ) {
+  my $out = $self->{out};
+
+  if ( !$result->{ok} ) {
+    say {$out} 'qBT mismatch failed.';
+
+    for my $problem ( @{ $result->{problems} // [] } ) {
+      say {$out} "  problem: $problem";
+    }
+
+    return 1;
+  }
+
+  say {$out} 'qBT mis-match:';
+  say {$out} '  fastresume without matching BT_backup torrent: '
+      . ( $result->{count} // 0 );
+
+  return 0 if !@{ $result->{rows} // [] };
+
+  say {$out} '';
+  say {$out} 'Rows:';
+
+  for my $row ( @{ $result->{rows} } ) {
+    say {$out} '  ' . ( $row->{infohash} // '' );
+    say {$out} '    fastresume:        ' . ( $row->{fastresume_path} // '' );
+    say {$out} '    qBT name:          ' . ( $row->{qbt_name} // '' );
+
+    if ( ( $row->{qbt_state} // '' ) ne 'queuedDL' ) {
+      say {$out} '    qBT state:         ' . ( $row->{qbt_state} // '' );
+    }
+
+    say {$out} '    repair candidates: ' . ( $row->{repair_candidates} // 0 );
+
+    for my $path ( @{ $row->{repair_candidate_paths} // [] } ) {
+      say {$out} '      ' . $path;
+    }
+  }
+
+  return 0;
 }
 
 sub metadata_key ( $self, $result ) {

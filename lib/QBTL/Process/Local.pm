@@ -28,7 +28,7 @@ sub _elapsed ( $started ) {
   return sprintf( '%.2f', time - $started );
 }
 
-sub flush ( $self, %arg ) {
+sub reset ( $self, %arg ) {
   my $db      = QBTL::DB->new( db_path => $self->{db_path} );
   my $connect = $db->connect;
 
@@ -38,21 +38,21 @@ sub flush ( $self, %arg ) {
           problems => $connect->{problems} // [],}
       if !$connect->{ok};
 
-  my $flush = $db->local_flush_evidence( $connect->{dbh} );
+  my $reset = $db->local_flush_evidence( $connect->{dbh} );
 
   $connect->{dbh}->disconnect;
 
   return {
           ok    => 0,
-          flush => $flush,
+          reset => $reset,
           scan  => undef,}
-      if !$flush->{ok};
+      if !$reset->{ok};
 
   my $scan = $self->scan( threshold => $arg{threshold}, );
 
   return {
           ok    => $scan->{ok} ? 1 : 0,
-          flush => $flush,
+          reset => $reset,
           scan  => $scan,};
 }
 
@@ -286,8 +286,9 @@ sub scan ( $self, %arg ) {
       return {
         ok          => @problem ? 0 : 1,
         action      => 'local_scan',
-        backend     => $scan->{backend},
-        target      => $scan->{path},
+        backend         => $scan->{backend},
+        scanner_backend => $scan->{backend},
+        target          => $scan->{path},
         search_tool => $scan->{search_tool},
         seen        => $scan->{count},
 
@@ -312,10 +313,25 @@ sub scan ( $self, %arg ) {
 sub summary ( $self ) {
   return $self->db_process->with_db(
     sub ( $db, $dbh ) {
+      my $root = $self->{install_root};
+
+      my $deletion =
+          defined $root && length $root
+          ? $db->deletion_queue_totals( $dbh, root => $root )
+          : undef;
+
+      my $restoration =
+          defined $root && length $root
+          ? $db->restoration_queue_totals( $dbh, root => $root )
+          : undef;
+
       return {
-              ok      => 1,
-              action  => 'local_summary',
-              summary => $db->local_torrent_summary( $dbh ),};
+              ok          => 1,
+              action      => 'local_summary',
+              summary     => $db->local_torrent_summary( $dbh ),
+              qbt_mismatch => $db->qbt_mismatch_count( $dbh ),
+              deletion    => $deletion,
+              restoration => $restoration,};
     } );
 }
 

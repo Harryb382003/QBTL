@@ -20,3 +20,6 @@ OKSN-223.QBTL-test-obvious-extra-fields.manifest
 scratch.pl
 tmp
 scratch.txt
+script/qbtl-add-mismatch-sample
+script/qbtl-add-mismatch-sample
+script/qbtl-rss-refresh-mismatch-sample

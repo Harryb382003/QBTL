@@ -33,6 +33,22 @@ sub _decode_preferences ( $self, $result ) {
   return $preferences;
 }
 
+sub _decode_object ( $self, $result ) {
+  return {} if !$result->{ok};
+
+  my $body = $result->{body} // '';
+
+  return {} if !length $body;
+
+  my $object = eval { decode_json( $body ) };
+
+  if ( $@ || ref( $object ) ne 'HASH' ) {
+    return {};
+  }
+
+  return $object;
+}
+
 sub fake_info_rows ( $self ) {
   return [
            {
@@ -111,6 +127,82 @@ sub info ( $self, %params ) {
           result  => $result,
           rows    => $rows,
           count   => scalar @{$rows},};
+}
+
+sub properties ( $self, $hash ) {
+  my $request = $self->{api}->torrents_properties( $hash );
+  my $result  = $self->{api}->execute_request( $request );
+
+  if ( !$result->{ok} && ( $result->{code} // 0 ) =~ /\A(?:401|403)\z/ ) {
+    my $login = $self->login;
+
+    if ( !$login->{ok} ) {
+      return {
+              ok      => 0,
+              action  => 'qbt_torrents_properties',
+              request => $request,
+              result  => $result,
+              login   => $login,};
+    }
+
+    $result = $self->{api}->execute_request( $request );
+
+    my $properties = $self->_decode_object( $result );
+
+    return {
+            ok         => $result->{ok} ? 1 : 0,
+            action     => 'qbt_torrents_properties',
+            request    => $request,
+            result     => $result,
+            properties => $properties,
+            count      => scalar keys %{$properties},
+            login      => $login,
+            retried    => 1,};
+  }
+
+  my $properties = $self->_decode_object( $result );
+
+  return {
+          ok         => $result->{ok} ? 1 : 0,
+          action     => 'qbt_torrents_properties',
+          request    => $request,
+          result     => $result,
+          properties => $properties,
+          count      => scalar keys %{$properties},};
+}
+
+sub log_main ( $self, %params ) {
+  my $request = $self->{api}->log_main( %params );
+  my $result  = $self->{api}->execute_request( $request );
+
+  if ( !$result->{ok} && ( $result->{code} // 0 ) =~ /\A(?:401|403)\z/ ) {
+    my $login = $self->login;
+
+    if ( !$login->{ok} ) {
+      return {
+              ok      => 0,
+              action  => 'qbt_log_main',
+              request => $request,
+              result  => $result,
+              login   => $login,};
+    }
+
+    $result = $self->{api}->execute_request( $request );
+
+    return {
+            ok      => $result->{ok} ? 1 : 0,
+            action  => 'qbt_log_main',
+            request => $request,
+            result  => $result,
+            login   => $login,
+            retried => 1,};
+  }
+
+  return {
+          ok      => $result->{ok} ? 1 : 0,
+          action  => 'qbt_log_main',
+          request => $request,
+          result  => $result,};
 }
 
 sub login ( $self, %arg ) {
@@ -215,24 +307,118 @@ sub refresh_preferences ( $self, %arg ) {
 }
 
 sub refresh_info_rows ( $self, %arg ) {
-  my $db   = $arg{db}   // die 'db is required';
-  my $dbh  = $arg{dbh}  // die 'dbh is required';
-  my $rows = $arg{rows} // die 'rows is required';
+  my $db               = $arg{db}   // die 'db is required';
+  my $dbh              = $arg{dbh}  // die 'dbh is required';
+  my $rows             = $arg{rows} // die 'rows is required';
+  my $fetch_properties = $arg{fetch_properties} // 0;
 
   my $store = $self->store_info_rows(
                                       dbh  => $dbh,
                                       db   => $db,
                                       rows => $rows, );
 
+  my $api_values = $self->store_api_values_for_info_rows(
+                                      dbh              => $dbh,
+                                      db               => $db,
+                                      rows             => $rows,
+                                      fetch_properties => $fetch_properties, );
+
+  my @problems = ( @{$store->{problems} // []},
+                   @{$api_values->{problems} // []}, );
+
   return {
-          ok       => $store->{ok},
-          action   => 'qbt_refresh',
-          seen     => $store->{seen},
-          stored   => $store->{stored},
-          new      => $store->{new},
-          existing => $store->{existing},
-          removed  => $store->{removed},
-          problems => $store->{problems},};
+          ok                       => @problems ? 0 : 1,
+          action                   => 'qbt_refresh',
+          seen                     => $store->{seen},
+          stored                   => $store->{stored},
+          new                      => $store->{new},
+          existing                 => $store->{existing},
+          removed                  => $store->{removed},
+          qbt_api_info_keys        => $api_values->{info_keys_stored},
+          qbt_properties_seen      => $api_values->{properties_seen},
+          qbt_properties_keys      => $api_values->{properties_keys_stored},
+          problems                 => \@problems,};
+}
+
+sub store_api_values_for_info_rows ( $self, %arg ) {
+  my $db               = $arg{db}   // die 'db is required';
+  my $dbh              = $arg{dbh}  // die 'dbh is required';
+  my $rows             = $arg{rows} // die 'rows is required';
+  my $fetch_properties = $arg{fetch_properties} // 0;
+
+  my $info_keys_stored       = 0;
+  my $properties_seen        = 0;
+  my $properties_keys_stored = 0;
+  my @problems               = ();
+
+  for my $row ( @{$rows} ) {
+    my $hash = $row->{hash};
+
+    if ( !defined $hash || $hash eq '' ) {
+      push @problems,
+          {
+           hash  => undef,
+           error => 'qBT API value row requires hash',};
+      next;
+    }
+
+    my $info_store = eval {
+      $db->replace_qbt_api_values(
+                                   $dbh,
+                                   hash     => $hash,
+                                   endpoint => 'torrents_info',
+                                   data     => $row, );
+    };
+
+    if ( !$info_store || !$info_store->{ok} ) {
+      push @problems,
+          {
+           hash  => $hash,
+           error => $@ || 'qbt_api_values torrents_info store failed',};
+      next;
+    }
+
+    $info_keys_stored += $info_store->{stored} // 0;
+
+    next if !$fetch_properties;
+
+    my $properties = $self->properties( $hash );
+
+    if ( !$properties->{ok} ) {
+      push @problems,
+          {
+           hash  => $hash,
+           error => 'qBittorrent torrents/properties request failed',};
+      next;
+    }
+
+    $properties_seen++;
+
+    my $properties_store = eval {
+      $db->replace_qbt_api_values(
+                                 $dbh,
+                                 hash     => $hash,
+                                 endpoint => 'torrents_properties',
+                                 data     => $properties->{properties} // {}, );
+    };
+
+    if ( !$properties_store || !$properties_store->{ok} ) {
+      push @problems,
+          {
+           hash  => $hash,
+           error => $@ || 'qbt_api_values torrents_properties store failed',};
+      next;
+    }
+
+    $properties_keys_stored += $properties_store->{stored} // 0;
+  }
+
+  return {
+          ok                       => @problems ? 0 : 1,
+          info_keys_stored         => $info_keys_stored,
+          properties_seen          => $properties_seen,
+          properties_keys_stored   => $properties_keys_stored,
+          problems                 => \@problems,};
 }
 
 sub status ( $self, %arg ) {

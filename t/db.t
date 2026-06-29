@@ -26,30 +26,61 @@ is( $db->migration_dir,
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 12, 'twelve migration files discovered' );
+is( scalar @migration_files, 15, 'fifteen migration files discovered' );
+
 like( $migration_files[0], qr/001_initial\.sql\z/,
       'initial migration discovered' );
+
 like( $migration_files[1], qr/002_qbt_info\.sql\z/,
       'qbt_info migration discovered' );
+
 like( $migration_files[2], qr/003_qbt_presence\.sql\z/,
       'qbt_presence migration discovered' );
+
 like( $migration_files[3], qr/004_qbt_comment\.sql\z/,
       'qbt_comment migration discovered' );
+
 like( $migration_files[4], qr/005_qbt_seen\.sql\z/,
       'qbt_seen migration discovered' );
+
 like( $migration_files[5],
       qr/006_local_torrent_files\.sql\z/,
       'local_torrent_files migration discovered' );
+
 like( $migration_files[6],
       qr/007_local_torrent_parse\.sql\z/,
       'local_torrent_parse migration discovered' );
+
 like( $migration_files[7], qr/008_hash_values\.sql\z/,
       'hash_values.sql migration discovered' );
+
 like( $migration_files[8],
       qr/009_local_fastresume_files\.sql\z/,
       'local_fastresume_files migration discovered' );
+
 like( $migration_files[9], qr/010_key_accessors\.sql\z/,
       'key_accessors migration discovered' );
+
+like( $migration_files[10],
+      qr/011_key_accessor_searchable_qbt_fields\.sql\z/,
+      'key_accessor_searchable_qbt_fields migration discovered' );
+
+like( $migration_files[11],
+      qr/012_qbt_preferences\.sql\z/,
+      'qbt_preferences migration discovered' );
+
+like( $migration_files[12],
+      qr/013_qbt_payload_audits\.sql\z/,
+      'qbt_payload_audits migration discovered' );
+
+like( $migration_files[13],
+      qr/014_qbt_payload_files\.sql\z/,
+      'qbt_payload_files migration discovered' );
+
+like( $migration_files[14],
+      qr/015_qbt_api_values\.sql\z/,
+      'qbt_api_values migration discovered' );
+
 my @problems = $db->verify_path;
 
 is_deeply( \@problems, [], 'valid temp DB directory has no path problems' );
@@ -64,12 +95,12 @@ my $dbh = $result->{dbh};
 my $migration = $db->migrate( $result->{dbh} );
 
 ok( $migration->{ok}, 'migration result ok' );
-is( $migration->{migration_count}, 12, 'twelve migrations ran' );
+is( $migration->{migration_count}, 15, 'fifteen migrations ran' );
 
 my ( $version ) = $result->{dbh}
     ->selectrow_array( 'SELECT version FROM schema_version WHERE id = 1' );
 
-is( $version, 12, 'schema version stored' );
+is( $version, 15, 'schema version stored' );
 
 my $hash = '7ba7c0f31cd3ae7186c8d08353cfa87291b825e4';
 
@@ -281,6 +312,85 @@ my ( $updated_name ) =
                                      undef, 'abc123', );
 
 is( $updated_name, 'Example Torrent Renamed', 'qbt_info row updated' );
+
+
+my $api_values = $db->replace_qbt_api_values(
+                                             $result->{dbh},
+                                             hash     => 'abc123',
+                                             endpoint => 'torrents_properties',
+                                             data     => {
+                                                       save_path  => '/Downloads',
+                                                       total_size => 12345,
+                                                       isPrivate  => \0,
+                                                      }, );
+
+ok( $api_values->{ok}, 'qbt_api_values replace result ok' );
+is( $api_values->{stored}, 3, 'qbt_api_values stored three keys' );
+
+my $api_value_rows = $db->qbt_api_values(
+                                          $result->{dbh},
+                                          hash     => 'abc123',
+                                          endpoint => 'torrents_properties',
+                                          key      => 'save_path', );
+
+ok( $api_value_rows->{ok}, 'qbt_api_values query result ok' );
+is( $api_value_rows->{count}, 1, 'qbt_api_values query returns one row' );
+is( $api_value_rows->{rows}[0]{value},
+    '/Downloads', 'qbt_api_values stores qBT key value' );
+
+my $payload_audit = $db->replace_qbt_payload_audit(
+                                      $result->{dbh},
+                                      {
+                                       hash                => 'abc123',
+                                       save_path           => '/Downloads',
+                                       content_path        => '/Downloads/Example',
+                                       save_path_exists    => 1,
+                                       content_path_exists => 1,
+                                       save_path_type      => 'dir',
+                                       content_path_type   => 'dir',
+                                       qbt_files_ok        => 1,
+                                       qbt_file_count      => 2,
+                                       qbt_file_total_size => 12345,
+                                       direct_probe_status => 'trusted_qbt_size',
+                                       needs_deep_scan     => 0,
+                                       problem             => undef,
+                                      }, );
+
+ok( $payload_audit->{ok}, 'qbt payload audit replace result ok' );
+
+my $stored_payload_audit =
+    $db->qbt_payload_audit( $result->{dbh}, 'abc123' );
+
+is( $stored_payload_audit->{direct_probe_status},
+    'trusted_qbt_size', 'qbt payload audit status stored' );
+
+my $payload_files = $db->replace_qbt_payload_files(
+                                  $result->{dbh},
+                                  hash  => 'abc123',
+                                  files => [
+                                            {
+                                             path         => 'Example/file1.mkv',
+                                             size         => 100,
+                                             progress     => 1,
+                                             priority     => 1,
+                                             availability => 1,
+                                            },
+                                            {
+                                             path         => 'Example/file2.mkv',
+                                             size         => 200,
+                                             progress     => 0.5,
+                                             priority     => 1,
+                                             availability => 1,
+                                            },
+                                  ], );
+
+ok( $payload_files->{ok}, 'qbt payload files replace result ok' );
+is( $payload_files->{stored}, 2, 'qbt payload files stored two rows' );
+
+my $stored_payload_files =
+    $db->qbt_payload_files( $result->{dbh}, 'abc123' );
+
+is( $stored_payload_files->{count}, 2, 'qbt payload files query count' );
 my $fr_path = File::Spec->catfile( $tmpdir,
                           'd207bae331f40b5f9b49220e7aa4e4a60df9ca3a.fastresume',
 );

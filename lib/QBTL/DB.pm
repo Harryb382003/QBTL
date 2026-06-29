@@ -336,11 +336,11 @@ sub local_torrent_summary ( $self, $dbh ) {
   );
 
   return {
-          total          => $total          // 0,
+          total           => $total           // 0,
           scanner_backend => $scanner_backend // 'unknown',
-          latest_seen    => $latest_seen    // '',
-          parsed         => $parsed         // 0,
-          parse_problems => $parse_problems // 0,};
+          latest_seen     => $latest_seen     // '',
+          parsed          => $parsed          // 0,
+          parse_problems  => $parse_problems  // 0,};
 }
 
 sub manual_values_for_hash ( $self, $dbh, $hash ) {
@@ -569,6 +569,82 @@ sub promote_hash_key ( $self, $dbh, %arg ) {
           backfilled    => $backfilled,};
 }
 
+sub _path_is_under_any ( $self, $path, $dirs ) {
+  for my $dir ( @{$dirs} ) {
+    return 1 if $self->_path_is_under( $path, $dir );
+  }
+
+  return 0;
+}
+
+sub _path_is_under ( $self, $path, $dir ) {
+  return 0 if !defined $path || !defined $dir || $dir eq '';
+
+  return 1 if $path eq $dir;
+  return index( $path, "$dir/" ) == 0 ? 1 : 0;
+}
+
+sub promoted_hash_keys ( $self, $dbh ) {
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        "key",
+        target_column,
+        value_type,
+        created_on
+      FROM promoted_keys
+      ORDER BY "key" ASC
+    },
+    {Slice => {}}, );
+
+  return {
+          ok   => 1,
+          rows => $rows,};
+}
+
+sub promotion_candidates ( $self, $dbh, %arg ) {
+  my $threshold = $arg{threshold} // 20;
+
+  if ( $threshold !~ /\A[0-9]+\z/ ) {
+    return {
+            ok     => 0,
+            status => 'invalid_threshold',
+            error  => 'threshold must be a non-negative integer',};
+  }
+
+  $threshold = 0 + $threshold;
+
+  if ( $threshold == 0 ) {
+    return {
+            ok         => 1,
+            threshold  => 0,
+            candidates => [],};
+  }
+
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        hv."key",
+        COUNT(DISTINCT hv.hash) AS hashes,
+        COUNT(DISTINCT hv.value) AS values_seen,
+        SUM(hv.seen_count) AS seen
+      FROM hash_values hv
+      LEFT JOIN promoted_keys pk
+        ON pk."key" = hv."key"
+      WHERE pk."key" IS NULL
+      GROUP BY hv."key"
+            HAVING SUM(hv.seen_count) >= CAST(? AS INTEGER)
+      ORDER BY seen DESC, hv."key" ASC
+    },
+    {Slice => {}},
+    $threshold, );
+
+  return {
+          ok         => 1,
+          threshold  => $threshold,
+          candidates => $rows,};
+}
+
 sub qbt_hash_as_name_count ( $self, $dbh ) {
   my ( $count ) = $dbh->selectrow_array(
     q{
@@ -583,6 +659,71 @@ sub qbt_hash_as_name_count ( $self, $dbh ) {
   );
 
   return $count // 0;
+}
+
+
+sub qbt_mismatch_rows ( $self, $dbh, %arg ) {
+  my $limit = $arg{limit};
+
+  my $sql = q{
+    SELECT
+      f.infohash AS infohash,
+      f.path AS fastresume_path,
+      q.name AS qbt_name,
+      q.state AS qbt_state,
+      q.total_size AS qbt_total_size,
+      COUNT(loose.path) AS repair_candidates,
+      GROUP_CONCAT(DISTINCT loose.path) AS repair_candidate_paths
+    FROM local_fastresume_files f
+    LEFT JOIN local_torrent_files bt
+      ON bt.infohash = f.infohash
+     AND bt.parse_ok = 1
+     AND bt.path LIKE '%/BT_backup/%'
+    LEFT JOIN local_torrent_files loose
+      ON loose.infohash = f.infohash
+     AND loose.parse_ok = 1
+     AND loose.path NOT LIKE '%/BT_backup/%'
+     AND loose.path NOT LIKE '%/queued_for_deletion/%'
+     AND loose.path NOT LIKE '%/queued_for_restoration/%'
+    LEFT JOIN qbt_info q
+      ON q.hash = f.infohash
+    WHERE f.parse_ok = 1
+      AND f.infohash IS NOT NULL
+      AND f.infohash != ''
+      AND f.path LIKE '%/BT_backup/%'
+      AND bt.path IS NULL
+    GROUP BY
+      f.infohash,
+      f.path,
+      q.name,
+      q.state,
+      q.total_size
+    ORDER BY f.infohash ASC
+  };
+
+  if ( defined $limit && $limit =~ /\A[0-9]+\z/ && $limit > 0 ) {
+    $sql .= q{ LIMIT } . int( $limit );
+  }
+
+  my $rows = $dbh->selectall_arrayref( $sql, {Slice => {}} );
+
+  for my $row ( @{$rows} ) {
+    my $paths = $row->{repair_candidate_paths} // '';
+
+    $row->{repair_candidate_paths} =
+        length $paths
+        ? [ split /,/, $paths ]
+        : [];
+  }
+
+  return {
+          ok    => 1,
+          rows  => $rows,
+          count => scalar @{$rows},};
+}
+
+sub qbt_mismatch_count ( $self, $dbh ) {
+  return $self->qbt_mismatch_rows( $dbh )->{count};
 }
 
 sub qbt_info_columns ( $self, $dbh ) {
@@ -726,67 +867,6 @@ sub qbt_status ( $self, $dbh ) {
           summary    => $summary    // {},
           states     => $states     // [],
           categories => $categories // {},};
-}
-
-sub promoted_hash_keys ( $self, $dbh ) {
-  my $rows = $dbh->selectall_arrayref(
-    q{
-      SELECT
-        "key",
-        target_column,
-        value_type,
-        created_on
-      FROM promoted_keys
-      ORDER BY "key" ASC
-    },
-    {Slice => {}}, );
-
-  return {
-          ok   => 1,
-          rows => $rows,};
-}
-
-sub promotion_candidates ( $self, $dbh, %arg ) {
-  my $threshold = $arg{threshold} // 20;
-
-  if ( $threshold !~ /\A[0-9]+\z/ ) {
-    return {
-            ok     => 0,
-            status => 'invalid_threshold',
-            error  => 'threshold must be a non-negative integer',};
-  }
-
-  $threshold = 0 + $threshold;
-
-  if ( $threshold == 0 ) {
-    return {
-            ok         => 1,
-            threshold  => 0,
-            candidates => [],};
-  }
-
-  my $rows = $dbh->selectall_arrayref(
-    q{
-      SELECT
-        hv."key",
-        COUNT(DISTINCT hv.hash) AS hashes,
-        COUNT(DISTINCT hv.value) AS values_seen,
-        SUM(hv.seen_count) AS seen
-      FROM hash_values hv
-      LEFT JOIN promoted_keys pk
-        ON pk."key" = hv."key"
-      WHERE pk."key" IS NULL
-      GROUP BY hv."key"
-            HAVING SUM(hv.seen_count) >= CAST(? AS INTEGER)
-      ORDER BY seen DESC, hv."key" ASC
-    },
-    {Slice => {}},
-    $threshold, );
-
-  return {
-          ok         => 1,
-          threshold  => $threshold,
-          candidates => $rows,};
 }
 
 sub random_qbt_info ( $self, $dbh ) {
@@ -1322,6 +1402,160 @@ sub deletion_queue_totals ( $self, $dbh, %arg ) {
           should_remain_queued => $should_remain_queued,};
 }
 
+sub replace_qbt_payload_audit ( $self, $dbh, $row ) {
+  die 'qbt payload audit row requires hash' if !defined $row->{hash};
+
+  $dbh->do(
+    q{
+      INSERT INTO qbt_payload_audits (
+        hash,
+        audited_on,
+        save_path,
+        content_path,
+        save_path_exists,
+        content_path_exists,
+        save_path_type,
+        content_path_type,
+        qbt_files_ok,
+        qbt_file_count,
+        qbt_file_total_size,
+        direct_probe_status,
+        needs_deep_scan,
+        problem
+      )
+      VALUES (
+        ?,
+        datetime('now'),
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?
+      )
+      ON CONFLICT(hash) DO UPDATE SET
+        audited_on = excluded.audited_on,
+        save_path = excluded.save_path,
+        content_path = excluded.content_path,
+        save_path_exists = excluded.save_path_exists,
+        content_path_exists = excluded.content_path_exists,
+        save_path_type = excluded.save_path_type,
+        content_path_type = excluded.content_path_type,
+        qbt_files_ok = excluded.qbt_files_ok,
+        qbt_file_count = excluded.qbt_file_count,
+        qbt_file_total_size = excluded.qbt_file_total_size,
+        direct_probe_status = excluded.direct_probe_status,
+        needs_deep_scan = excluded.needs_deep_scan,
+        problem = excluded.problem
+    },
+    undef,
+    $row->{hash},
+    $row->{save_path},
+    $row->{content_path},
+    $row->{save_path_exists},
+    $row->{content_path_exists},
+    $row->{save_path_type},
+    $row->{content_path_type},
+    $row->{qbt_files_ok},
+    $row->{qbt_file_count},
+    $row->{qbt_file_total_size},
+    $row->{direct_probe_status},
+    $row->{needs_deep_scan} // 0,
+    $row->{problem}, );
+
+  return {
+          ok   => 1,
+          hash => $row->{hash},};
+}
+
+sub qbt_payload_audit ( $self, $dbh, $hash ) {
+  return $dbh->selectrow_hashref(
+    q{
+      SELECT *
+      FROM qbt_payload_audits
+      WHERE hash = ?
+    },
+    undef,
+    $hash, );
+}
+
+sub replace_qbt_payload_files ( $self, $dbh, %arg ) {
+  my $hash = $arg{hash} // die 'qbt payload files require hash';
+  my $files = $arg{files} // [];
+
+  $dbh->do( q{DELETE FROM qbt_payload_files WHERE hash = ?}, undef, $hash );
+
+  my $insert = $dbh->prepare(
+    q{
+      INSERT INTO qbt_payload_files (
+        hash,
+        path,
+        size,
+        progress,
+        priority,
+        availability,
+        first_seen_on,
+        last_seen_on
+      )
+      VALUES (
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+      )
+    }
+  );
+
+  my $stored = 0;
+
+  for my $file ( @{$files} ) {
+    next if !defined $file->{path} || $file->{path} eq '';
+
+    $insert->execute(
+                     $hash,
+                     $file->{path},
+                     $file->{size},
+                     $file->{progress},
+                     $file->{priority},
+                     $file->{availability}, );
+
+    $stored++;
+  }
+
+  return {
+          ok     => 1,
+          hash   => $hash,
+          stored => $stored,};
+}
+
+sub qbt_payload_files ( $self, $dbh, $hash ) {
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT *
+      FROM qbt_payload_files
+      WHERE hash = ?
+      ORDER BY path ASC
+    },
+    {Slice => {}},
+    $hash, );
+
+  return {
+          ok    => 1,
+          hash  => $hash,
+          rows  => $rows,
+          count => scalar @{$rows},};
+}
+
 sub _classified_local_torrent_rows ( $self, $dbh, %arg ) {
   my $root = $arg{root} // die 'root is required';
 
@@ -1368,17 +1602,106 @@ sub _classified_local_torrent_rows ( $self, $dbh, %arg ) {
           loose_hash  => \%loose_hash,};
 }
 
-sub _path_is_under ( $self, $path, $dir ) {
-  return 0 if !defined $path || !defined $dir;
 
-  my $clean_path = File::Spec->rel2abs( $path );
-  my $clean_dir  = File::Spec->rel2abs( $dir );
+sub replace_qbt_api_values ( $self, $dbh, %arg ) {
+  my $hash     = $arg{hash}     // die 'qBT API values require hash';
+  my $endpoint = $arg{endpoint} // die 'qBT API values require endpoint';
+  my $data     = $arg{data}     // {};
 
-  $clean_path =~ s{/+\z}{};
-  $clean_dir  =~ s{/+\z}{};
+  die 'qBT API values data must be a hashref' if ref $data ne 'HASH';
 
-  return 1 if $clean_path eq $clean_dir;
-  return index( $clean_path, "$clean_dir/" ) == 0 ? 1 : 0;
+  require JSON::PP;
+
+  my $json = JSON::PP->new->canonical( 1 )->allow_nonref( 1 );
+
+  my $insert = $dbh->prepare(
+    q{
+      INSERT INTO qbt_api_values (
+        hash,
+        endpoint,
+        key,
+        value,
+        value_type,
+        first_seen_on,
+        last_seen_on
+      )
+      VALUES (
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+      )
+      ON CONFLICT(hash, endpoint, key) DO UPDATE SET
+        value = excluded.value,
+        value_type = excluded.value_type,
+        last_seen_on = excluded.last_seen_on
+    }
+  );
+
+  my $stored = 0;
+
+  for my $key ( sort keys %{$data} ) {
+    my $raw = $data->{$key};
+
+    my $value_type = !defined $raw ? 'null'
+        : ref $raw                  ? 'json'
+        : $raw =~ /\A-?\d+\z/ ? 'integer'
+        : $raw =~ /\A-?(?:\d+\.\d*|\d*\.\d+)\z/ ? 'real'
+        : 'text';
+
+    my $value = !defined $raw ? undef
+        : ref $raw ? $json->encode( $raw )
+        : "$raw";
+
+    $insert->execute( $hash, $endpoint, $key, $value, $value_type );
+    $stored++;
+  }
+
+  return {
+          ok       => 1,
+          hash     => $hash,
+          endpoint => $endpoint,
+          stored   => $stored,};
+}
+
+sub qbt_api_values ( $self, $dbh, %arg ) {
+  my @where;
+  my @bind;
+
+  if ( defined $arg{hash} ) {
+    push @where, 'hash = ?';
+    push @bind,  $arg{hash};
+  }
+
+  if ( defined $arg{endpoint} ) {
+    push @where, 'endpoint = ?';
+    push @bind,  $arg{endpoint};
+  }
+
+  if ( defined $arg{key} ) {
+    push @where, 'key = ?';
+    push @bind,  $arg{key};
+  }
+
+  my $where = @where ? 'WHERE ' . join( ' AND ', @where ) : '';
+
+  my $rows = $dbh->selectall_arrayref(
+    qq{
+      SELECT *
+      FROM qbt_api_values
+      $where
+      ORDER BY hash ASC, endpoint ASC, key ASC
+    },
+    {Slice => {}},
+    @bind, );
+
+  return {
+          ok    => 1,
+          rows  => $rows,
+          count => scalar @{$rows},};
 }
 
 sub upsert_qbt_info ( $self, $dbh, $row ) {
@@ -1502,78 +1825,5 @@ sub verify_path ( $self ) {
       if -d $dir && !-w $dir;
 
   return @problems;
-}
-
-sub restoration_queue_totals ( $self, $dbh, %arg ) {
-  my $root = $arg{root} // die 'root is required';
-
-  my $queued_for_restoration = $arg{queued_for_restoration}
-      // File::Spec->catdir( $root, 'queued_for_restoration' );
-
-  my $queued_for_deletion = $arg{queued_for_deletion}
-      // File::Spec->catdir( $root, 'queued_for_deletion' );
-
-  my @exclude_dir = (
-                      $queued_for_restoration,
-                      $queued_for_deletion, @{$arg{exclude_dirs} // []}, );
-
-  my $rows = $dbh->selectall_arrayref(
-    q{
-      SELECT path, infohash
-      FROM local_torrent_files
-      WHERE parse_ok = 1
-        AND infohash IS NOT NULL
-        AND infohash != ''
-    },
-    {Slice => {}}, );
-
-  my %loose_hash;
-  my @restoration;
-
-  for my $row ( @{$rows} ) {
-    my $path = $row->{path}     // next;
-    my $hash = $row->{infohash} // next;
-
-    if ( $self->_path_is_under( $path, $queued_for_restoration ) ) {
-      push @restoration, $row;
-      next;
-    }
-
-    next if $self->_path_is_under_any( $path, \@exclude_dir );
-
-    $loose_hash{$hash} = 1;
-  }
-
-  my $should_restore        = 0;
-  my $should_queue_deletion = 0;
-
-  for my $row ( @restoration ) {
-    if ( $loose_hash{$row->{infohash}} ) {
-      $should_queue_deletion++;
-      next;
-    }
-
-    $should_restore++;
-  }
-
-  return {
-          ok                    => 1,
-          should_restore        => $should_restore,
-          should_queue_deletion => $should_queue_deletion,};
-}
-
-sub _path_is_under_any ( $self, $path, $dirs ) {
-  for my $dir ( @{$dirs} ) {
-    return 1 if $self->_path_is_under( $path, $dir );
-  }
-
-  return 0;
-}
-
-sub _path_is_under ( $self, $path, $dir ) {
-  return 0 if !defined $path || !defined $dir || $dir eq '';
-
-  return 1 if $path eq $dir;
-  return index( $path, "$dir/" ) == 0 ? 1 : 0;
 }
 1;

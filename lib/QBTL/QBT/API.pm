@@ -60,6 +60,14 @@ sub endpoint_spec ($self, $name) {
             method => 'GET',
             path   => 'torrents/files',
         },
+        torrents_properties => {
+            method => 'GET',
+            path   => 'torrents/properties',
+        },
+        log_main => {
+            method => 'GET',
+            path   => 'log/main',
+        },
         torrents_add => {
             method => 'POST',
             path   => 'torrents/add',
@@ -87,6 +95,10 @@ sub endpoint_spec ($self, $name) {
         torrents_rename_folder => {
             method => 'POST',
             path   => 'torrents/renameFolder',
+        },
+        rss_refresh_item => {
+            method => 'POST',
+            path   => 'rss/refreshItem',
         },
     );
 
@@ -132,6 +144,23 @@ sub _execute_lwp_request ( $self, $request ) {
   }
 
   if ( $method eq 'POST' ) {
+    if ( $request->{form_data} ) {
+      my $res = $self->{ua}->post(
+                                   $url,
+                                   Content_Type => 'form-data',
+                                   Content      => $request->{form_data},
+      );
+
+      return {
+              ok      => $res->is_success ? 1 : 0,
+              status  => $res->status_line,
+              code    => $res->code,
+              request => $request,
+              url     => $url,
+              body    => $res->decoded_content // '',
+      };
+    }
+
     my $res = $self->{ua}->post( $url, $request->{params} // {} );
 
     return {
@@ -176,16 +205,12 @@ sub ua ( $self ) {
 ### actual api calls
 ###
 
+sub app_preferences ($self) {
+    return $self->request('app_preferences');
+}
+
 sub app_version ($self) {
     return $self->request('app_version');
-}
-
-sub app_preferences ($self) {
-    return $self->request('app_preferences');
-}
-
-sub app_preferences ($self) {
-    return $self->request('app_preferences');
 }
 
 sub login ($self, $username, $password) {
@@ -205,12 +230,50 @@ sub torrents_add ($self, %params) {
     );
 }
 
+sub torrents_add_file ( $self, $path, %params ) {
+    die 'torrent path is required' if !defined $path || $path eq '';
+
+    my @form_data = ( torrents => [$path] );
+
+    for my $key ( sort keys %params ) {
+        next if !defined $params{$key};
+        next if $params{$key} eq '';
+
+        push @form_data, $key => $params{$key};
+    }
+
+    return {
+        endpoint  => 'torrents_add',
+        method    => 'POST',
+        url       => $self->endpoint('torrents_add'),
+        params    => \%params,
+        form_data => \@form_data,
+        file      => $path,
+    };
+}
+
 sub torrents_files ($self, $hash) {
     return $self->request(
         'torrents_files',
         params => {
             hash => $hash,
         },
+    );
+}
+
+sub torrents_properties ($self, $hash) {
+    return $self->request(
+        'torrents_properties',
+        params => {
+            hash => $hash,
+        },
+    );
+}
+
+sub log_main ($self, %params) {
+    return $self->request(
+        'log_main',
+        params => \%params,
     );
 }
 
@@ -272,6 +335,15 @@ sub torrents_set_location ($self, $hashes, $location) {
         params => {
             hashes   => $hashes,
             location => $location,
+        },
+    );
+}
+
+sub rss_refresh_item ( $self, $item_path ) {
+    return $self->request(
+        'rss_refresh_item',
+        params => {
+            itemPath => $item_path,
         },
     );
 }

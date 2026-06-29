@@ -200,8 +200,9 @@ sub _installer ( $self ) {
 sub local ( $self ) {
   $self->{local} //=
       QBTL::Process::Local->new(
-                              db_path     => $self->{config}->db_path,
-                              search_tool => $self->{config}->local_search_tool,
+                              db_path           => $self->{config}->db_path,
+                              install_root      => $self->{config}->installation_root,
+                              search_tool       => $self->{config}->local_search_tool,
       );
 
   return $self->{local};
@@ -267,9 +268,9 @@ sub run_cli ( $self, @argv ) {
   if ( $cmd eq 'local' ) {
     my $subcmd = shift @argv // 'help';
 
-    if ( $subcmd eq 'flush' ) {
-  return $self->{renderer}->local_flush(
-    $self->local->flush(
+    if ( $subcmd eq 'reset' ) {
+  return $self->{renderer}->local_reset(
+    $self->local->reset(
       threshold => $self->{config}->metadata_promoter_threshold,
     )
   );
@@ -500,7 +501,10 @@ sub run_cli ( $self, @argv ) {
                  ],} );
       }
 
-      my $api = QBTL::QBT::API->new( base_url => $self->{config}->qbt_url, );
+      my $api = QBTL::QBT::API->new(
+                               base_url => $self->{config}->qbt_url,
+                               $self->{qbt_ua} ? ( ua => $self->{qbt_ua} ) : (),
+      );
       my $process = QBTL::Process::QBT->new( api => $api );
       my $info    = $process->info;
 
@@ -524,9 +528,10 @@ sub run_cli ( $self, @argv ) {
 
       my $result =
           $process->refresh_info_rows(
-                                       dbh  => $connect->{dbh},
-                                       db   => $db,
-                                       rows => $info->{rows} // [], );
+                                       dbh              => $connect->{dbh},
+                                       db               => $db,
+                                       rows             => $info->{rows} // [],
+                                       fetch_properties => 1, );
 
       $connect->{dbh}->disconnect;
 
@@ -613,6 +618,26 @@ sub run_cli ( $self, @argv ) {
       $connect->{dbh}->disconnect;
 
       return $self->{renderer}->qbt_preferences( $result );
+    }
+
+    if ( $subcmd eq 'mismatch' ) {
+      my $db      = QBTL::DB->new( db_path => $self->{config}->db_path );
+      my $connect = $db->connect;
+
+      if ( !$connect->{ok} ) {
+        return $self->{renderer}->qbt_mismatch(
+          {
+            ok       => 0,
+            problems => $connect->{problems} // [],
+          }
+        );
+      }
+
+      my $result = $db->qbt_mismatch_rows( $connect->{dbh} );
+
+      $connect->{dbh}->disconnect;
+
+      return $self->{renderer}->qbt_mismatch( $result );
     }
 
     if ( $subcmd eq 'status' ) {

@@ -202,6 +202,50 @@ like( $exec_info_ua->urls->[0],
 like( $exec_info_ua->urls->[0],
       qr/filter=all/, 'qbt info process sends filter param' );
 
+
+# ------------------------------
+# Executable qBT actions: properties and log
+# ------------------------------
+
+my $properties_ua = Local::FakeUA->new(
+                  get_body => '{"save_path":"/Downloads","total_size":1000}',
+                  get_code => 200, );
+
+my $properties_api = QBTL::QBT::API->new(
+                                      base_url => 'http://127.0.0.1:9090',
+                                      ua       => $properties_ua, );
+
+my $properties_process = QBTL::Process::QBT->new( api => $properties_api );
+
+my $properties_result = $properties_process->properties( 'abc123' );
+
+is( $properties_result->{ok}, 1, 'qbt properties process succeeds' );
+is( $properties_result->{action},
+    'qbt_torrents_properties', 'qbt properties process returns action' );
+is( $properties_result->{count}, 2, 'qbt properties process returns count' );
+is( $properties_result->{properties}{save_path},
+    '/Downloads', 'qbt properties process decodes save_path' );
+like( $properties_ua->urls->[0],
+      qr{/api/v2/torrents/properties\?hash=abc123},
+      'qbt properties process gets properties URL' );
+
+my $log_ua = Local::FakeUA->new(
+       get_body => '[{"id":1,"message":"duplicate torrent","type":2}]',
+       get_code => 200, );
+
+my $log_api = QBTL::QBT::API->new( base_url => 'http://127.0.0.1:9090',
+                                   ua       => $log_ua, );
+
+my $log_process = QBTL::Process::QBT->new( api => $log_api );
+
+my $log_result = $log_process->log_main( last_known_id => 42, warning => 1 );
+
+is( $log_result->{ok}, 1, 'qbt log main process succeeds' );
+is( $log_result->{action}, 'qbt_log_main', 'qbt log main process action' );
+like( $log_ua->urls->[0],
+      qr{/api/v2/log/main\?},
+      'qbt log main process gets log URL' );
+
 # ------------------------------
 # Executable qBT actions: info auth retry
 # ------------------------------
@@ -368,6 +412,35 @@ my ( $count ) =
 
 is( $count, 2, 'qbt_info table has two rows' );
 
+
+my $api_values_store = $process->store_api_values_for_info_rows(
+                      dbh  => $connect->{dbh},
+                      db   => $db,
+                      rows => [
+                        {
+                         hash      => 'abc123',
+                         name      => 'Example One',
+                         save_path => '/Downloads',
+                        },
+                      ], );
+
+ok( $api_values_store->{ok}, 'qbt api values info storage result ok' );
+is( $api_values_store->{info_keys_stored},
+    3, 'qbt api values stored info keys' );
+is( $api_values_store->{properties_seen},
+    0, 'qbt api values does not fetch properties by default' );
+
+my $stored_api_values = $db->qbt_api_values(
+                                             $connect->{dbh},
+                                             hash     => 'abc123',
+                                             endpoint => 'torrents_info',
+                                             key      => 'save_path', );
+
+is( $stored_api_values->{count},
+    1, 'qbt api values info row stored in DB' );
+is( $stored_api_values->{rows}[0]{value},
+    '/Downloads', 'qbt api values save_path stored' );
+
 my $bad_store =
     $process->store_info_rows(
                                dbh  => $connect->{dbh},
@@ -413,6 +486,37 @@ is( $refresh_result->{action}, 'qbt_refresh', 'refresh info rows action' );
 is( $refresh_result->{seen},   1,             'refresh info rows seen count' );
 is( $refresh_result->{stored}, 1, 'refresh info rows stored count' );
 is_deeply( $refresh_result->{problems}, [], 'refresh info rows no problems' );
+
+is( $refresh_result->{qbt_api_info_keys},
+    15, 'refresh info rows stores qbt info api keys' );
+
+my $properties_refresh_ua = Local::FakeUA->new(
+                  get_body => '{"save_path":"/Downloads","total_size":3000}',
+                  get_code => 200, );
+
+my $properties_refresh_api = QBTL::QBT::API->new(
+                                      base_url => 'http://127.0.0.1:9090',
+                                      ua       => $properties_refresh_ua, );
+my $properties_refresh_process =
+    QBTL::Process::QBT->new( api => $properties_refresh_api );
+
+my $properties_refresh = $properties_refresh_process->refresh_info_rows(
+                   dbh              => $connect->{dbh},
+                   db               => $db,
+                   fetch_properties => 1,
+                   rows             => [
+                         {
+                          hash      => 'prop123',
+                          name      => 'Properties Refresh',
+                          save_path => '/Downloads',
+                         },
+                   ], );
+
+ok( $properties_refresh->{ok}, 'refresh info rows with properties result ok' );
+is( $properties_refresh->{qbt_properties_seen},
+    1, 'refresh info rows fetched one properties object' );
+is( $properties_refresh->{qbt_properties_keys},
+    2, 'refresh info rows stored properties keys' );
 
 my ( $refresh_name ) =
     $connect->{dbh}
