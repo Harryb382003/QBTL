@@ -831,6 +831,172 @@ sub best_local_torrent_file_for_hash ( $self, $dbh, $hash ) {
     lc $hash, );
 }
 
+
+sub qbt_info_by_hash ( $self, $dbh, $hash ) {
+  my $row = $dbh->selectrow_hashref(
+    q{
+      SELECT *
+      FROM qbt_info
+      WHERE lower(hash) = lower(?)
+      LIMIT 1
+    },
+    undef,
+    $hash, );
+
+  return $row;
+}
+
+sub current_qbt_hashes ( $self, $dbh ) {
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT hash
+      FROM qbt_info
+      WHERE current_qbt = 1
+      ORDER BY hash ASC
+    },
+    {Slice => {}}, );
+
+  return [ map { $_->{hash} } @{$rows} ];
+}
+
+sub update_qbt_torrent_file_state ( $self, $dbh, %arg ) {
+  my $hash   = $arg{hash} // die 'qbt torrent file state requires hash';
+  my $exists = $arg{exists} ? 1 : 0;
+
+  $dbh->do(
+    q{
+      UPDATE qbt_info
+      SET qbt_torrent_file = ?,
+          qbt_torrent_file_checked_on = CURRENT_TIMESTAMP
+      WHERE lower(hash) = lower(?)
+    },
+    undef,
+    $exists,
+    $hash, );
+
+  return {
+          ok     => 1,
+          hash   => lc $hash,
+          exists => $exists,};
+}
+
+sub local_torrent_matches_for_hash ( $self, $dbh, $hash ) {
+  my $hash_column = _column_exists( $dbh, 'local_torrent_files', 'bencoded_hash' )
+      ? 'bencoded_hash'
+      : 'infohash';
+
+  my $rows = $dbh->selectall_arrayref(
+    qq{
+      SELECT
+        path,
+        $hash_column AS hash
+      FROM local_torrent_files
+      WHERE parse_ok = 1
+        AND lower($hash_column) = lower(?)
+      ORDER BY path ASC
+    },
+    {Slice => {}},
+    $hash, );
+
+  return {
+          ok          => 1,
+          rows        => $rows,
+          count       => scalar @{$rows},
+          hash_column => $hash_column,};
+}
+
+
+sub replace_qbt_hash_as_name ( $self, $dbh, $rows ) {
+  $rows //= [];
+
+  my $delete = $dbh->prepare(q{DELETE FROM qbt_hash_as_name});
+  my $insert = $dbh->prepare(
+    q{
+      INSERT INTO qbt_hash_as_name
+        (hash, fastresume_path, observed_on)
+      VALUES
+        (?, ?, CURRENT_TIMESTAMP)
+    }
+  );
+
+  $dbh->begin_work;
+
+  eval {
+    $delete->execute;
+
+    for my $row ( @{$rows} ) {
+      next if !defined $row->{hash};
+      next if $row->{hash} !~ /\A[0-9a-f]{40}\z/;
+
+      $insert->execute( $row->{hash}, $row->{fastresume_path} // '' );
+    }
+
+    $dbh->commit;
+    1;
+  } or do {
+    my $error = $@ || 'unknown qbt_hash_as_name replace error';
+    eval { $dbh->rollback };
+    die $error;
+  };
+
+  return {
+          ok     => 1,
+          stored => scalar @{$rows},};
+}
+
+sub qbt_hash_as_name_count ( $self, $dbh ) {
+  my ( $count ) = $dbh->selectrow_array(
+    q{
+      SELECT COUNT(*)
+      FROM qbt_info
+      WHERE current_qbt = 1
+        AND qbt_torrent_file = 0
+    }
+  );
+
+  return $count // 0;
+}
+
+sub search_hash_as_name ( $self, $dbh ) {
+  my $hash_column = _column_exists( $dbh, 'local_torrent_files', 'bencoded_hash' )
+      ? 'bencoded_hash'
+      : 'infohash';
+
+  my $rows = $dbh->selectall_arrayref(
+    qq{
+      SELECT
+        q.hash,
+        ltf.path AS torrent_path
+      FROM qbt_info q
+      JOIN local_torrent_files ltf
+        ON lower(ltf.$hash_column) = lower(q.hash)
+      WHERE q.current_qbt = 1
+        AND q.qbt_torrent_file = 0
+        AND ltf.parse_ok = 1
+      ORDER BY q.hash ASC, ltf.path ASC
+    },
+    {Slice => {}}, );
+
+  my ( $hashes_with_matches ) = $dbh->selectrow_array(
+    qq{
+      SELECT COUNT(DISTINCT q.hash)
+      FROM qbt_info q
+      JOIN local_torrent_files ltf
+        ON lower(ltf.$hash_column) = lower(q.hash)
+      WHERE q.current_qbt = 1
+        AND q.qbt_torrent_file = 0
+        AND ltf.parse_ok = 1
+    }
+  );
+
+  return {
+          ok                  => 1,
+          rows                => $rows,
+          count               => scalar @{$rows},
+          hashes_with_matches => $hashes_with_matches // 0,
+          hash_column         => $hash_column,};
+}
+
 sub qbt_preferences ( $self, $dbh ) {
   my $rows = $dbh->selectall_arrayref(
     q{

@@ -417,6 +417,10 @@ sub run_cli ( $self, @argv ) {
       return $self->{renderer}->search_list( $self->search->search_list );
     }
 
+    if ( $subcmd eq 'hat' ) {
+      return $self->{renderer}->search_hat( $self->search->hat );
+    }
+
     if ( @argv ) {
       return
           $self->{renderer}->search_result(

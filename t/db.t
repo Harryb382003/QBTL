@@ -26,7 +26,7 @@ is( $db->migration_dir,
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 17, 'seventeen migration files discovered' );
+is( scalar @migration_files, 18, 'eighteen migration files discovered' );
 
 like( $migration_files[0], qr/001_initial\.sql\z/,
       'initial migration discovered' );
@@ -89,6 +89,10 @@ like( $migration_files[16],
       qr/017_local_torrent_payload_metadata\.sql\z/,
       'local_torrent_payload_metadata migration discovered' );
 
+like( $migration_files[17],
+      qr/018_qbt_hash_as_name\.sql\z/,
+      'qbt_hash_as_name migration discovered' );
+
 my @problems = $db->verify_path;
 
 is_deeply( \@problems, [], 'valid temp DB directory has no path problems' );
@@ -103,12 +107,39 @@ my $dbh = $result->{dbh};
 my $migration = $db->migrate( $result->{dbh} );
 
 ok( $migration->{ok}, 'migration result ok' );
-is( $migration->{migration_count}, 17, 'seventeen migrations ran' );
+is( $migration->{migration_count}, 18, 'eighteen migrations ran' );
 
 my ( $version ) = $result->{dbh}
     ->selectrow_array( 'SELECT version FROM schema_version WHERE id = 1' );
 
-is( $version, 17, 'schema version stored' );
+is( $version, 18, 'schema version stored' );
+
+my ( $hash_as_name_table ) = $result->{dbh}->selectrow_array(
+  q{
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+    AND name = 'qbt_hash_as_name'
+    }
+);
+
+is( $hash_as_name_table,
+    'qbt_hash_as_name', 'qbt_hash_as_name table created' );
+
+my $hash_as_name_hash = '11a6c2942055b59ccb7d897b970da823d7e6af8a';
+my $hash_as_name_replace = $db->replace_qbt_hash_as_name(
+  $result->{dbh},
+  [
+    {
+     hash => $hash_as_name_hash,
+     fastresume_path => '/BT_backup/' . $hash_as_name_hash . '.fastresume',
+    },
+  ],
+);
+
+ok( $hash_as_name_replace->{ok}, 'hash as name inventory replace result ok' );
+is( $db->qbt_hash_as_name_count( $result->{dbh} ),
+    1, 'hash as name inventory count stored' );
 
 my $hash = '7ba7c0f31cd3ae7186c8d08353cfa87291b825e4';
 

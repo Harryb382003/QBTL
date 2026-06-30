@@ -950,6 +950,62 @@ sub qbt_status ( $self, $result ) {
   return 0;
 }
 
+
+sub search_hat ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->db_error($result);
+  }
+
+  my $out       = $self->{out};
+  my $inventory = $result->{inventory} // {};
+  my $rows      = $result->{rows} // [];
+
+  if ( !$inventory->{ok} ) {
+    say {$out} '';
+    say {$out} 'BT_backup inventory warning: ' . ( $inventory->{status} // 'unknown' );
+    say {$out} '  dir: ' . ( $inventory->{dir} // '' );
+  }
+
+  if ( !@{$rows} ) {
+    say {$out} 'No local .torrent matches.';
+    say {$out} '';
+    say {$out} 'Search: hat';
+    say {$out} 'Definition: hash as name';
+    say {$out} '  qBT loaded hashes:          ' . ( $inventory->{current_qbt} // 0 );
+    say {$out} '  BT_backup torrents:        ' . ( $inventory->{torrents}    // 0 );
+    say {$out} '  hash as name candidates:   ' . ( $result->{hash_as_name_hashes} // 0 );
+    say {$out} '  hashes with local matches: ' . ( $result->{hashes_with_matches} // 0 );
+    say {$out} '  local torrent files:       ' . ( $result->{count} // 0 );
+    return;
+  }
+
+
+  my $last_hash = '';
+
+  for my $row ( @{$rows} ) {
+    my $hash = $row->{hash} // '';
+
+    if ( $hash ne $last_hash ) {
+      say {$out} '' if $last_hash ne '';
+      say {$out} $hash;
+      $last_hash = $hash;
+    }
+
+    say {$out} "\t" . ( $row->{torrent_path} // '' );
+  }
+
+  say {$out} '';
+  say {$out} 'Search: hat';
+  say {$out} 'Definition: hash as name';
+  say {$out} '  qBT loaded hashes:          ' . ( $inventory->{current_qbt} // 0 );
+  say {$out} '  BT_backup torrents:        ' . ( $inventory->{torrents}    // 0 );
+  say {$out} '  hash as name candidates:   ' . ( $result->{hash_as_name_hashes} // 0 );
+  say {$out} '  hashes with local matches: ' . ( $result->{hashes_with_matches} // 0 );
+  say {$out} '  local torrent files:       ' . ( $result->{count} // 0 );
+
+  return;
+}
+
 sub search_list ( $self, $result ) {
   if ( !$result->{ok} ) {
     return $self->db_error($result);
@@ -967,7 +1023,70 @@ sub search_list ( $self, $result ) {
   return;
 }
 
+
+sub search_hash ( $self, $result ) {
+  my $out = $self->{out};
+
+  if ( !$result->{ok} ) {
+    say {$out} 'Search failed.';
+    say {$out} 'Field: hash';
+    say {$out} 'Status: ' . ( $result->{status} // '' );
+    return;
+  }
+
+  my $row = $result->{row};
+
+  if ($row) {
+    $self->db_torrent($row);
+    say {$out} '';
+  } else {
+    say {$out} 'Torrent';
+    say {$out} '';
+    say {$out} 'identity:';
+    say {$out} '  hash:          ' . ( $result->{hash} // '' );
+    say {$out} '';
+  }
+
+  my $torrent_file = 'not checked';
+
+  if ( $result->{qbt_loaded} ) {
+    $torrent_file = $row->{qbt_torrent_file} ? 'yes' : 'no';
+  }
+
+  say {$out} 'qBT torrent status:';
+  say {$out} '  qBT loaded:       ' . ( $result->{qbt_loaded} ? 'yes' : 'no' );
+  say {$out} '  qBT torrent file: ' . $torrent_file;
+  say {$out} '  status:           ' . ( $result->{qbt_status} // '' );
+
+  if ( $row && defined $row->{qbt_torrent_file_checked_on} ) {
+    say {$out} '  checked on:       ' . ( $row->{qbt_torrent_file_checked_on} // '' );
+  }
+
+  if ( ( $result->{qbt_status} // '' ) eq 'LOADED/RUNNING' ) {
+    return;
+  }
+
+  say {$out} '';
+  say {$out} 'local torrent matches:';
+
+  my $matches = $result->{local_matches} // [];
+
+  if ( !@{$matches} ) {
+    say {$out} '  none';
+    return;
+  }
+
+  for my $match ( @{$matches} ) {
+    say {$out} '  ' . ( $match->{path} // '' );
+  }
+
+  return;
+}
+
 sub search_result ( $self, $result ) {
+  return $self->search_hash($result)
+      if ( $result->{action} // '' ) eq 'search_hash';
+
   my $out = $self->{out};
 
   if ( !$result->{ok} ) {

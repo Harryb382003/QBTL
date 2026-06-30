@@ -108,9 +108,11 @@ sub topics ( $class ) {
                usage    => 'qbtl search <field> <value>',
                commands => [
                              [ help => 'Show this help' ],
+                             [ hat  => 'hash as name' ],
                              [ list => 'List searchable qBT fields' ],
                ],
                examples => [
+                             'qbtl search hat',
                              'qbtl search list',
                              'qbtl search name ubuntu',
                              'qbtl search total_size "> 10 G"',
