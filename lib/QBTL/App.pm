@@ -5,6 +5,7 @@ use common::sense;
 use feature qw( signatures );
 
 use File::Path qw( make_path );
+use Time::HiRes qw( time );
 
 use QBTL;
 use QBTL::QBT::API;
@@ -18,6 +19,7 @@ use QBTL::Process::Browse;
 use QBTL::Process::QBT;
 use QBTL::Process::Search;
 use QBTL::Render::CLI;
+use QBTL::Util qw( epoch_time human_duration );
 
 sub new ( $class, %arg ) {
   $arg{config} //= QBTL::Config->new;
@@ -201,8 +203,10 @@ sub local ( $self ) {
   $self->{local} //=
       QBTL::Process::Local->new(
                               db_path           => $self->{config}->db_path,
-                              install_root      => $self->{config}->installation_root,
-                              search_tool       => $self->{config}->local_search_tool,
+                              install_root      =>
+$self->{config}->installation_root,
+                              search_tool       =>
+$self->{config}->local_search_tool,
       );
 
   return $self->{local};
@@ -238,6 +242,12 @@ sub run_cli ( $self, @argv ) {
   my $cmd = shift @argv // 'help';
 
   if ( $cmd eq 'help' ) {
+    my $topic = shift @argv;
+
+    if ( defined $topic && $topic eq 'all' ) {
+      return $self->{renderer}->help_all( QBTL::Help->all );
+    }
+
     return $self->{renderer}->help( QBTL::Help->topic( 'main' ) );
   }
 
@@ -279,12 +289,31 @@ sub run_cli ( $self, @argv ) {
     if ( $subcmd eq 'scan' ) {
       my $path = shift @argv;
 
-      return
-          $self->{renderer}->local_scan(
+      return $self->_run_timed_cli(
+        sub {
+          return
+            $self->{renderer}->local_scan(
                     $self->local->scan(
                       path      => $path,
                       threshold => $self->{config}->metadata_promoter_threshold,
                     ) );
+        }
+      );
+    }
+
+    if ( $subcmd eq 'refresh' ) {
+      my $path = shift @argv;
+
+      return $self->_run_timed_cli(
+        sub {
+          return
+            $self->{renderer}->local_scan(
+                    $self->local->refresh(
+                      path      => $path,
+                      threshold => $self->{config}->metadata_promoter_threshold,
+                    ) );
+        }
+      );
     }
 
     if ( $subcmd eq 'summary' ) {
@@ -474,7 +503,8 @@ sub run_cli ( $self, @argv ) {
       );
       my $process = QBTL::Process::QBT->new(
                                              api         => $api,
-                                             search_tool => $self->{config}->local_search_tool,
+                                             search_tool =>
+$self->{config}->local_search_tool,
       );
 
       my $result = $process->add(
@@ -735,6 +765,14 @@ sub run_cli ( $self, @argv ) {
   }
 
   return $self->{renderer}->help( QBTL::Help->topic( 'main' ) );
+}
+
+sub _run_timed_cli ( $self, $code ) {
+  my $started = time;
+  my $result = $code->();
+  my $elapsed = time - $started;
+  $self->{renderer}->elapsed( human_duration($elapsed) );
+  return $result;
 }
 
 sub search ( $self ) {

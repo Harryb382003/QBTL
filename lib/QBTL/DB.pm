@@ -765,6 +765,38 @@ sub qbt_info_by_hash ( $self, $dbh, $hash ) {
     $hash, );
 }
 
+sub local_torrent_file_exists ( $self, $dbh, $path ) {
+  return 0 if !defined $path || $path eq '';
+
+  my ( $exists ) = $dbh->selectrow_array(
+    q{
+      SELECT 1
+      FROM local_torrent_files
+      WHERE path = ?
+      LIMIT 1
+    },
+    undef,
+    $path, );
+
+  return $exists ? 1 : 0;
+}
+
+sub local_fastresume_file_exists ( $self, $dbh, $path ) {
+  return 0 if !defined $path || $path eq '';
+
+  my ( $exists ) = $dbh->selectrow_array(
+    q{
+      SELECT 1
+      FROM local_fastresume_files
+      WHERE path = ?
+      LIMIT 1
+    },
+    undef,
+    $path, );
+
+  return $exists ? 1 : 0;
+}
+
 sub local_torrent_file_by_path ( $self, $dbh, $path ) {
   return undef if !defined $path || $path eq '';
 

@@ -119,6 +119,14 @@ my $seen = $row->{seen} ? 'yes' : 'unknown';
   return;
 }
 
+sub elapsed ( $self, $elapsed ) {
+  my $out = $self->{out};
+  say {$out} '';
+  say {$out} 'Run time: ' . ( $elapsed // '' );
+
+  return;
+}
+
 sub help ( $self, $help ) {
   my $out = $self->{out};
 
@@ -205,7 +213,7 @@ sub init ( $self, $result ) {
 }
 
   say {$out} '';
-say {$out} 'Elapsed: ' . ( $result->{elapsed} // '' ) . 's';
+# say {$out} 'Elapsed: ' . ( $result->{elapsed} // '' ) . 's';
 
   return 0;
 }
@@ -232,6 +240,20 @@ sub local_reset ( $self, $result ) {
   if ( $result->{scan} ) {
     say {$out} '';
     return $self->local_scan( $result->{scan} );
+  }
+
+  return 0;
+}
+
+
+sub help_all ( $self, $topics ) {
+  my $out = $self->{out};
+
+  $topics //= [];
+
+  for my $idx ( 0 .. $#$topics ) {
+    say {$out} '' if $idx;
+    $self->help( $topics->[$idx] );
   }
 
   return 0;
@@ -264,20 +286,24 @@ sub local_scan ( $self, $result ) {
     for my $problem ( @{ $result->{problems} // [] } ) {
       say {$out} "  problem:  $problem";
     }
-    say {$out} '  elapsed:  ' . ( $result->{elapsed} // '' ) . 's';
+#     say {$out} '  elapsed:  ' . ( $result->{elapsed} // '' ) . 's';
 
     return;
   }
 
+  my $label = ($result->{action} // '') eq 'local_refresh' ? 'Local refresh' : 'Local scan';
+
   if ( defined $result->{target} && length $result->{target} ) {
-    say {$out} 'Local scan of ' . $result->{target} . ' complete.';
+    say {$out} $label . ' of ' . $result->{target} . ' complete.';
   } else {
-    say {$out} 'Local scan complete.';
+    say {$out} $label . ' complete.';
   }
   say {$out} '  scanner backend:  ' . ( $result->{scanner_backend} // $result->{backend} // 'unknown' );
   say {$out} '  seen:             ' . ( $result->{seen} // 0 );
   say {$out} '  torrent stored:   ' . ( $result->{stored} // 0 );
   say {$out} '  torrent parsed:   ' . ( $result->{parsed} // 0 );
+  say {$out} '  torrent skipped:  ' . ( $result->{skipped_known} // 0 );
+  say {$out} '  path excluded:    ' . ( $result->{skipped_excluded} // 0 );
   say {$out} '  torrent problems: ' . ( $result->{parse_problems} // 0 );
   say {$out} '  torrent total:    ' . ( $result->{total} // 0 );
 
@@ -286,11 +312,26 @@ sub local_scan ( $self, $result ) {
     . ( $result->{fastresume_stored} // 0 );
   say {$out} '  fastres parsed:   '
     . ( $result->{fastresume_parsed} // 0 );
+  say {$out} '  fastres skipped:  '
+    . ( $result->{fastresume_skipped_known} // 0 );
   say {$out} '  fastres problems: '
     . ( $result->{fastresume_parse_problems} // 0 );
   say {$out} '  fastres total:    ' . ( $result->{fastresume_total} // 0 );
+
+  if ( $result->{bt_backup_exists} ) {
+    say {$out} '';
+    say {$out} '  qBT BT_backup torrents:      '
+      . ( $result->{bt_backup_torrents} // 0 );
+    say {$out} '  qBT BT_backup fastresume:    '
+      . ( $result->{bt_backup_fastresume} // 0 );
+    say {$out} '  qBT hash as filename:        '
+      . ( $result->{bt_backup_mismatch} // 0 );
+    say {$out} '  qBT BT_backup count source:  '
+      . ( $result->{bt_backup_count_source} // 'unknown' );
+  }
+
       say {$out} '';
-  say {$out} '  elapsed:  ' . ( $result->{elapsed} // '' ) . 's';
+#   say {$out} '  elapsed:  ' . ( $result->{elapsed} // '' ) . 's';
 
   my $metadata_candidates = $result->{metadata_candidates};
 

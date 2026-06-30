@@ -6,7 +6,13 @@ use feature qw( signatures );
 
 use Exporter qw( import );
 
-our @EXPORT_OK = qw( epoch_time human_bytes parse_bytes parse_byte_values );
+our @EXPORT_OK = qw(
+    epoch_time
+    human_bytes
+    human_duration
+    parse_bytes
+    parse_byte_values
+);
 
 sub epoch_time ( $value, %arg ) {
   return '' if !defined $value;
@@ -51,6 +57,31 @@ sub human_bytes ( $value ) {
 
   return sprintf( '%.2f %s', $size, $unit[$unit] );
 
+}
+
+sub human_duration ( $seconds ) {
+  return '' if !defined $seconds;
+  return '' if $seconds eq '';
+
+  $seconds = int( $seconds + 0.5 );
+
+  my $days = int( $seconds / 86400 );
+  $seconds %= 86400;
+
+  my $hours = int( $seconds / 3600 );
+  $seconds %= 3600;
+
+  my $minutes = int( $seconds / 60 );
+  my $secs    = $seconds % 60;
+
+  my @part;
+
+  push @part, "${days}d"    if $days;
+  push @part, "${hours}h"   if $hours;
+  push @part, "${minutes}m" if $minutes;
+  push @part, "${secs}s"    if $secs || !@part;
+
+  return join ' ', @part;
 }
 
 sub parse_byte_values ( $text ) {

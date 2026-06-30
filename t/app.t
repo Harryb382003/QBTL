@@ -155,6 +155,13 @@ like( $out, qr/Usage:/, 'default command renders help heading' );
 like( $out, qr/qbtl <command> \[options\]/, 'default command renders help' );
 
 $out = '';
+is( $app->run_cli( 'help', 'all' ), 0, 'help all command exits cleanly' );
+like( $out, qr/QBTL local commands/, 'help all includes local help' );
+like( $out, qr/QBTL metadata commands/, 'help all includes metadata help' );
+like( $out, qr/QBT qBittorrent commands/, 'help all includes qbt help' );
+like( $out, qr/QBTL search commands/, 'help all includes search help' );
+
+$out = '';
 is( $app->run_cli( 'setup' ), 0, 'setup command exits cleanly' );
 like( $out, qr/QBTL setup complete\./, 'setup command renders completion' );
 ok( -d File::Spec->catdir( $root, 'QBTL' ),

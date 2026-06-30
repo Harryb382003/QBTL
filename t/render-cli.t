@@ -63,6 +63,30 @@ like( $out, qr/meta\s+hash-centered metadata commands/, 'help output includes me
 command' );
 like( $out, qr/qbtl meta keys/, 'help output includes meta example' );
 
+$out = '';
+is(
+  $render->help_all(
+    [
+      {
+        title    => 'One',
+        usage    => 'one',
+        commands => [ [ alpha => 'Alpha command' ] ],
+      },
+      {
+        title    => 'Two',
+        usage    => 'two',
+        commands => [ [ beta => 'Beta command' ] ],
+      },
+    ]
+  ),
+  0,
+  'help all render exits cleanly'
+);
+like( $out, qr/One/,              'help all output includes first topic' );
+like( $out, qr/alpha\s+Alpha command/, 'help all output includes first command' );
+like( $out, qr/Two/,              'help all output includes second topic' );
+like( $out, qr/beta\s+Beta command/,   'help all output includes second command' );
+
 # ------------------------------
 # Setup
 # ------------------------------
