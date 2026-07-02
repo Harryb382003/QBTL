@@ -26,7 +26,7 @@ is( $db->migration_dir,
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 18, 'eighteen migration files discovered' );
+is( scalar @migration_files, 20, 'twenty migration files discovered' );
 
 like( $migration_files[0], qr/001_initial\.sql\z/,
       'initial migration discovered' );
@@ -77,12 +77,10 @@ like( $migration_files[13],
       qr/014_qbt_payload_files\.sql\z/,
       'qbt_payload_files migration discovered' );
 
-like( $migration_files[14],
-      qr/015_qbt_api_values\.sql\z/,
+like( $migration_files[14], qr/015_qbt_api_values\.sql\z/,
       'qbt_api_values migration discovered' );
 
-like( $migration_files[15],
-      qr/016_qbt_last\.sql\z/,
+like( $migration_files[15], qr/016_qbt_last\.sql\z/,
       'qbt_last migration discovered' );
 
 like( $migration_files[16],
@@ -107,12 +105,12 @@ my $dbh = $result->{dbh};
 my $migration = $db->migrate( $result->{dbh} );
 
 ok( $migration->{ok}, 'migration result ok' );
-is( $migration->{migration_count}, 18, 'eighteen migrations ran' );
+is( $migration->{migration_count}, 20, 'twenty migrations ran' );
 
 my ( $version ) = $result->{dbh}
     ->selectrow_array( 'SELECT version FROM schema_version WHERE id = 1' );
 
-is( $version, 18, 'schema version stored' );
+is( $version, 20, 'schema version stored' );
 
 my ( $hash_as_name_table ) = $result->{dbh}->selectrow_array(
   q{
@@ -123,23 +121,34 @@ my ( $hash_as_name_table ) = $result->{dbh}->selectrow_array(
     }
 );
 
-is( $hash_as_name_table,
-    'qbt_hash_as_name', 'qbt_hash_as_name table created' );
+is( $hash_as_name_table, 'qbt_hash_as_name', 'qbt_hash_as_name table created' );
 
-my $hash_as_name_hash = '11a6c2942055b59ccb7d897b970da823d7e6af8a';
-my $hash_as_name_replace = $db->replace_qbt_hash_as_name(
-  $result->{dbh},
-  [
-    {
-     hash => $hash_as_name_hash,
-     fastresume_path => '/BT_backup/' . $hash_as_name_hash . '.fastresume',
-    },
-  ],
-);
+my $han_hash = '1111111111111111111111111111111111111111';
 
-ok( $hash_as_name_replace->{ok}, 'hash as name inventory replace result ok' );
-is( $db->qbt_hash_as_name_count( $result->{dbh} ),
-    1, 'hash as name inventory count stored' );
+my $han_info = $db->upsert_qbt_info(
+                                     $result->{dbh},
+                                     {
+                                      hash        => $han_hash,
+                                      name        => 'hash as name test',
+                                      state       => 'metaDL',
+                                      save_path   => '/tmp',
+                                      seen_on     => '2026-01-01 00:00:00',
+                                      current_qbt => 1,
+                                     }, );
+
+ok( $han_info->{ok}, 'hash as name qbt_info row stored' );
+
+my $han_state =
+    $db->update_qbt_torrent_file_state(
+                                        $result->{dbh},
+                                        hash   => $han_hash,
+                                        exists => 0, );
+
+ok( $han_state->{ok}, 'hash as name torrent-file state stored' );
+
+my $han_count = $db->qbt_hash_as_name_count( $result->{dbh} );
+
+is( $han_count, 1, 'hash as name inventory count stored' );
 
 my $hash = '7ba7c0f31cd3ae7186c8d08353cfa87291b825e4';
 
@@ -280,8 +289,10 @@ ok( $column{discovered_by}, 'qbt_info has discovered_by column' );
 ok( $column{comment},       'qbt_info has comment column' );
 ok( $column{qbt_last},      'qbt_info has qbt_last column' );
 
-my $local_torrent_columns = $result->{dbh}->selectall_arrayref(
-             q{PRAGMA table_info(local_torrent_files)}, {Slice => {}}, );
+my $local_torrent_columns =
+    $result->{dbh}
+    ->selectall_arrayref( q{PRAGMA table_info(local_torrent_files)},
+                          {Slice => {}}, );
 
 my %local_torrent_column = map { $_->{name} => 1 } @{$local_torrent_columns};
 
@@ -378,34 +389,36 @@ my $qbt_last = $db->update_qbt_last(
 
 ok( $qbt_last->{ok}, 'qbt_last update result ok' );
 is( $qbt_last->{qbt_last}, 'ADD', 'qbt_last stores caller on ok' );
-is( $qbt_last->{updated}, 1, 'qbt_last updated one qbt_info row' );
+is( $qbt_last->{updated},  1,     'qbt_last updated one qbt_info row' );
 
-my ( $stored_qbt_last ) = $result->{dbh}->selectrow_array(
-                          'SELECT qbt_last FROM qbt_info WHERE hash = ?',
-                          undef, 'abc123', );
+my ( $stored_qbt_last ) =
+    $result->{dbh}
+    ->selectrow_array( 'SELECT qbt_last FROM qbt_info WHERE hash = ?',
+                       undef, 'abc123', );
 
 is( $stored_qbt_last, 'ADD', 'qbt_last caller stored in qbt_info' );
 
-my $qbt_last_error = $db->update_qbt_last(
-                              $result->{dbh},
-                              hash   => 'abc123',
-                              caller => 'ADD',
-                              error  => 'unexpected qBT add error', );
+my $qbt_last_error =
+    $db->update_qbt_last(
+                          $result->{dbh},
+                          hash   => 'abc123',
+                          caller => 'ADD',
+                          error  => 'unexpected qBT add error', );
 
 is( $qbt_last_error->{qbt_last},
     'ADD: unexpected qBT add error',
     'qbt_last stores caller and raw error message' );
 
-
-my $api_values = $db->replace_qbt_api_values(
-                                             $result->{dbh},
-                                             hash     => 'abc123',
-                                             endpoint => 'torrents_properties',
-                                             data     => {
-                                                       save_path  => '/Downloads',
-                                                       total_size => 12345,
-                                                       isPrivate  => \0,
-                                                      }, );
+my $api_values =
+    $db->replace_qbt_api_values(
+                                 $result->{dbh},
+                                 hash     => 'abc123',
+                                 endpoint => 'torrents_properties',
+                                 data     => {
+                                          save_path  => '/Downloads',
+                                          total_size => 12345,
+                                          isPrivate  => \0,
+                                 }, );
 
 ok( $api_values->{ok}, 'qbt_api_values replace result ok' );
 is( $api_values->{stored}, 3, 'qbt_api_values stored three keys' );
@@ -421,57 +434,57 @@ is( $api_value_rows->{count}, 1, 'qbt_api_values query returns one row' );
 is( $api_value_rows->{rows}[0]{value},
     '/Downloads', 'qbt_api_values stores qBT key value' );
 
-my $payload_audit = $db->replace_qbt_payload_audit(
-                                      $result->{dbh},
-                                      {
-                                       hash                => 'abc123',
-                                       save_path           => '/Downloads',
-                                       content_path        => '/Downloads/Example',
-                                       save_path_exists    => 1,
-                                       content_path_exists => 1,
-                                       save_path_type      => 'dir',
-                                       content_path_type   => 'dir',
-                                       qbt_files_ok        => 1,
-                                       qbt_file_count      => 2,
-                                       qbt_file_total_size => 12345,
-                                       direct_probe_status => 'trusted_qbt_size',
-                                       needs_deep_scan     => 0,
-                                       problem             => undef,
-                                      }, );
+my $payload_audit =
+    $db->replace_qbt_payload_audit(
+                                    $result->{dbh},
+                                    {
+                                     hash             => 'abc123',
+                                     save_path        => '/Downloads',
+                                     content_path     => '/Downloads/Example',
+                                     save_path_exists => 1,
+                                     content_path_exists => 1,
+                                     save_path_type      => 'dir',
+                                     content_path_type   => 'dir',
+                                     qbt_files_ok        => 1,
+                                     qbt_file_count      => 2,
+                                     qbt_file_total_size => 12345,
+                                     direct_probe_status => 'trusted_qbt_size',
+                                     needs_deep_scan     => 0,
+                                     problem             => undef,
+                                    }, );
 
 ok( $payload_audit->{ok}, 'qbt payload audit replace result ok' );
 
-my $stored_payload_audit =
-    $db->qbt_payload_audit( $result->{dbh}, 'abc123' );
+my $stored_payload_audit = $db->qbt_payload_audit( $result->{dbh}, 'abc123' );
 
 is( $stored_payload_audit->{direct_probe_status},
     'trusted_qbt_size', 'qbt payload audit status stored' );
 
-my $payload_files = $db->replace_qbt_payload_files(
-                                  $result->{dbh},
-                                  hash  => 'abc123',
-                                  files => [
-                                            {
-                                             path         => 'Example/file1.mkv',
-                                             size         => 100,
-                                             progress     => 1,
-                                             priority     => 1,
-                                             availability => 1,
-                                            },
-                                            {
-                                             path         => 'Example/file2.mkv',
-                                             size         => 200,
-                                             progress     => 0.5,
-                                             priority     => 1,
-                                             availability => 1,
-                                            },
-                                  ], );
+my $payload_files =
+    $db->replace_qbt_payload_files(
+                                    $result->{dbh},
+                                    hash  => 'abc123',
+                                    files => [
+                                               {
+                                                path     => 'Example/file1.mkv',
+                                                size     => 100,
+                                                progress => 1,
+                                                priority => 1,
+                                                availability => 1,
+                                               },
+                                               {
+                                                path     => 'Example/file2.mkv',
+                                                size     => 200,
+                                                progress => 0.5,
+                                                priority => 1,
+                                                availability => 1,
+                                               },
+                                    ], );
 
 ok( $payload_files->{ok}, 'qbt payload files replace result ok' );
 is( $payload_files->{stored}, 2, 'qbt payload files stored two rows' );
 
-my $stored_payload_files =
-    $db->qbt_payload_files( $result->{dbh}, 'abc123' );
+my $stored_payload_files = $db->qbt_payload_files( $result->{dbh}, 'abc123' );
 
 is( $stored_payload_files->{count}, 2, 'qbt payload files query count' );
 my $fr_path = File::Spec->catfile( $tmpdir,

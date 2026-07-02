@@ -17,6 +17,7 @@ use QBTL::Process::Local;
 use QBTL::Process::Metadata;
 use QBTL::Process::Browse;
 use QBTL::Process::QBT;
+use QBTL::Process::QBT::ExportDedupe;
 use QBTL::Process::Search;
 use QBTL::Render::CLI;
 use QBTL::Util qw( epoch_time human_duration );
@@ -97,8 +98,10 @@ sub init ( $self ) {
   my $elapsed = time - $started;
 
   return {
-          ok          => $migration->{ok} && $preferences->{ok} && $refresh->{ok} ?
-1 : 0,
+          ok          => $migration->{ok}
+                          && $preferences->{ok}
+                          && $refresh->{ok}
+                          ? 1 : 0,
           migration   => $migration,
           preferences => $preferences,
           qbt_refresh => $refresh,
@@ -521,6 +524,22 @@ $self->{config}->local_search_tool,
       $connect->{dbh}->disconnect;
 
       return $self->{renderer}->qbt_add($result);
+    }
+
+    if ( $subcmd eq 'export-dedupe' ) {
+      return $self->_run_timed_cli(
+        sub {
+          my $process = QBTL::Process::QBT::ExportDedupe->new(
+            db_path => $self->{config}->db_path,
+          );
+
+          return $self->{renderer}->qbt_export_dedupe(
+            $process->run(
+              installation_root => $self->{config}->installation_root,
+            ),
+          )
+        }
+      );
     }
 
     if ( $subcmd eq 'info' ) {

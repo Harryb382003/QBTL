@@ -749,9 +749,25 @@ sub qbt_preferences ( $self, $result ) {
     say {$out} "qBT preferences refresh complete.";
   }
 
-  say {$out} "  seen:     " . ( $result->{seen}   // 0 );
-  say {$out} "  stored:   " . ( $result->{stored} // 0 );
-  say {$out} "  problems: " . scalar @{ $result->{problems} // [] };
+  if ( @{ $result->{rows} // [] } ) {
+    say {$out} "";
+
+    my $width = 0;
+
+    for my $row ( @{ $result->{rows} } ) {
+      my $key = $row->{key} // '';
+      $width = length($key) if length($key) > $width;
+    }
+
+    for my $row ( @{ $result->{rows} } ) {
+      my $key   = $row->{key} // '';
+      my $value = defined $row->{value} ? $row->{value} : 'NULL';
+
+      $value =~ s/\n/\\n/g;
+
+      printf {$out} "  %-*s : %s\n", $width, $key, $value;
+    }
+  }
 
   if ( @{ $result->{problems} // [] } ) {
     say {$out} "";
@@ -763,11 +779,15 @@ sub qbt_preferences ( $self, $result ) {
 
       say {$out} "  $key: $error";
     }
-
-    return 1;
   }
 
-  return 0;
+  say {$out} "";
+  say {$out} "Summary:";
+  say {$out} "  seen:     " . ( $result->{seen}   // 0 );
+  say {$out} "  stored:   " . ( $result->{stored} // 0 );
+  say {$out} "  problems: " . scalar @{ $result->{problems} // [] };
+
+  return @{ $result->{problems} // [] } ? 1 : 0;
 }
 
 sub qbt_add ( $self, $result ) {
@@ -843,6 +863,53 @@ sub qbt_refresh ( $self, $result ) {
       my $error = $problem->{error} // 'unknown error';
 
       say {$out} "  $hash: $error";
+    }
+
+    return 1;
+  }
+
+  return 0;
+}
+
+sub qbt_export_dedupe ( $self, $result ) {
+  my $out = $self->{out};
+
+  if ( !$result->{ok} ) {
+    say {$out} 'qBT export dedupe completed with problems.';
+  } else {
+    say {$out} 'qBT export dedupe complete.';
+  }
+
+  say {$out} '  queued for deletion: ' . ( $result->{queue_dir} // '' );
+  say {$out} '  kept:                ' . ( $result->{kept}      // 0 );
+  say {$out} '  renamed:             ' . ( $result->{renamed}   // 0 );
+  say {$out} '  moved:               ' . ( $result->{moved}     // 0 );
+
+  for my $bucket ( @{ $result->{buckets} // [] } ) {
+    say {$out} '';
+    say {$out} ( $bucket->{which} // '' ) . ':';
+    say {$out} '  directory:        ' . ( $bucket->{directory}        // '' );
+    say {$out} '  torrent files:    ' . ( $bucket->{scanned}          // 0 );
+    say {$out} '  stored:           ' . ( $bucket->{stored}           // 0 );
+    say {$out} '  parsed:           ' . ( $bucket->{parsed}           // 0 );
+    say {$out} '  parse problems:   ' . ( $bucket->{parse_problems}   // 0 );
+    say {$out} '  hashes:           ' . ( $bucket->{hashes}           // 0 );
+    say {$out} '  duplicate groups: ' . ( $bucket->{duplicate_groups} // 0 );
+    say {$out} '  kept:             ' . ( $bucket->{kept}             // 0 );
+    say {$out} '  renamed:          ' . ( $bucket->{renamed}          // 0 );
+    say {$out} '  moved:            ' . ( $bucket->{moved}            // 0 );
+  }
+
+  if ( @{ $result->{problems} // [] } ) {
+    say {$out} '';
+    say {$out} 'Problems:';
+
+    for my $problem ( @{ $result->{problems} } ) {
+      my $which = defined $problem->{which} ? $problem->{which} : '(unknown)';
+      my $path  = defined $problem->{path}  ? $problem->{path}  : '(none)';
+      my $error = $problem->{error} // 'unknown error';
+
+      say {$out} "  $which: $path: $error";
     }
 
     return 1;

@@ -271,6 +271,7 @@ sub refresh_preferences ( $self, %arg ) {
 
   my $seen     = 0;
   my $stored   = 0;
+  my @rows     = ();
   my @problems = ();
 
   for my $key ( sort keys %{$preferences} ) {
@@ -278,6 +279,12 @@ sub refresh_preferences ( $self, %arg ) {
 
     my ( $value, $value_type ) =
         $self->_preference_value( $preferences->{$key}, );
+
+    push @rows,
+        {
+         key        => $key,
+         value      => $value,
+         value_type => $value_type,};
 
     my $result = eval {
       $db->upsert_qbt_preference(
@@ -305,6 +312,7 @@ sub refresh_preferences ( $self, %arg ) {
           action   => 'qbt_preferences_refresh',
           seen     => $seen,
           stored   => $stored,
+          rows     => \@rows,
           problems => \@problems,};
 }
 
@@ -597,7 +605,7 @@ sub _resolve_add_target ( $self, %arg ) {
   my $input = $arg{input} // '';
 
   if ( $input =~ /\A[0-9a-fA-F]{40}\z/ ) {
-    my $hash = lc $input;
+    my $hash = $input;
     my $row  = $db->best_local_torrent_file_for_hash( $dbh, $hash );
 
     return {
@@ -662,7 +670,7 @@ sub _resolve_add_target ( $self, %arg ) {
           ok         => 1,
           action     => 'qbt_add_resolve',
           input_type => 'path',
-          hash       => lc $row->{infohash},
+          hash       => $row->{infohash},
           torrent    => $row,};
 }
 
@@ -771,7 +779,7 @@ sub _payload_search_targets ( $torrent ) {
     my ( $kind, $name ) = @{$pair};
     next if !defined $name || $name eq '';
     next if _is_metadata_evidence_path( $name );
-    next if $seen{lc "$kind\0$name"}++;
+    next if $seen{"$kind\0$name"}++;
 
     push @target,
         {

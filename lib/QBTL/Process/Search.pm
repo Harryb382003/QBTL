@@ -36,7 +36,7 @@ sub search ( $self, %arg ) {
   return $self->db_process->with_db(
     sub ( $db, $dbh ) {
       if ( $field eq 'hash' && defined $input && $input =~ /\A[0-9A-Fa-f]{40}\z/ ) {
-        return $self->_search_hash( $db, $dbh, lc $input );
+        return $self->_search_hash( $db, $dbh, $input );
       }
 
       my $size_query = $self->_size_query( $field, $input );
