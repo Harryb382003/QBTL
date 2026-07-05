@@ -1125,6 +1125,58 @@ sub current_qbt_name_map ( $self, $dbh ) {
   return \%name_by_hash;
 }
 
+sub current_qbt_name_map ( $self, $dbh ) {
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT hash, name
+      FROM qbt_info
+      WHERE current_qbt = 1
+      ORDER BY hash ASC
+    },
+    {Slice => {}}, );
+
+  my %name;
+
+  for my $row ( @{$rows} ) {
+    next if !defined $row->{hash} || $row->{hash} eq '';
+    $name{ $row->{hash} } = $row->{name};
+  }
+
+  return \%name;
+}
+
+sub current_qbt_completed_hash_map ( $self, $dbh ) {
+  my %column = $self->qbt_info_column_map( $dbh );
+  my @condition;
+
+  push @condition, q{CAST(progress AS REAL) >= 1}
+      if $column{progress};
+
+  push @condition, q{CAST(amount_left AS INTEGER) = 0}
+      if $column{amount_left};
+
+  push @condition, q{CAST(completion_on AS INTEGER) > 0}
+      if $column{completion_on};
+
+  return {} if !@condition;
+
+  my $where = join ' OR ', map { '(' . $_ . ')' } @condition;
+
+  my $rows = $dbh->selectall_arrayref(
+    qq{
+      SELECT hash
+      FROM qbt_info
+      WHERE current_qbt = 1
+        AND ($where)
+      ORDER BY hash ASC
+    },
+    {Slice => {}}, );
+
+  my %completed = map { $_->{hash} => 1 } grep { defined $_->{hash} } @{$rows};
+
+  return \%completed;
+}
+
 sub update_qbt_torrent_file_state ( $self, $dbh, %arg ) {
   my $hash   = $arg{hash} // die 'qbt torrent file state requires hash';
   my $exists = $arg{exists} ? 1 : 0;
@@ -1741,6 +1793,69 @@ sub update_local_torrent_parse ( $self, $dbh, $row ) {
   return {
           ok   => 1,
           path => $row->{path},};
+}
+
+
+sub record_known_local_torrent_file ( $self, $dbh, %arg ) {
+  my $path = $arg{path} // die 'known local torrent row requires path';
+  my $hash = $arg{infohash} // die 'known local torrent row requires infohash';
+
+  my @stat  = stat $path;
+  my $size  = $arg{size}  // $stat[7] // 0;
+  my $mtime = $arg{mtime} // $stat[9] // 0;
+
+  $dbh->do(
+    q{
+      INSERT INTO local_torrent_files (
+        path,
+        size,
+        mtime,
+        backend,
+        seen_on,
+        infohash,
+        torrent_name,
+        announce,
+        parse_ok,
+        parse_problem
+      )
+      VALUES (
+        ?,
+        ?,
+        ?,
+        ?,
+        datetime('now'),
+        ?,
+        ?,
+        ?,
+        1,
+        NULL
+      )
+      ON CONFLICT(path) DO UPDATE SET
+        size = excluded.size,
+        mtime = excluded.mtime,
+        backend = excluded.backend,
+        seen_on = excluded.seen_on,
+        infohash = excluded.infohash,
+        torrent_name = excluded.torrent_name,
+        announce = excluded.announce,
+        parse_ok = 1,
+        parse_problem = NULL
+    },
+    undef,
+    $path,
+    $size,
+    $mtime,
+    $arg{backend} // 'known_torrent_identity',
+    $hash,
+    $arg{torrent_name},
+    $arg{announce}, );
+
+  return {
+          ok      => 1,
+          path    => $path,
+          infohash => $hash,
+          size    => $size,
+          mtime   => $mtime,};
 }
 
 sub upsert_key_accessor ( $self, $dbh, %arg ) {

@@ -95,18 +95,23 @@ sub init ( $self ) {
   );
 
   $dbh->disconnect;
+
+  my $export_dedupe = $self->_qbt_export_dedupe_result;
+
   my $elapsed = time - $started;
 
   return {
           ok          => $migration->{ok}
                           && $preferences->{ok}
                           && $refresh->{ok}
+                          && $export_dedupe->{ok}
                           ? 1 : 0,
-          migration   => $migration,
-          preferences => $preferences,
-          qbt_refresh => $refresh,
-          local_scan => $local_scan,
-          elapsed => sprintf( '%.3f', $elapsed ),};
+          migration     => $migration,
+          preferences   => $preferences,
+          qbt_refresh   => $refresh,
+          local_scan    => $local_scan,
+          export_dedupe => $export_dedupe,
+          elapsed       => sprintf( '%.3f', $elapsed ),};
 }
 
 sub install ( $self ) {
@@ -529,14 +534,8 @@ $self->{config}->local_search_tool,
     if ( $subcmd eq 'export-dedupe' ) {
       return $self->_run_timed_cli(
         sub {
-          my $process = QBTL::Process::QBT::ExportDedupe->new(
-            db_path => $self->{config}->db_path,
-          );
-
           return $self->{renderer}->qbt_export_dedupe(
-            $process->run(
-              installation_root => $self->{config}->installation_root,
-            ),
+            $self->_qbt_export_dedupe_result,
           )
         }
       );
@@ -642,6 +641,12 @@ $self->{config}->local_search_tool,
                                        fetch_properties => 1, );
 
       $connect->{dbh}->disconnect;
+
+      if ( $result->{ok} ) {
+        my $export_dedupe = $self->_qbt_export_dedupe_result;
+        $result->{export_dedupe} = $export_dedupe;
+        $result->{ok} = $export_dedupe->{ok} ? 1 : 0;
+      }
 
       return $self->{renderer}->qbt_refresh( $result );
     }
@@ -788,6 +793,16 @@ $self->{config}->local_search_tool,
   }
 
   return $self->{renderer}->help( QBTL::Help->topic( 'main' ) );
+}
+
+sub _qbt_export_dedupe_result ( $self ) {
+  my $process = QBTL::Process::QBT::ExportDedupe->new(
+    db_path => $self->{config}->db_path,
+  );
+
+  return $process->run(
+    installation_root => $self->{config}->installation_root,
+  );
 }
 
 sub _run_timed_cli ( $self, $code ) {

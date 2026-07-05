@@ -5,7 +5,7 @@ use common::sense;
 use feature qw( signatures );
 
 use File::Basename qw( basename dirname );
-use File::Copy     qw( move );
+use File::Copy     qw( copy move );
 use File::Path     qw( make_path );
 use File::Spec;
 use Encode qw( decode FB_DEFAULT );
@@ -102,6 +102,7 @@ sub _dedupe_bucket ( $self, %arg ) {
                 kept             => 0,
                 moved            => 0,
                 renamed          => 0,
+                keeper_by_hash   => {},
                 problems         => \@problem,};
 
   if ( !defined $dir || $dir eq '' ) {
@@ -167,58 +168,70 @@ sub _dedupe_bucket ( $self, %arg ) {
 
   $result->{hashes} = scalar keys %group;
 
-  for my $hash ( sort keys %group ) {
-    my @items = sort { $a->{path} cmp $b->{path} } @{$group{$hash}};
+  HASH:
+for my $hash ( sort keys %group ) {
+  my @items = sort { $a->{path} cmp $b->{path} } @{ $group{$hash} };
 
-    my $keeper = $self->_choose_keeper(
-                                        dir            => $dir,
-                                        meta_basenames => $meta_basenames,
-                                        items          => \@items, );
+  my $keeper = $self->_choose_keeper(
+    dir            => $dir,
+    meta_basenames => $meta_basenames,
+    items          => \@items,
+  );
 
-    $result->{duplicate_groups}++ if @items > 1;
+  $result->{duplicate_groups}++ if @items > 1;
 
-    for my $item ( @items ) {
-      next if $item->{path} eq $keeper->{path};
+  my $keeper_original_path = $keeper->{path};
 
-      my $move = $self->_move_duplicate(
-                                         db        => $db,
-                                         dbh       => $dbh,
-                                         item      => $item,
-                                         queue_dir => $queue_dir,
-                                         which     => $which, );
+  my $rename = $self->_rename_keeper(
+    db            => $db,
+    dbh           => $dbh,
+    dir           => $dir,
+    keeper        => $keeper,
+    which         => $which,
+    should_rename => $keeper->{should_rename} // 0,
+  );
 
-      if ( !$move->{ok} ) {
-        push @problem, $move->{problem};
-        next;
-      }
-
-      $result->{moved}++;
-    }
-
-    my $rename = $self->_rename_keeper(
-                                        db            => $db,
-                                        dbh           => $dbh,
-                                        dir           => $dir,
-                                        keeper        => $keeper,
-                                        which         => $which,
-                                        should_rename => $keeper->{should_rename} // ( @items > 1 ? 1 : 0 ), );
-
-    if ( !$rename->{ok} ) {
-      push @problem, $rename->{problem};
-    } elsif ( $rename->{renamed} ) {
-      $result->{renamed}++;
-      $keeper->{path} = $rename->{new_path};
-    }
-
-    $db->update_qbt_export_dir_file_state(
-                                           $dbh,
-                                           which  => $which,
-                                           hash   => $hash,
-                                           name   => $keeper->{torrent_name},
-                                           exists => 1, );
-
-    $result->{kept}++;
+  if ( !$rename->{ok} ) {
+    push @problem, $rename->{problem};
+    next HASH;
   }
+
+  if ( $rename->{renamed} ) {
+    $result->{renamed}++;
+    $keeper->{path} = $rename->{new_path};
+  }
+
+  for my $item ( @items ) {
+    next if $item->{path} eq $keeper_original_path;
+    next if $item->{path} eq $keeper->{path};
+
+    my $move = $self->_move_duplicate(
+      db        => $db,
+      dbh       => $dbh,
+      item      => $item,
+      queue_dir => $queue_dir,
+      which     => $which,
+    );
+
+    if ( !$move->{ok} ) {
+      push @problem, $move->{problem};
+      next;
+    }
+
+    $result->{moved}++;
+  }
+
+  $db->update_qbt_export_dir_file_state(
+    $dbh,
+    which  => $which,
+    hash   => $hash,
+    name   => $keeper->{torrent_name},
+    exists => 1,
+  );
+
+  $result->{keeper_by_hash}{$hash} = $keeper;
+  $result->{kept}++;
+}
 
   $result->{ok} = @problem ? 0 : 1;
 
@@ -275,9 +288,17 @@ sub _move_duplicate ( $self, %arg ) {
             },};
   }
 
-  $db->delete_local_torrent_file_path( $dbh, $old_path );
+  my $updated = $db->update_local_torrent_file_path(
+    $dbh,
+    old_path => $old_path,
+    new_path => $target,
+  );
 
-  return {ok => 1, old_path => $old_path, new_path => $target};
+  return {
+          ok       => $updated->{ok},
+          old_path => $old_path,
+          new_path => $target,
+          };
 }
 
 sub parser ( $self ) {
@@ -312,13 +333,22 @@ sub _rename_keeper ( $self, %arg ) {
   my $old_path     = $keeper->{path};
 
   return {
+        ok       => 1,
+        renamed  => 0,
+        old_path => $old_path,
+        new_path => $old_path,
+        reason   => 'already named',}
+    if $old_path eq $new_path;
+
+if ( -e $new_path ) {
+  return {
           ok       => 1,
           renamed  => 0,
           old_path => $old_path,
-          new_path => $old_path}
-      if $old_path eq $new_path;
-
-  $new_path = $self->_unique_path( $dir, $desired_name ) if -e $new_path;
+          new_path => $old_path,
+          target   => $new_path,
+          reason   => 'rename target exists',};
+}
 
   if ( !move( $old_path, $new_path ) ) {
     return {
@@ -327,19 +357,519 @@ sub _rename_keeper ( $self, %arg ) {
                         which => $which,
                         path  => $old_path,
                         error => "keeper rename failed: $!",
+            },
+    };
+  }
+
+  my $updated = $db->update_local_torrent_file_path(
+    $dbh,
+    old_path => $old_path,
+    new_path => $new_path,
+  );
+
+  return {
+        ok       => $updated->{ok},
+        renamed  => 1,
+        old_path => $old_path,
+        new_path => $new_path,
+        };
+  }
+
+
+sub _tracker_tag ( $self, $torrent ) {
+  my $announce = $torrent->{announce} // '';
+
+  my ( $host ) = $announce =~ m{\A[a-z][a-z0-9+.-]*://([^/:?#]+)}i;
+  $host //= '';
+  $host =~ s/\Awww\.//i;
+
+  my @part = grep { length } split /\./, $host;
+  return '' if @part < 2;
+
+  my $tag = $part[-2];
+  $tag =~ s/[^A-Za-z0-9_-]+/_/g;
+  $tag =~ s/\A_+//;
+  $tag =~ s/_+\z//;
+
+  return $tag;
+}
+
+sub _collision_averted_base ( $self, $torrent, $base ) {
+  my $tag = $self->_tracker_tag( $torrent );
+  return '' if !length $tag;
+
+  return '[' . $tag . '] ' . $base;
+}
+
+sub _copy_target_for_torrent ( $self, %arg ) {
+  my $db      = $arg{db};
+  my $dbh     = $arg{dbh};
+  my $dir     = $arg{dir};
+  my $torrent = $arg{torrent};
+  my $base    = $arg{base};
+
+  my $hash = $torrent->{hash};
+  my $target = File::Spec->catfile( $dir, $base . '.torrent' );
+
+  if ( !-e $target ) {
+    return {ok => 1, target => $target, already_present => 0};
+  }
+
+  my $existing = $self->_store_torrent_file( $db, $dbh, $target, 'export_dir' );
+
+  if ( $existing->{parse_ok} && ( $existing->{hash} // '' ) eq $hash ) {
+    return {
+            ok              => 1,
+            target          => $target,
+            already_present => 1,
+            existing        => $existing,};
+  }
+
+  my $averted_base = $self->_collision_averted_base( $torrent, $base );
+
+  if ( !length $averted_base ) {
+    return {
+            ok      => 0,
+            problem => {
+                        which         => 'export_dir',
+                        path          => $target,
+                        hash          => $hash,
+                        name          => $torrent->{torrent_name},
+                        existing_hash => $existing->{hash},
+                        error         => ( $torrent->{torrent_name} // $hash )
+                          . ' uncoded collision type occurred. # TODO',
             },};
   }
 
-  $db->update_local_torrent_file_path(
-                                       $dbh,
-                                       old_path => $old_path,
-                                       new_path => $new_path, );
+  my $averted_target = File::Spec->catfile( $dir, $averted_base . '.torrent' );
+
+  if ( !-e $averted_target ) {
+    return {ok => 1, target => $averted_target, already_present => 0};
+  }
+
+  my $averted_existing =
+      $self->_store_torrent_file( $db, $dbh, $averted_target, 'export_dir' );
+
+  if ( $averted_existing->{parse_ok} && ( $averted_existing->{hash} // '' ) eq $hash ) {
+    return {
+            ok              => 1,
+            target          => $averted_target,
+            already_present => 1,
+            existing        => $averted_existing,};
+  }
+
+  return {
+          ok      => 0,
+          problem => {
+                      which         => 'export_dir',
+                      path          => $averted_target,
+                      hash          => $hash,
+                      name          => $torrent->{torrent_name},
+                      existing_hash => $averted_existing->{hash},
+                      error         => ( $torrent->{torrent_name} // $hash )
+                        . ' uncoded collision type occurred. # TODO',
+          },};
+}
+
+
+sub _copy_completed_to_downloaded ( $self, %arg ) {
+  my $db                 = $arg{db};
+  my $dbh                = $arg{dbh};
+  my $downloaded_bucket  = $arg{downloaded_bucket};
+  my $completed_bucket   = $arg{completed_bucket};
+  my $qbt_name_by_hash   = $arg{qbt_name_by_hash} // {};
+
+  my @problem;
+  my @copied;
+  my $downloaded_dir = $downloaded_bucket->{directory};
 
   return {
           ok       => 1,
-          renamed  => 1,
-          old_path => $old_path,
-          new_path => $new_path};
+          copied   => 0,
+          rows     => \@copied,
+          problems => \@problem,}
+      if !defined $downloaded_dir || $downloaded_dir eq '' || !-d $downloaded_dir;
+
+  for my $expected_hash ( sort keys %{ $completed_bucket->{keeper_by_hash} // {} } ) {
+    next if exists $downloaded_bucket->{keeper_by_hash}{$expected_hash};
+
+    my $keeper = $completed_bucket->{keeper_by_hash}{$expected_hash};
+    my $source = $keeper->{path};
+
+    if ( !defined $source || !-f $source ) {
+      push @problem,
+          {
+           which => 'export_dir',
+           path  => $source,
+           hash  => $expected_hash,
+           error => 'completed keeper missing; cannot copy to downloaded',};
+      next;
+    }
+
+    my $verified = $self->_store_torrent_file( $db, $dbh, $source, 'export_dir_fin' );
+    my $actual_hash =
+        defined $verified->{hash} && length $verified->{hash}
+        ? $verified->{hash}
+        : '(none)';
+
+    if ( !$verified->{parse_ok} || $actual_hash ne $expected_hash ) {
+      push @problem,
+          {
+           which         => 'export_dir_fin',
+           path          => $source,
+           hash          => $expected_hash,
+           expected_hash => $expected_hash,
+           actual_hash   => $actual_hash,
+           parse_ok      => $verified->{parse_ok} ? 1 : 0,
+           parse_problem => $verified->{problem} // '(none)',
+           action        => 'copy to Downloaded_torrents skipped',
+           error         => 'Completed_torrents source hash mismatch',};
+      next;
+    }
+
+    my $hash = $verified->{hash};
+
+    my $base = $self->_safe_basename(
+      $qbt_name_by_hash->{$hash}
+          // $verified->{torrent_name}
+          // $self->_torrent_basename( $source )
+          // $hash
+    );
+    $base = $hash if !length $base;
+
+    my $target_result = $self->_copy_target_for_torrent(
+      db      => $db,
+      dbh     => $dbh,
+      dir     => $downloaded_dir,
+      torrent => $verified,
+      base    => $base,
+    );
+
+    if ( !$target_result->{ok} ) {
+      push @problem, $target_result->{problem};
+      next;
+    }
+
+    if ( $target_result->{already_present} ) {
+      $downloaded_bucket->{keeper_by_hash}{$hash} =
+          $target_result->{existing} // $verified;
+      next;
+    }
+
+    my $target = $target_result->{target};
+
+    if ( !copy( $source, $target ) ) {
+      push @problem,
+          {
+           which => 'export_dir',
+           path  => $source,
+           hash  => $hash,
+           error => "copy completed to downloaded failed: $!",};
+      next;
+    }
+
+    my $stored = $self->_store_torrent_file( $db, $dbh, $target, 'export_dir' );
+
+    if ( !$stored->{parse_ok} || !$stored->{hash} || $stored->{hash} ne $hash ) {
+      my $actual_target_hash =
+          defined $stored->{hash} && length $stored->{hash}
+          ? $stored->{hash}
+          : '(none)';
+
+      my $parse_ok      = $stored->{parse_ok} ? 1 : 0;
+      my $parse_problem = $stored->{problem} // '(none)';
+
+      push @problem,
+          {
+           which         => 'export_dir',
+           path          => $target,
+           source_path   => $source,
+           hash          => $hash,
+           expected_hash => $hash,
+           actual_hash   => $actual_target_hash,
+           parse_ok      => $parse_ok,
+           parse_problem => $parse_problem,
+           action        => 'copied Completed_torrents keeper to Downloaded_torrents; copied file left in place for inspection',
+           error         => 'copied completed torrent verification failed',};
+      next;
+    }
+
+    $db->update_qbt_export_dir_file_state(
+                                           $dbh,
+                                           which  => 'export_dir',
+                                           hash   => $hash,
+                                           name   => $stored->{torrent_name},
+                                           exists => 1, );
+
+    $downloaded_bucket->{keeper_by_hash}{$hash} = $stored;
+
+    push @copied,
+        {
+         hash     => $hash,
+         old_path => $source,
+         new_path => $target,};
+  }
+
+  return {
+          ok       => @problem ? 0 : 1,
+          copied   => scalar @copied,
+          rows     => \@copied,
+          problems => \@problem,};
+}
+
+sub _move_stale_completed ( $self, %arg ) {
+  my $db                 = $arg{db};
+  my $dbh                = $arg{dbh};
+  my $completed_bucket   = $arg{completed_bucket};
+  my $current_completed  = $arg{current_completed} // {};
+  my $queue_dir          = $arg{queue_dir};
+
+  my @problem;
+  my @moved;
+
+  for my $hash ( sort keys %{ $completed_bucket->{keeper_by_hash} // {} } ) {
+    next if $current_completed->{$hash};
+
+    my $keeper = $completed_bucket->{keeper_by_hash}{$hash};
+
+    my $move = $self->_move_duplicate(
+                                       db        => $db,
+                                       dbh       => $dbh,
+                                       item      => $keeper,
+                                       queue_dir => $queue_dir,
+                                       which     => 'export_dir_fin', );
+
+    if ( !$move->{ok} ) {
+      push @problem, $move->{problem};
+      next;
+    }
+
+    $db->update_qbt_export_dir_file_state(
+                                           $dbh,
+                                           which  => 'export_dir_fin',
+                                           hash   => $hash,
+                                           name   => $keeper->{torrent_name},
+                                           exists => 0, );
+
+    delete $completed_bucket->{keeper_by_hash}{$hash};
+
+    push @moved,
+        {
+         hash     => $hash,
+         old_path => $move->{old_path},
+         new_path => $move->{new_path},};
+  }
+
+  return {
+          ok       => @problem ? 0 : 1,
+          moved    => scalar @moved,
+          rows     => \@moved,
+          problems => \@problem,};
+}
+
+
+sub _bt_backup_dir ( $self ) {
+  my $home = $ENV{HOME} // '';
+  return '' if $home eq '';
+
+  return File::Spec->catdir(
+                             $home,
+                             'Library',
+                             'Application Support',
+                             'qBittorrent',
+                             'BT_backup', );
+}
+
+sub _restore_current_qbt_from_bt_backup ( $self, %arg ) {
+  my $db                = $arg{db};
+  my $dbh               = $arg{dbh};
+  my $downloaded_bucket = $arg{downloaded_bucket};
+  my $hash              = $arg{hash};
+  my $name              = $arg{name};
+
+  my $downloaded_dir = $downloaded_bucket->{directory};
+  return {ok => 0, restored => 0}
+      if !defined $downloaded_dir || $downloaded_dir eq '' || !-d $downloaded_dir;
+
+  my $bt_backup_dir = $self->_bt_backup_dir;
+  return {ok => 0, restored => 0}
+      if $bt_backup_dir eq '' || !-d $bt_backup_dir;
+
+  my $source = File::Spec->catfile( $bt_backup_dir, $hash . '.torrent' );
+  return {ok => 0, restored => 0}
+      if !-f $source;
+
+  my $base = $self->_safe_basename( $name // $hash );
+  $base = $hash if !length $base;
+
+  my $torrent = {
+                 path         => $source,
+                 hash         => $hash,
+                 torrent_name => $name,
+                 announce     => undef,
+                 parse_ok     => 1,};
+
+  my $target_result = $self->_copy_target_for_torrent(
+                                                       db      => $db,
+                                                       dbh     => $dbh,
+                                                       dir     => $downloaded_dir,
+                                                       torrent => $torrent,
+                                                       base    => $base, );
+
+  return {
+          ok       => 0,
+          restored => 0,
+          problem  => $target_result->{problem},}
+      if !$target_result->{ok};
+
+  if ( $target_result->{already_present} ) {
+    $downloaded_bucket->{keeper_by_hash}{$hash} =
+        $target_result->{existing} // {
+                                      path         => $target_result->{target},
+                                      hash         => $hash,
+                                      torrent_name => $name,
+                                      parse_ok     => 1,
+                                     };
+
+    return {
+            ok              => 1,
+            restored        => 0,
+            already_present => 1,};
+  }
+
+  my $target = $target_result->{target};
+
+  if ( !copy( $source, $target ) ) {
+    return {
+            ok       => 0,
+            restored => 0,
+            problem  => {
+                         which => 'export_dir',
+                         path  => $source,
+                         hash  => $hash,
+                         name  => $name,
+                         error => "restore from BT_backup failed: $!",
+            },};
+  }
+
+  my @stat = stat $target;
+
+  my $recorded = $db->record_known_local_torrent_file(
+                                                       $dbh,
+                                                       path         => $target,
+                                                       infohash     => $hash,
+                                                       torrent_name => $name,
+                                                       backend      => 'qbt_bt_backup_restore',
+                                                       size         => $stat[7],
+                                                       mtime        => $stat[9], );
+
+  if ( !$recorded->{ok} ) {
+    return {
+            ok       => 0,
+            restored => 0,
+            problem  => {
+                         which => 'export_dir',
+                         path  => $target,
+                         hash  => $hash,
+                         name  => $name,
+                         error => 'restore from BT_backup copied file but failed to record DB identity',
+            },};
+  }
+
+  my $row = {
+             path         => $target,
+             hash         => $hash,
+             torrent_name => $name,
+             parse_ok     => 1,
+             from_db      => 1,
+             backend      => 'qbt_bt_backup_restore',};
+
+  $downloaded_bucket->{keeper_by_hash}{$hash} = $row;
+
+  $db->update_qbt_export_dir_file_state(
+                                         $dbh,
+                                         which  => 'export_dir',
+                                         hash   => $hash,
+                                         name   => $name,
+                                         exists => 1, );
+
+  return {
+          ok       => 1,
+          restored => 1,
+          row      => {
+                       which => 'export_dir',
+                       hash  => $hash,
+                       name  => $name,
+                       error => 'restored from BT_backup',
+                       path  => $target,
+          },};
+}
+
+sub _audit_current_qbt_downloaded ( $self, %arg ) {
+  my $db                = $arg{db};
+  my $dbh               = $arg{dbh};
+  my $downloaded_bucket = $arg{downloaded_bucket};
+  my $completed_bucket  = $arg{completed_bucket};
+  my $qbt_name_by_hash  = $arg{qbt_name_by_hash} // {};
+
+  my @missing;
+  my @restored;
+  my @problem;
+
+  for my $hash ( @{ $db->current_qbt_hashes( $dbh ) } ) {
+    next if exists $downloaded_bucket->{keeper_by_hash}{$hash};
+
+    # If Completed_torrents has it, the Completed -> Downloaded repair owns it.
+    # Do not also emit a generic current-qBT-missing problem.
+    next if exists $completed_bucket->{keeper_by_hash}{$hash};
+
+    my $name = $qbt_name_by_hash->{$hash};
+
+    my $restore = $self->_restore_current_qbt_from_bt_backup(
+                                                             db                => $db,
+                                                             dbh               => $dbh,
+                                                             downloaded_bucket => $downloaded_bucket,
+                                                             hash              => $hash,
+                                                             name              => $name, );
+
+    if ( $restore->{ok} && $restore->{restored} ) {
+      push @restored, $restore->{row};
+      next;
+    }
+
+    if ( !$restore->{ok} && $restore->{problem} ) {
+      push @problem, $restore->{problem};
+      next;
+    }
+
+    push @missing,
+        {
+         which => 'export_dir',
+         path  => undef,
+         hash  => $hash,
+         name  => $name,
+         error => 'missing from export filesystem. # TODO no searching code written',};
+  }
+
+  return {
+          ok       => @missing || @problem ? 0 : 1,
+          missing  => \@missing,
+          restored => \@restored,
+          problems => \@problem,
+          count    => scalar @missing,};
+}
+
+sub _finalize_bucket_counts ( $self, $bucket ) {
+  return if ref $bucket ne 'HASH';
+
+  my $keeper_by_hash = $bucket->{keeper_by_hash} // {};
+  my $final_count    = scalar keys %{$keeper_by_hash};
+
+  $bucket->{scanned} = $final_count;
+  $bucket->{hashes}  = $final_count;
+  $bucket->{kept}    = $final_count;
+
+  return;
 }
 
 sub run ( $self, %arg ) {
@@ -372,7 +902,50 @@ sub run ( $self, %arg ) {
         push @problem, @{$result->{problems} // []};
       }
 
-      my $moved   = 0;
+      my %bucket_by_which = map { $_->{which} => $_ } @bucket;
+
+      my $completed_to_downloaded = $self->_copy_completed_to_downloaded(
+        db                => $db,
+        dbh               => $dbh,
+        downloaded_bucket => $bucket_by_which{export_dir},
+        completed_bucket  => $bucket_by_which{export_dir_fin},
+        qbt_name_by_hash  => $qbt_name_by_hash,
+      );
+      push @problem, @{ $completed_to_downloaded->{problems} // [] };
+
+      my $current_completed = $db->current_qbt_completed_hash_map( $dbh );
+      my $stale_completed = $self->_move_stale_completed(
+        db                => $db,
+        dbh               => $dbh,
+        completed_bucket  => $bucket_by_which{export_dir_fin},
+        current_completed => $current_completed,
+        queue_dir         => $queue_dir,
+      );
+      push @problem, @{ $stale_completed->{problems} // [] };
+
+      my $current_missing = $self->_audit_current_qbt_downloaded(
+        db                => $db,
+        dbh               => $dbh,
+        downloaded_bucket => $bucket_by_which{export_dir},
+        completed_bucket  => $bucket_by_which{export_dir_fin},
+        qbt_name_by_hash  => $qbt_name_by_hash,
+      );
+      push @problem, @{ $current_missing->{problems} // [] };
+
+      my $completed_copied = $completed_to_downloaded->{copied} // 0;
+      my $bt_restored      = scalar @{ $current_missing->{restored} // [] };
+
+      if ( $bucket_by_which{export_dir} ) {
+        $bucket_by_which{export_dir}{stored} += $completed_copied + $bt_restored;
+        $bucket_by_which{export_dir}{parsed} += $completed_copied;
+        $self->_finalize_bucket_counts( $bucket_by_which{export_dir} );
+      }
+
+      if ( $bucket_by_which{export_dir_fin} ) {
+        $self->_finalize_bucket_counts( $bucket_by_which{export_dir_fin} );
+      }
+
+      my $moved   = $stale_completed->{moved} // 0;
       my $renamed = 0;
       my $kept    = 0;
 
@@ -383,14 +956,20 @@ sub run ( $self, %arg ) {
       }
 
       return {
-              ok        => @problem ? 0 : 1,
-              action    => 'qbt_export_dedupe',
-              queue_dir => $queue_dir,
-              buckets   => \@bucket,
-              kept      => $kept,
-              moved     => $moved,
-              renamed   => $renamed,
-              problems  => \@problem,};
+              ok                             => @problem || ( $current_missing->{count} // 0 ) ? 0 : 1,
+              action                         => 'qbt_export_dedupe',
+              queue_dir                      => $queue_dir,
+              buckets                        => \@bucket,
+              kept                           => $kept,
+              moved                          => $moved,
+              renamed                        => $renamed,
+              copied_completed_to_downloaded => $completed_copied,
+              moved_stale_completed          => $stale_completed->{moved} // 0,
+              current_qbt_missing_downloaded => $current_missing->{count} // 0,
+              current_qbt_missing            => $current_missing->{missing} // [],
+              missing_export_todo_count      => $current_missing->{count} // 0,
+              bt_backup_restored             => $bt_restored,
+              problems                       => \@problem,};
     } );
 }
 
@@ -408,23 +987,6 @@ sub _safe_basename ( $self, $name ) {
 
 sub _store_torrent_file ( $self, $db, $dbh, $path, $backend ) {
 
-  my $existing = $db->local_torrent_file_by_path( $dbh, $path );
-  if (    $existing
-       && ( $existing->{parse_ok} // 0 )
-       && defined $existing->{infohash}
-       && length $existing->{infohash} )
-  {
-    return {
-            ok           => 1,
-            stored       => 0,
-            parsed       => 0,
-            from_db      => 1,
-            path         => $path,
-            hash         => $existing->{infohash},
-            torrent_name => $existing->{torrent_name},
-            parse_ok     => 1,
-            problem      => undef,};
-  }
   if ( !-f $path ) {
     return {
             ok           => 0,
@@ -434,19 +996,45 @@ sub _store_torrent_file ( $self, $db, $dbh, $path, $backend ) {
             path         => $path,
             hash         => undef,
             torrent_name => undef,
+            announce     => undef,
             parse_ok     => 0,
             problem      => 'path does not exist',};
   }
 
   my @stat = stat $path;
+  my $size = $stat[7] // 0;
+  my $mtime = $stat[9] // 0;
+
+  my $existing = $db->local_torrent_file_by_path( $dbh, $path );
+  if (    $existing
+       && ( $existing->{parse_ok} // 0 )
+       && defined $existing->{infohash}
+       && length $existing->{infohash}
+       && defined $existing->{size}
+       && defined $existing->{mtime}
+       && $existing->{size} == $size
+       && $existing->{mtime} == $mtime )
+  {
+    return {
+            ok           => 1,
+            stored       => 0,
+            parsed       => 0,
+            from_db      => 1,
+            path         => $path,
+            hash         => $existing->{infohash},
+            torrent_name => $existing->{torrent_name},
+            announce     => $existing->{announce},
+            parse_ok     => 1,
+            problem      => undef,};
+  }
 
   my $stored =
       $db->upsert_local_torrent_file(
                                       $dbh,
                                       {
                                        path    => $path,
-                                       size    => $stat[7] // 0,
-                                       mtime   => $stat[9] // 0,
+                                       size    => $size,
+                                       mtime   => $mtime,
                                        backend => 'qbt_' . $backend,
                                       }, );
 
@@ -494,6 +1082,7 @@ sub _store_torrent_file ( $self, $db, $dbh, $path, $backend ) {
           path         => $path,
           hash         => $parse->{infohash} ? $parse->{infohash} : undef,
           torrent_name => $parse->{torrent_name},
+          announce     => $parse->{announce},
           parse_ok     => $parse->{ok} ? 1 : 0,
           problem      => $parse->{problem},};
 }
