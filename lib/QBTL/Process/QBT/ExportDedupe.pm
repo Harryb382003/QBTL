@@ -102,10 +102,22 @@ sub _dedupe_bucket ( $self, %arg ) {
                 hashes           => 0,
                 duplicate_groups => 0,
                 kept             => 0,
-                moved            => 0,
-                renamed          => 0,
-                keeper_by_hash   => {},
-                problems         => \@problem,};
+                moved                 => 0,
+                renamed               => 0,
+                rename_not_needed     => 0,
+                rename_candidates     => 0,
+                rename_target_exists  => 0,
+                rename_target_same_hash => 0,
+                rename_target_other_hash => 0,
+                rename_target_already_averted => 0,
+                rename_target_unknown => 0,
+                rename_tracker_prefix_groups => 0,
+                rename_tracker_prefixed => 0,
+                rename_tracker_prefix_unresolved => 0,
+                rename_already_named  => 0,
+                rename_target_collision_samples => [],
+                keeper_by_hash        => {},
+                problems              => \@problem,};
 
   if ( !defined $dir || $dir eq '' ) {
     push @problem,
@@ -170,17 +182,37 @@ sub _dedupe_bucket ( $self, %arg ) {
 
   $result->{hashes} = scalar keys %group;
 
-  HASH:
-for my $hash ( sort keys %group ) {
-  my @items = sort { $a->{path} cmp $b->{path} } @{ $group{$hash} };
+  my @planned;
 
-  my $keeper = $self->_choose_keeper(
-    dir            => $dir,
-    meta_basenames => $meta_basenames,
-    items          => \@items,
+  for my $hash ( sort keys %group ) {
+    my @items = sort { $a->{path} cmp $b->{path} } @{ $group{$hash} };
+
+    my $keeper = $self->_choose_keeper(
+      dir            => $dir,
+      meta_basenames => $meta_basenames,
+      items          => \@items,
+    );
+
+    $result->{duplicate_groups}++ if @items > 1;
+
+    push @planned,
+        {
+          hash   => $hash,
+          items  => \@items,
+          keeper => $keeper,
+        };
+  }
+
+  $self->_apply_tracker_prefix_collision_plan(
+    planned => \@planned,
+    result  => $result,
   );
 
-  $result->{duplicate_groups}++ if @items > 1;
+  HASH:
+for my $plan (@planned) {
+  my $hash   = $plan->{hash};
+  my @items  = @{ $plan->{items} };
+  my $keeper = $plan->{keeper};
 
   my $keeper_original_path = $keeper->{path};
 
@@ -192,6 +224,51 @@ for my $hash ( sort keys %group ) {
     which         => $which,
     should_rename => $keeper->{should_rename} // 0,
   );
+
+  if ( $rename->{not_needed} ) {
+    $result->{rename_not_needed}++;
+  }
+
+  if ( $rename->{candidate} ) {
+    $result->{rename_candidates}++;
+  }
+
+  if ( ( $rename->{reason} // '' ) eq 'already named' ) {
+    $result->{rename_already_named}++;
+  }
+
+  if ( ( $rename->{reason} // '' ) eq 'rename target exists' ) {
+    $result->{rename_target_exists}++;
+
+    if ( ( $rename->{target_classification} // '' ) eq 'same_hash' ) {
+      $result->{rename_target_same_hash}++;
+    }
+    elsif ( ( $rename->{target_classification} // '' ) eq 'other_hash' ) {
+      if ( $rename->{collision_already_averted} ) {
+        $result->{rename_target_already_averted}++;
+      }
+      else {
+        $result->{rename_target_other_hash}++;
+
+        if ( @{ $result->{rename_target_collision_samples} } < 25 ) {
+          push @{ $result->{rename_target_collision_samples} },
+              {
+               which               => $which,
+               hash                => $keeper->{hash},
+               path                => $keeper->{path},
+               target              => $rename->{target},
+               target_hash         => $rename->{target_hash},
+               desired_base        => $keeper->{desired_base},
+               desired_name_source => $keeper->{desired_name_source},
+               action              => 'TODO different-hash filename collision',
+              };
+        }
+      }
+    }
+    else {
+      $result->{rename_target_unknown}++;
+    }
+  }
 
   if ( !$rename->{ok} ) {
     push @problem, $rename->{problem};
@@ -238,6 +315,69 @@ for my $hash ( sort keys %group ) {
   $result->{ok} = @problem ? 0 : 1;
 
   return $result;
+}
+
+
+sub _apply_tracker_prefix_collision_plan ( $self, %arg ) {
+  my $planned = $arg{planned} // [];
+  my $result  = $arg{result};
+
+  my %by_desired_base;
+
+  for my $plan ( @{$planned} ) {
+    my $keeper = $plan->{keeper};
+    my $base   = $keeper->{desired_base} // '';
+
+    next if !length $base;
+
+    push @{ $by_desired_base{$base} }, $plan;
+  }
+
+  for my $base ( sort keys %by_desired_base ) {
+    my @collision = @{ $by_desired_base{$base} };
+
+    next if @collision < 2;
+
+    my %hash_seen = map { $_->{hash} => 1 } @collision;
+    next if keys(%hash_seen) < 2;
+
+    my %prefixed_base_by_hash;
+    my %prefixed_seen;
+    my $unresolved = 0;
+
+    for my $plan (@collision) {
+      my $keeper       = $plan->{keeper};
+      my $prefixed_base = $self->_collision_averted_base( $keeper, $base );
+
+      if ( !length $prefixed_base || $prefixed_seen{$prefixed_base}++ ) {
+        $unresolved = 1;
+        last;
+      }
+
+      $prefixed_base_by_hash{ $plan->{hash} } = $prefixed_base;
+    }
+
+    if ($unresolved) {
+      $result->{rename_tracker_prefix_unresolved}++;
+      next;
+    }
+
+    $result->{rename_tracker_prefix_groups}++;
+
+    for my $plan (@collision) {
+      my $keeper        = $plan->{keeper};
+      my $prefixed_base = $prefixed_base_by_hash{ $plan->{hash} };
+
+      $keeper->{desired_base}        = $prefixed_base;
+      $keeper->{desired_name_source} = 'tracker_prefix_collision';
+      $keeper->{should_rename} =
+          ( ( $keeper->{_base} // '' ) eq $prefixed_base ) ? 0 : 1;
+
+      $result->{rename_tracker_prefixed}++;
+    }
+  }
+
+  return;
 }
 
 sub _directory_inventory ( $self, $dir ) {
@@ -318,6 +458,88 @@ sub _queue_dir ( $self, $installation_root, $db ) {
   return File::Spec->catdir( $root, 'queued_for_deletion' );
 }
 
+sub _torrent_pool_dir ( $self, $installation_root, $configured_pool, $db ) {
+  return $configured_pool
+      if defined $configured_pool && length $configured_pool;
+
+  if ( defined $installation_root && length $installation_root ) {
+    return File::Spec->catdir( $installation_root, 'torrents' );
+  }
+
+  my $db_path = $db->{db_path} // '';
+  my $root    = dirname( $db_path );
+
+  return File::Spec->catdir( $root, 'torrents' );
+}
+
+sub _ensure_torrent_pool_dir ( $self, $dir ) {
+  my @problem;
+
+  if ( !defined $dir || $dir eq '' ) {
+    return {
+            ok       => 0,
+            path     => $dir,
+            created  => 0,
+            existing => 0,
+            problems => [
+                          {
+                           which => 'torrent_pool',
+                           path  => $dir,
+                           error => 'torrent pool path is not configured',
+                          },
+            ],};
+  }
+
+  if ( -d $dir ) {
+    return {
+            ok       => 1,
+            path     => $dir,
+            created  => 0,
+            existing => 1,
+            problems => \@problem,};
+  }
+
+  if ( -e $dir ) {
+    return {
+            ok       => 0,
+            path     => $dir,
+            created  => 0,
+            existing => 0,
+            problems => [
+                          {
+                           which => 'torrent_pool',
+                           path  => $dir,
+                           error => 'torrent pool path exists but is not a directory',
+                          },
+            ],};
+  }
+
+  eval { make_path($dir); 1 } or do {
+    my $error = $@ || $! || 'unknown error';
+    chomp $error;
+
+    return {
+            ok       => 0,
+            path     => $dir,
+            created  => 0,
+            existing => 0,
+            problems => [
+                          {
+                           which => 'torrent_pool',
+                           path  => $dir,
+                           error => "create torrent pool failed: $error",
+                          },
+            ],};
+  };
+
+  return {
+          ok       => 1,
+          path     => $dir,
+          created  => 1,
+          existing => 0,
+          problems => \@problem,};
+}
+
 sub _rename_keeper ( $self, %arg ) {
   my $db            = $arg{db};
   my $dbh           = $arg{dbh};
@@ -326,7 +548,13 @@ sub _rename_keeper ( $self, %arg ) {
   my $which         = $arg{which};
   my $should_rename = $arg{should_rename};
 
-  return {ok => 1, renamed => 0} if !$should_rename;
+  return {
+          ok         => 1,
+          renamed    => 0,
+          candidate  => 0,
+          not_needed => 1,
+          reason     => 'not needed',
+  } if !$should_rename;
 
   my $desired_base = $keeper->{desired_base}
       // $self->_torrent_basename( $keeper->{path} );
@@ -335,21 +563,49 @@ sub _rename_keeper ( $self, %arg ) {
   my $old_path     = $keeper->{path};
 
   return {
-        ok       => 1,
-        renamed  => 0,
-        old_path => $old_path,
-        new_path => $old_path,
-        reason   => 'already named',}
+        ok        => 1,
+        renamed   => 0,
+        candidate => 1,
+        old_path  => $old_path,
+        new_path  => $old_path,
+        reason    => 'already named',}
     if $old_path eq $new_path;
 
 if ( -e $new_path ) {
+  my $target = $self->_store_torrent_file( $db, $dbh, $new_path, $which );
+  my $target_hash = $target->{hash};
+
+  my $classification =
+        !$target->{parse_ok} || !defined $target_hash || $target_hash eq ''
+      ? 'unknown'
+      : $target_hash eq ( $keeper->{hash} // '' )
+      ? 'same_hash'
+      : 'other_hash';
+
+  my $collision_averted_base = $self->_collision_averted_base(
+    $keeper,
+    $desired_base,
+  );
+  my $old_base = $self->_torrent_basename($old_path);
+  my $collision_already_averted =
+         $classification eq 'other_hash'
+      && length $collision_averted_base
+      && $old_base eq $collision_averted_base
+      ? 1
+      : 0;
+
   return {
-          ok       => 1,
-          renamed  => 0,
-          old_path => $old_path,
-          new_path => $old_path,
-          target   => $new_path,
-          reason   => 'rename target exists',};
+          ok                    => 1,
+          renamed               => 0,
+          candidate             => 1,
+          old_path              => $old_path,
+          new_path              => $old_path,
+          target                => $new_path,
+          target_hash           => $target_hash,
+          target_parse_ok       => $target->{parse_ok} ? 1 : 0,
+          target_classification => $classification,
+          collision_already_averted => $collision_already_averted,
+          reason                => 'rename target exists',};
 }
 
   if ( !move( $old_path, $new_path ) ) {
@@ -370,10 +626,11 @@ if ( -e $new_path ) {
   );
 
   return {
-        ok       => $updated->{ok},
-        renamed  => 1,
-        old_path => $old_path,
-        new_path => $new_path,
+        ok        => $updated->{ok},
+        renamed   => 1,
+        candidate => 1,
+        old_path  => $old_path,
+        new_path  => $new_path,
         };
   }
 
@@ -886,10 +1143,15 @@ sub run ( $self, %arg ) {
       my $queue_dir = $self->_queue_dir( $installation_root, $db );
       make_path( $queue_dir ) if !-d $queue_dir;
 
+      my $torrent_pool =
+          $self->_torrent_pool_dir( $installation_root, $arg{torrent_pool}, $db );
+      my $torrent_pool_result =
+          $self->_ensure_torrent_pool_dir($torrent_pool);
+
       my $qbt_name_by_hash = $db->current_qbt_name_map( $dbh );
 
       my @bucket;
-      my @problem;
+      my @problem = @{ $torrent_pool_result->{problems} // [] };
 
       for my $which ( qw( export_dir export_dir_fin ) ) {
         my $dir = $db->qbt_preference_value( $dbh, $which );
@@ -957,24 +1219,69 @@ sub run ( $self, %arg ) {
         $self->_finalize_bucket_counts( $bucket_by_which{export_dir_fin} );
       }
 
-      my $moved   = $stale_completed->{moved} // 0;
-      my $renamed = 0;
-      my $kept    = 0;
+      my $moved                 = $stale_completed->{moved} // 0;
+      my $renamed               = 0;
+      my $rename_not_needed     = 0;
+      my $rename_candidates     = 0;
+      my $rename_target_exists  = 0;
+      my $rename_target_same_hash = 0;
+      my $rename_target_other_hash = 0;
+      my $rename_target_already_averted = 0;
+      my $rename_target_unknown = 0;
+      my $rename_tracker_prefix_groups = 0;
+      my $rename_tracker_prefixed = 0;
+      my $rename_tracker_prefix_unresolved = 0;
+      my $rename_already_named  = 0;
+      my @rename_target_collision_sample;
+      my $kept                  = 0;
 
       for my $bucket ( @bucket ) {
-        $moved   += $bucket->{moved}   // 0;
-        $renamed += $bucket->{renamed} // 0;
-        $kept    += $bucket->{kept}    // 0;
+        $moved                += $bucket->{moved}                // 0;
+        $renamed              += $bucket->{renamed}              // 0;
+        $rename_not_needed    += $bucket->{rename_not_needed}    // 0;
+        $rename_candidates    += $bucket->{rename_candidates}    // 0;
+        $rename_target_exists += $bucket->{rename_target_exists} // 0;
+        $rename_target_same_hash += $bucket->{rename_target_same_hash} // 0;
+        $rename_target_other_hash += $bucket->{rename_target_other_hash} // 0;
+        $rename_target_already_averted +=
+            $bucket->{rename_target_already_averted} // 0;
+        $rename_target_unknown += $bucket->{rename_target_unknown} // 0;
+        $rename_tracker_prefix_groups += $bucket->{rename_tracker_prefix_groups} // 0;
+        $rename_tracker_prefixed += $bucket->{rename_tracker_prefixed} // 0;
+        $rename_tracker_prefix_unresolved += $bucket->{rename_tracker_prefix_unresolved} // 0;
+        $rename_already_named += $bucket->{rename_already_named} // 0;
+
+        for my $sample ( @{ $bucket->{rename_target_collision_samples} // [] } ) {
+          last if @rename_target_collision_sample >= 25;
+          push @rename_target_collision_sample, $sample;
+        }
+
+        $kept                 += $bucket->{kept}                 // 0;
       }
 
       return {
               ok                             => @problem || ( $current_missing->{count} // 0 ) ? 0 : 1,
               action                         => 'qbt_export_dedupe',
               queue_dir                      => $queue_dir,
+              torrent_pool                   => $torrent_pool,
+              torrent_pool_created           => $torrent_pool_result->{created} // 0,
+              torrent_pool_existing          => $torrent_pool_result->{existing} // 0,
               buckets                        => \@bucket,
               kept                           => $kept,
               moved                          => $moved,
               renamed                        => $renamed,
+              rename_not_needed              => $rename_not_needed,
+              rename_candidates              => $rename_candidates,
+              rename_target_exists           => $rename_target_exists,
+              rename_target_same_hash         => $rename_target_same_hash,
+              rename_target_other_hash        => $rename_target_other_hash,
+              rename_target_already_averted   => $rename_target_already_averted,
+              rename_target_unknown           => $rename_target_unknown,
+              rename_tracker_prefix_groups   => $rename_tracker_prefix_groups,
+              rename_tracker_prefixed        => $rename_tracker_prefixed,
+              rename_tracker_prefix_unresolved => $rename_tracker_prefix_unresolved,
+              rename_already_named           => $rename_already_named,
+              rename_target_collision_samples => \@rename_target_collision_sample,
               copied_completed_to_downloaded => $completed_copied,
               moved_stale_completed          => $stale_completed->{moved} // 0,
               current_qbt_missing_downloaded => $current_missing->{count} // 0,

@@ -425,6 +425,11 @@ sub write_installation_config ( $self, $installation ) {
   $config{installation}{config} =
       $self->_contract_home_path( $installation->{config_path} );
 
+  $config{local}{torrent_pool} //=
+      $self->_contract_home_path(
+        File::Spec->catdir( $installation->{root}, 'torrents' )
+      );
+
   write_config %config => $path;
 
   if ( $installation->{bt_backup} && $installation->{bt_backup}{path} ) {

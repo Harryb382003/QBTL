@@ -802,6 +802,7 @@ sub _qbt_export_dedupe_result ( $self ) {
 
   return $process->run(
     installation_root => $self->{config}->installation_root,
+    torrent_pool      => $self->{config}->torrent_pool,
   );
 }
 

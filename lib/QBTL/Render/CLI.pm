@@ -173,6 +173,28 @@ sub _qbt_export_dedupe_summary ( $self, $result, %arg ) {
 
   say {$out} $indent . 'kept:                             ' . ( $result->{kept}    // 0 );
   say {$out} $indent . 'renamed:                          ' . ( $result->{renamed} // 0 );
+  say {$out} $indent . 'rename candidates:                '
+      . ( $result->{rename_candidates} // 0 );
+  say {$out} $indent . 'rename not needed:                '
+      . ( $result->{rename_not_needed} // 0 );
+  say {$out} $indent . 'rename target exists:             '
+      . ( $result->{rename_target_exists} // 0 );
+  say {$out} $indent . 'rename target same hash:          '
+      . ( $result->{rename_target_same_hash} // 0 );
+  say {$out} $indent . 'rename target other hash:         '
+      . ( $result->{rename_target_other_hash} // 0 );
+  say {$out} $indent . 'rename target already averted:    '
+      . ( $result->{rename_target_already_averted} // 0 );
+  say {$out} $indent . 'rename target unknown:            '
+      . ( $result->{rename_target_unknown} // 0 );
+  say {$out} $indent . 'rename tracker-prefix groups:     '
+      . ( $result->{rename_tracker_prefix_groups} // 0 );
+  say {$out} $indent . 'rename tracker-prefixed:          '
+      . ( $result->{rename_tracker_prefixed} // 0 );
+  say {$out} $indent . 'rename tracker-prefix unresolved: '
+      . ( $result->{rename_tracker_prefix_unresolved} // 0 );
+  say {$out} $indent . 'rename already named:             '
+      . ( $result->{rename_already_named} // 0 );
   say {$out} $indent . 'moved:                            ' . ( $result->{moved}   // 0 );
   say {$out} $indent . 'copied completed -> downloaded:   '
       . ( $result->{copied_completed_to_downloaded} // 0 );
@@ -1031,6 +1053,32 @@ sub qbt_refresh ( $self, $result ) {
   return 0;
 }
 
+
+sub _print_qbt_export_dedupe_rename_collision_samples ( $self, $result ) {
+  my @sample = @{ $result->{rename_target_collision_samples} // [] };
+  return if !@sample;
+
+  my $out = $self->{out};
+
+  say {$out} '';
+  say {$out} 'Rename target collisions (sample):';
+
+  my $shown = 0;
+
+  for my $row ( @sample ) {
+    last if $shown++ >= 25;
+
+    say {$out} '  ' . ( $row->{which} // '(unknown)' ) . ':';
+    say {$out} '    hash:        ' . ( $row->{hash} // '' );
+    say {$out} '    source:      ' . ( $row->{path} // '' );
+    say {$out} '    target:      ' . ( $row->{target} // '' );
+    say {$out} '    target hash: ' . ( $row->{target_hash} // '(unknown)' );
+    say {$out} '    action:      ' . ( $row->{action} // 'TODO inspect filename collision' );
+  }
+
+  return;
+}
+
 sub qbt_export_dedupe ( $self, $result ) {
   my $out = $self->{out};
 
@@ -1041,6 +1089,7 @@ sub qbt_export_dedupe ( $self, $result ) {
   }
 
   say {$out} '  queued for deletion:              ' . ( $result->{queue_dir} // '' );
+  say {$out} '  torrent pool:                     ' . ( $result->{torrent_pool} // '' );
   $self->_qbt_export_dedupe_summary( $result, indent => '  ' );
 
   for my $bucket ( @{ $result->{buckets} // [] } ) {
@@ -1055,8 +1104,30 @@ sub qbt_export_dedupe ( $self, $result ) {
     say {$out} '  duplicate groups: ' . ( $bucket->{duplicate_groups} // 0 );
     say {$out} '  kept:             ' . ( $bucket->{kept}             // 0 );
     say {$out} '  renamed:          ' . ( $bucket->{renamed}          // 0 );
+    say {$out} '  rename candidates: ' . ( $bucket->{rename_candidates} // 0 );
+    say {$out} '  rename not needed: ' . ( $bucket->{rename_not_needed} // 0 );
+    say {$out} '  rename target exists: '
+        . ( $bucket->{rename_target_exists} // 0 );
+    say {$out} '  rename target same hash: '
+        . ( $bucket->{rename_target_same_hash} // 0 );
+    say {$out} '  rename target other hash: '
+        . ( $bucket->{rename_target_other_hash} // 0 );
+    say {$out} '  rename target already averted: '
+        . ( $bucket->{rename_target_already_averted} // 0 );
+    say {$out} '  rename target unknown: '
+        . ( $bucket->{rename_target_unknown} // 0 );
+    say {$out} '  rename tracker-prefix groups: '
+        . ( $bucket->{rename_tracker_prefix_groups} // 0 );
+    say {$out} '  rename tracker-prefixed: '
+        . ( $bucket->{rename_tracker_prefixed} // 0 );
+    say {$out} '  rename tracker-prefix unresolved: '
+        . ( $bucket->{rename_tracker_prefix_unresolved} // 0 );
+    say {$out} '  rename already named: '
+        . ( $bucket->{rename_already_named} // 0 );
     say {$out} '  moved:            ' . ( $bucket->{moved}            // 0 );
   }
+
+  $self->_print_qbt_export_dedupe_rename_collision_samples($result);
 
   if ( $self->_print_qbt_export_dedupe_problems( $result ) ) {
     return 1;

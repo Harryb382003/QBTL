@@ -34,6 +34,7 @@ sub new ( $class, %arg ) {
               qbt_url     => 'http://localhost:8080',
               time_format => 'full',
               local_search_tool           => 'mdfind',
+              torrent_pool                => undef,
               metadata_promoter_threshold => 20, );
 
   my $self = bless \%self, $class;
@@ -54,6 +55,9 @@ sub new ( $class, %arg ) {
           File::Spec->catfile( $self->{installation_root}, '.qbtlrc' );
     }
   }
+
+  $self->{torrent_pool} //=
+      File::Spec->catdir( $self->installation_root, 'torrents' );
 
   return $self;
 }
@@ -132,6 +136,11 @@ sub _load_config_file ( $self ) {
     }
   }
 
+  if ( exists $config{local}{torrent_pool} ) {
+    $self->{torrent_pool} =
+        $self->_expand_user_path( $config{local}{torrent_pool} );
+  }
+
   if ( exists $config{database}{path} ) {
     $self->{db_path} = $self->_expand_user_path( $config{database}{path} );
   }
@@ -160,6 +169,8 @@ sub _repo_root ( $self ) {
 }
 
 sub time_format ( $self ) { return $self->{time_format}; }
+
+sub torrent_pool ( $self ) { return $self->{torrent_pool}; }
 
 sub _expand_user_path ( $self, $path ) {
   return if !defined $path;
