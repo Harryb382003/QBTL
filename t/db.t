@@ -26,7 +26,7 @@ is( $db->migration_dir,
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 20, 'twenty migration files discovered' );
+is( scalar @migration_files, 22, 'twenty-two migration files discovered' );
 
 like( $migration_files[0], qr/001_initial\.sql\z/,
       'initial migration discovered' );
@@ -105,7 +105,7 @@ my $dbh = $result->{dbh};
 my $migration = $db->migrate( $result->{dbh} );
 
 ok( $migration->{ok}, 'migration result ok' );
-is( $migration->{migration_count}, 20, 'twenty migrations ran' );
+is( $migration->{migration_count}, 22, 'twenty-two migrations ran' );
 
 my ( $version ) = $result->{dbh}
     ->selectrow_array( 'SELECT version FROM schema_version WHERE id = 1' );
@@ -155,7 +155,7 @@ my $hash = '7ba7c0f31cd3ae7186c8d08353cfa87291b825e4';
 my $hv = $db->upsert_hash_value(
                                  $result->{dbh},
                                  hash       => $hash,
-                                 key        => 'qBt-savePath',
+                                 key        => 'qbt-savepath',
                                  value      => '/Volumes/A/Movies',
                                  value_type => 'text', );
 
@@ -164,13 +164,13 @@ ok( $hv->{ok}, 'hash value upsert result ok' );
 my $hv_again = $db->upsert_hash_value(
                                        $result->{dbh},
                                        hash       => $hash,
-                                       key        => 'qBt-savePath',
+                                       key        => 'qbt-savepath',
                                        value      => '/Volumes/A/Movies',
                                        value_type => 'text', );
 
 ok( $hv_again->{ok}, 'hash value repeat upsert result ok' );
 
-my $promote = $db->promote_hash_key( $result->{dbh}, key => 'qBt-savePath', );
+my $promote = $db->promote_hash_key( $result->{dbh}, key => 'qbt-savepath', );
 
 ok( $promote->{ok}, 'hash key promotion result ok' );
 is( $promote->{status}, 'promoted', 'hash key promotion status stored' );
@@ -190,7 +190,7 @@ my ( $promoted_value ) = $result->{dbh}->selectrow_array(
 is( $promoted_value, '/Volumes/A/Movies', 'promoted value backfilled' );
 
 my $promote_again =
-    $db->promote_hash_key( $result->{dbh}, key => 'qBt-savePath', );
+    $db->promote_hash_key( $result->{dbh}, key => 'qbt-savepath', );
 
 ok( $promote_again->{ok}, 'repeat hash key promotion result ok' );
 is( $promote_again->{status},
@@ -206,7 +206,7 @@ my ( $seen_count ) = $result->{dbh}->selectrow_array(
     },
   undef,
   $hash,
-  'qBt-savePath',
+  'qbt-savepath',
   '/Volumes/A/Movies', );
 
 is( $seen_count, 2, 'hash value repeat upsert increments seen_count' );
@@ -214,7 +214,7 @@ is( $seen_count, 2, 'hash value repeat upsert increments seen_count' );
 my $keys = $db->hash_keys( $result->{dbh} );
 
 ok( $keys->{ok}, 'hash keys result ok' );
-is( $keys->{rows}[0]{key},    'qBt-savePath', 'hash key listed' );
+is( $keys->{rows}[0]{key},    'qbt-savepath', 'hash key listed' );
 is( $keys->{rows}[0]{hashes}, 1,              'hash key hash count listed' );
 
 my $accessors = $db->key_accessors( $result->{dbh} );
@@ -224,18 +224,18 @@ ok( $accessors->{ok}, 'key accessors result ok' );
 my %accessor = map { $_->{key} => $_ } @{$accessors->{rows}};
 
 is( $accessor{comment}{kind},        'core', 'core key accessor seeded' );
-is( $accessor{'qBt-savePath'}{kind}, 'core', 'promoted key becomes core-ish' );
-is( $accessor{'qBt-savePath'}{source},
+is( $accessor{'qbt-savepath'}{kind}, 'core', 'promoted key becomes core-ish' );
+is( $accessor{'qbt-savepath'}{source},
     'promoted_values.qbt_savepath',
     'promoted key accessor source updated' );
 
 my $key_detail = $db->hash_key_detail(
                                        $result->{dbh},
-                                       key   => 'qBt-savePath',
+                                       key   => 'qbt-savepath',
                                        limit => 10, );
 
 ok( $key_detail->{ok}, 'hash key detail result ok' );
-is( $key_detail->{key}, 'qBt-savePath',  'hash key detail key stored' );
+is( $key_detail->{key}, 'qbt-savepath',  'hash key detail key stored' );
 is( $key_detail->{rows}[0]{hash}, $hash, 'hash key detail row hash stored' );
 
 my $manual = $db->set_manual_value(

@@ -80,20 +80,20 @@ sub _scan_common ( $self, %arg ) {
 
   if ( !$scan->{ok} ) {
     return {
-            ok             => 0,
-            action         => $refresh_only ? 'local_refresh' : 'local_scan',
-            backend        => $scan->{backend},
-            target         => $scan->{path},
-            search_tool    => $scan->{search_tool},
-            seen           => $scan->{count} // 0,
-            stored         => 0,
-            parsed         => 0,
-            parse_problems => 0,
-            skipped_known  => 0,
+            ok               => 0,
+            action           => $refresh_only ? 'local_refresh' : 'local_scan',
+            backend          => $scan->{backend},
+            target           => $scan->{path},
+            search_tool      => $scan->{search_tool},
+            seen             => $scan->{count} // 0,
+            stored           => 0,
+            parsed           => 0,
+            parse_problems   => 0,
+            skipped_known    => 0,
             skipped_excluded => 0,
-            total          => 0,
-            elapsed        => _elapsed( $started ),
-            problems       => $scan->{problems} // [],};
+            total            => 0,
+            elapsed          => _elapsed( $started ),
+            problems         => $scan->{problems} // [],};
   }
 
   return $self->db_process->with_db(
@@ -121,11 +121,11 @@ sub _scan_common ( $self, %arg ) {
 
           if ( $refresh_only ) {
             my $known =
-                $type eq 'fastresume'
+                  $type eq 'fastresume'
                 ? $db->local_fastresume_file_exists( $dbh, $path )
                 : $db->local_torrent_file_exists( $dbh, $path );
 
-            if ($known) {
+            if ( $known ) {
               if ( $type eq 'fastresume' ) {
                 $fastresume_skipped_known++;
               } else {
@@ -136,13 +136,13 @@ sub _scan_common ( $self, %arg ) {
           }
 
           if ( $type eq 'fastresume' ) {
-            my $stored_one = $self->_store_fastresume_path(
-              db       => $db,
-              dbh      => $dbh,
-              path     => $path,
-              backend  => $scan->{backend},
-              problems => \@problem,
-            );
+            my $stored_one =
+                $self->_store_fastresume_path(
+                                               db       => $db,
+                                               dbh      => $dbh,
+                                               path     => $path,
+                                               backend  => $scan->{backend},
+                                               problems => \@problem, );
 
             $fastresume_stored++        if $stored_one->{stored};
             $fastresume_parsed++        if $stored_one->{parsed};
@@ -151,13 +151,13 @@ sub _scan_common ( $self, %arg ) {
             next;
           }
 
-          my $stored_one = $self->_store_torrent_path(
-            db       => $db,
-            dbh      => $dbh,
-            path     => $path,
-            backend  => $scan->{backend},
-            problems => \@problem,
-          );
+          my $stored_one =
+              $self->_store_torrent_path(
+                                          db       => $db,
+                                          dbh      => $dbh,
+                                          path     => $path,
+                                          backend  => $scan->{backend},
+                                          problems => \@problem, );
 
           $stored++        if $stored_one->{stored};
           $parsed++        if $stored_one->{parsed};
@@ -179,7 +179,7 @@ sub _scan_common ( $self, %arg ) {
       my $bt_backup_db_torrents   = 0;
       my $bt_backup_db_fastresume = 0;
 
-      if ($bt_backup_exists) {
+      if ( $bt_backup_exists ) {
         if ( opendir my $bt_dh, $bt_backup_dir ) {
           while ( defined( my $entry = readdir $bt_dh ) ) {
             next if $entry eq '.' || $entry eq '..';
@@ -209,8 +209,7 @@ sub _scan_common ( $self, %arg ) {
           },
           undef,
           $prefix_length,
-          $bt_backup_prefix,
-        );
+          $bt_backup_prefix, );
 
         ( $bt_backup_db_fastresume ) = $dbh->selectrow_array(
           q{
@@ -220,8 +219,7 @@ sub _scan_common ( $self, %arg ) {
           },
           undef,
           $prefix_length,
-          $bt_backup_prefix,
-        );
+          $bt_backup_prefix, );
       }
 
       my $bt_backup_db_valid =
@@ -233,10 +231,12 @@ sub _scan_common ( $self, %arg ) {
           $bt_backup_db_valid ? $bt_backup_db_torrents : $bt_backup_fs_torrents;
 
       my $bt_backup_fastresume =
-          $bt_backup_db_valid ? $bt_backup_db_fastresume : $bt_backup_fs_fastresume;
+            $bt_backup_db_valid
+          ? $bt_backup_db_fastresume
+          : $bt_backup_fs_fastresume;
 
       return {
-        ok              => @problem ? 0 : 1,
+        ok              => @problem      ? 0               : 1,
         action          => $refresh_only ? 'local_refresh' : 'local_scan',
         backend         => $scan->{backend},
         scanner_backend => $scan->{backend},
@@ -259,13 +259,13 @@ sub _scan_common ( $self, %arg ) {
         fastresume_skipped_known  => $fastresume_skipped_known,
         fastresume_total          => $db->local_fastresume_file_count( $dbh ),
 
-        bt_backup_exists       => $bt_backup_exists,
-        bt_backup_count_source => $bt_backup_db_valid ? 'db' : 'filesystem',
-        bt_backup_db_valid     => $bt_backup_db_valid,
-        bt_backup_torrents     => $bt_backup_torrents,
-        bt_backup_fastresume   => $bt_backup_fastresume,
-        bt_backup_mismatch     => $bt_backup_fastresume - $bt_backup_torrents,
-        bt_backup_db_torrents  => $bt_backup_db_torrents,
+        bt_backup_exists        => $bt_backup_exists,
+        bt_backup_count_source  => $bt_backup_db_valid ? 'db' : 'filesystem',
+        bt_backup_db_valid      => $bt_backup_db_valid,
+        bt_backup_torrents      => $bt_backup_torrents,
+        bt_backup_fastresume    => $bt_backup_fastresume,
+        bt_backup_mismatch      => $bt_backup_fastresume - $bt_backup_torrents,
+        bt_backup_db_torrents   => $bt_backup_db_torrents,
         bt_backup_db_fastresume => $bt_backup_db_fastresume,
         bt_backup_fs_torrents   => $bt_backup_fs_torrents,
         bt_backup_fs_fastresume => $bt_backup_fs_fastresume,
@@ -287,61 +287,62 @@ sub _store_fastresume_path ( $self, %arg ) {
 
   if ( !@stat ) {
     push @$problem, "stat failed for $path: $!";
-    return { stored => 0, parsed => 0, parse_problem => 0, };
+    return {stored => 0, parsed => 0, parse_problem => 0,};
   }
 
   my $store = eval {
     $db->upsert_local_fastresume_file(
-      $dbh,
-      {
-       path    => $path,
-       size    => $stat[7],
-       mtime   => $stat[9],
-       backend => $backend,
-      } );
+                                       $dbh,
+                                       {
+                                        path    => $path,
+                                        size    => $stat[7],
+                                        mtime   => $stat[9],
+                                        backend => $backend,
+                                       } );
   };
 
   if ( $@ ) {
     push @$problem, "fastresume store failed for $path: $@";
-    return { stored => 0, parsed => 0, parse_problem => 0, };
+    return {stored => 0, parsed => 0, parse_problem => 0,};
   }
 
   if ( !$store->{ok} ) {
     push @$problem, "fastresume store failed for $path";
-    return { stored => 0, parsed => 0, parse_problem => 0, };
+    return {stored => 0, parsed => 0, parse_problem => 0,};
   }
 
   my $parse = $self->parser->parse_file( $path );
 
   my $parse_store = eval {
     $db->update_local_fastresume_parse(
-      $dbh,
-      {
-       path          => $path,
-       infohash      => $parse->{infohash},
-       parse_ok      => $parse->{ok} ? 1     : 0,
-       parse_problem => $parse->{ok} ? undef : $parse->{problem},
-      } );
+                                        $dbh,
+                                        {
+                                         path          => $path,
+                                         infohash      => $parse->{infohash},
+                                         parse_ok      => $parse->{ok} ? 1 : 0,
+                                         parse_problem => $parse->{ok}
+                                         ? undef
+                                         : $parse->{problem},
+                                        } );
   };
 
   if ( $@ ) {
     push @$problem, "fastresume parse store failed for $path: $@";
-    return { stored => 1, parsed => 0, parse_problem => 0, };
+    return {stored => 1, parsed => 0, parse_problem => 0,};
   }
 
   if ( !$parse_store->{ok} ) {
     push @$problem, "fastresume parse store failed for $path";
-    return { stored => 1, parsed => 0, parse_problem => 0, };
+    return {stored => 1, parsed => 0, parse_problem => 0,};
   }
 
   $self->_store_observed_keys(
-    db       => $db,
-    dbh      => $dbh,
-    path     => $path,
-    parse    => $parse,
-    label    => 'fastresume metadata',
-    problems => $problem,
-  );
+                               db       => $db,
+                               dbh      => $dbh,
+                               path     => $path,
+                               parse    => $parse,
+                               label    => 'fastresume metadata',
+                               problems => $problem, );
 
   return {
           stored        => 1,
@@ -360,72 +361,73 @@ sub _store_torrent_path ( $self, %arg ) {
 
   if ( !@stat ) {
     push @$problem, "stat failed for $path: $!";
-    return { stored => 0, parsed => 0, parse_problem => 0, };
+    return {stored => 0, parsed => 0, parse_problem => 0,};
   }
 
   my $result = eval {
     $db->upsert_local_torrent_file(
-      $dbh,
-      {
-       path    => $path,
-       size    => $stat[7],
-       mtime   => $stat[9],
-       backend => $backend,
-      } );
+                                    $dbh,
+                                    {
+                                     path    => $path,
+                                     size    => $stat[7],
+                                     mtime   => $stat[9],
+                                     backend => $backend,
+                                    } );
   };
 
   if ( $@ ) {
     push @$problem, "store failed for $path: $@";
-    return { stored => 0, parsed => 0, parse_problem => 0, };
+    return {stored => 0, parsed => 0, parse_problem => 0,};
   }
 
   if ( !$result->{ok} ) {
     push @$problem, "store failed for $path";
-    return { stored => 0, parsed => 0, parse_problem => 0, };
+    return {stored => 0, parsed => 0, parse_problem => 0,};
   }
 
   my $parse = $self->parser->parse_file( $path );
 
   my $parse_result = eval {
     $db->update_local_torrent_parse(
-      $dbh,
-      {
-       path               => $path,
-       infohash           => $parse->{infohash},
-       torrent_name       => $parse->{torrent_name},
-       comment            => $parse->{comment},
-       announce           => $parse->{announce},
-       created_by         => $parse->{created_by},
-       creation_date      => $parse->{creation_date},
-       payload_kind       => $parse->{payload_kind},
-       payload_root_name  => $parse->{payload_root_name},
-       payload_file_count => $parse->{payload_file_count},
-       payload_total_size => $parse->{payload_total_size},
-       payload_probe_path => $parse->{payload_probe_path},
-       payload_probe_name => $parse->{payload_probe_name},
-       parse_ok           => $parse->{ok} ? 1     : 0,
-       parse_problem      => $parse->{ok} ? undef : $parse->{problem},
-      } );
+                            $dbh,
+                            {
+                             path               => $path,
+                             infohash           => $parse->{infohash},
+                             torrent_name       => $parse->{torrent_name},
+                             comment            => $parse->{comment},
+                             announce           => $parse->{announce},
+                             created_by         => $parse->{created_by},
+                             creation_date      => $parse->{creation_date},
+                             payload_kind       => $parse->{payload_kind},
+                             payload_root_name  => $parse->{payload_root_name},
+                             payload_file_count => $parse->{payload_file_count},
+                             payload_total_size => $parse->{payload_total_size},
+                             payload_probe_path => $parse->{payload_probe_path},
+                             payload_probe_name => $parse->{payload_probe_name},
+                             parse_ok           => $parse->{ok} ? 1 : 0,
+                             parse_problem      => $parse->{ok}
+                             ? undef
+                             : $parse->{problem},
+                            } );
   };
 
   if ( $@ ) {
     push @$problem, "parse store failed for $path: $@";
-    return { stored => 1, parsed => 0, parse_problem => 0, };
+    return {stored => 1, parsed => 0, parse_problem => 0,};
   }
 
   if ( !$parse_result->{ok} ) {
     push @$problem, "parse store failed for $path";
-    return { stored => 1, parsed => 0, parse_problem => 0, };
+    return {stored => 1, parsed => 0, parse_problem => 0,};
   }
 
   $self->_store_observed_keys(
-    db       => $db,
-    dbh      => $dbh,
-    path     => $path,
-    parse    => $parse,
-    label    => 'metadata',
-    problems => $problem,
-  );
+                               db       => $db,
+                               dbh      => $dbh,
+                               path     => $path,
+                               parse    => $parse,
+                               label    => 'metadata',
+                               problems => $problem, );
 
   return {
           stored        => 1,
@@ -446,12 +448,11 @@ sub _store_observed_keys ( $self, %arg ) {
   for my $key ( @{$parse->{observed_keys} // []} ) {
     my $stored_key = eval {
       $db->upsert_hash_value(
-        $dbh,
-        hash       => $parse->{infohash},
-        key        => $key->{key},
-        value      => $key->{value},
-        value_type => $key->{value_type} // 'text',
-      );
+                              $dbh,
+                              hash       => $parse->{infohash},
+                              key        => $key->{key},
+                              value      => $key->{value},
+                              value_type => $key->{value_type} // 'text', );
     };
 
     if ( $@ ) {
@@ -470,7 +471,7 @@ sub _store_observed_keys ( $self, %arg ) {
   return;
 }
 
-sub _is_broad_excluded_path ($path) {
+sub _is_broad_excluded_path ( $path ) {
   return 0 if !defined $path || $path eq '';
 
   return 1 if $path =~ m{(?:\A|/)BT_backup(?:/|\z)};

@@ -11,11 +11,13 @@ use File::Spec;
 use Encode qw( decode FB_DEFAULT );
 
 use QBTL::Local::Parser;
+use QBTL::Process::QBT::ExportInfill;
 use QBTL::Process::WithDB;
 
 sub new ( $class, %arg ) {
   $arg{db_process} //= QBTL::Process::WithDB->new( db_path => $arg{db_path}, );
   $arg{parser}     //= QBTL::Local::Parser->new;
+  $arg{infill_process} //= QBTL::Process::QBT::ExportInfill->new;
 
   return bless \%arg, $class;
 }
@@ -471,7 +473,6 @@ sub _copy_target_for_torrent ( $self, %arg ) {
           },};
 }
 
-
 sub _copy_completed_to_downloaded ( $self, %arg ) {
   my $db                 = $arg{db};
   my $dbh                = $arg{dbh};
@@ -658,6 +659,11 @@ sub _move_stale_completed ( $self, %arg ) {
          hash     => $hash,
          old_path => $move->{old_path},
          new_path => $move->{new_path},};
+
+    # This keeper no longer belongs to export_dir_fin. It has been moved to
+    # queued_for_deletion, so later phases such as export infill must not try
+    # to process the old Completed_torrents path as a live keeper.
+    delete $completed_bucket->{keeper_by_hash}{$hash};
   }
 
   return {
@@ -666,7 +672,6 @@ sub _move_stale_completed ( $self, %arg ) {
           rows     => \@moved,
           problems => \@problem,};
 }
-
 
 sub _bt_backup_dir ( $self ) {
   my $home = $ENV{HOME} // '';
@@ -932,6 +937,13 @@ sub run ( $self, %arg ) {
       );
       push @problem, @{ $current_missing->{problems} // [] };
 
+      my $infill = $self->{infill_process}->infill_known_exports(
+        db      => $db,
+        dbh     => $dbh,
+        buckets => \@bucket,
+      );
+      push @problem, @{ $infill->{problems} // [] };
+
       my $completed_copied = $completed_to_downloaded->{copied} // 0;
       my $bt_restored      = scalar @{ $current_missing->{restored} // [] };
 
@@ -969,6 +981,13 @@ sub run ( $self, %arg ) {
               current_qbt_missing            => $current_missing->{missing} // [],
               missing_export_todo_count      => $current_missing->{count} // 0,
               bt_backup_restored             => $bt_restored,
+              infill                         => $infill,
+              infilled_torrents              => $infill->{torrents} // 0,
+              infilled_evidence_sources      => $infill->{evidence_sources} // 0,
+              infilled_trackers              => $infill->{trackers} // 0,
+              infilled_payload_files         => $infill->{payload_files} // 0,
+              infilled_info_fields           => $infill->{info_fields} // 0,
+              infilled_bt_backup_evidence    => $infill->{bt_backup_evidence} // 0,
               problems                       => \@problem,};
     } );
 }

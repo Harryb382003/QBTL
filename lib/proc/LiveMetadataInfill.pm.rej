@@ -1,0 +1,83 @@
+@@ -1,82 +0,0 @@
+-package proc::LiveMetadataInfill;
+-
+-use v5.40;
+-use common::sense;
+-use feature qw( signatures );
+-
+-use Exporter qw( import );
+-
+-our @EXPORT_OK = qw(
+-  is_private_value
+-  torrent_is_private
+-  torrent_needs_tracker_list
+-  live_metadata_infill_plan
+-  run_live_metadata_infill
+-);
+-
+-sub is_private_value ( $value ) {
+-  return undef if !defined $value;
+-
+-  return $value ? 1 : 0 if !ref($value) && $value =~ /\A[01]\z/;
+-
+-  if ( !ref($value) ) {
+-    my $v = lc $value;
+-    return 1 if $v =~ /\A(?:true|yes|private)\z/;
+-    return 0 if $v =~ /\A(?:false|no|public)\z/;
+-  }
+-
+-  return $value ? 1 : 0;
+-}
+-
+-sub torrent_is_private ( $torrent ) {
+-  die "torrent_is_private requires a hashref torrent\n"
+-      unless ref($torrent) eq 'HASH';
+-
+-  return is_private_value( $torrent->{is_private} );
+-}
+-
+-sub torrent_needs_tracker_list ( $torrent ) {
+-  my $is_private = torrent_is_private($torrent);
+-
+-  return 1 if !defined $is_private;
+-
+-  return $is_private ? 0 : 1;
+-}
+-
+-sub live_metadata_infill_plan ( @torrents ) {
+-  my @plan;
+-
+-  for my $torrent (@torrents) {
+-    die "live_metadata_infill_plan requires hashref torrents\n"
+-        unless ref($torrent) eq 'HASH';
+-
+-    my $hash = $torrent->{hash}
+-        // $torrent->{infohash}
+-        // $torrent->{info_hash};
+-
+-    die "torrent is missing hash/infohash\n"
+-        unless defined $hash && length $hash;
+-
+-    push @plan,
+-        {
+-          hash            => $hash,
+-          name            => $torrent->{name},
+-          is_private      => torrent_is_private($torrent),
+-          fetch_comment   => 1,
+-          fetch_file_list => 1,
+-          fetch_trackers  => torrent_needs_tracker_list($torrent),
+-        };
+-  }
+-
+-  return @plan;
+-}
+-
+-sub run_live_metadata_infill ( %args ) {
+-  my $torrents = $args{torrents};
+-  die "run_live_metadata_infill requires torrents => ARRAY\n"
+-      unless ref($torrents) eq 'ARRAY';
+-
+-  return {};
+-}
+-
+-1;

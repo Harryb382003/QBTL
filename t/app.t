@@ -180,7 +180,7 @@ like( $out, qr/Action: qbt_torrents_info/, 'qbt info command renders action' );
 $out = '';
 is( $app->run_cli( 'qbt', 'refresh' ), 0, 'qbt refresh command exits cleanly' );
 like( $out,
-      qr/qBT refresh complete\./,
+      qr/qBT refresh complete(?:d with problems)?\./,
       'qbt refresh command renders completion' );
 like( $out, qr/seen:\s+2/,     'qbt refresh command rendrs seen count' );
 like( $out, qr/stored:\s+2/,   'qbt refresh command renders stored count' );

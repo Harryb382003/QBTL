@@ -320,29 +320,30 @@ sub update_local_torrent_file_path ( $self, $dbh, %arg ) {
   my $old_row = $self->local_torrent_file_by_path( $dbh, $old );
   my $new_row = $self->local_torrent_file_by_path( $dbh, $new );
 
-  my $stored_old = $old_row && defined $old_row->{path} ? $old_row->{path} : $old;
+  my $stored_old =
+      $old_row && defined $old_row->{path} ? $old_row->{path} : $old;
 
-  if ($new_row) {
+  if ( $new_row ) {
     my $stored_new = $new_row->{path};
 
     if ( defined $stored_new && $stored_new ne $stored_old ) {
       my $old_hash = $old_row->{infohash};
       my $new_hash = $new_row->{infohash};
 
-      if (
-           defined $old_hash
-        && defined $new_hash
-        && $old_hash ne ''
-        && $new_hash ne ''
-        && $old_hash ne $new_hash
-      ) {
+      if (    defined $old_hash
+           && defined $new_hash
+           && $old_hash ne ''
+           && $new_hash ne ''
+           && $old_hash ne $new_hash )
+      {
         return {
                 ok       => 0,
                 old_path => $old,
                 db_path  => $stored_old,
                 new_path => $new,
                 target   => $stored_new,
-                problem  => 'target path already exists with different infohash'};
+                problem  => 'target path already exists with different infohash'
+        };
       }
 
       my $deleted = $dbh->do(
@@ -354,13 +355,13 @@ sub update_local_torrent_file_path ( $self, $dbh, %arg ) {
         $stored_old, );
 
       return {
-              ok        => 1,
-              old_path  => $old,
-              db_path   => $stored_old,
-              new_path  => $new,
-              target    => $stored_new,
-              changed   => $deleted ? 1 : 0,
-              merged    => 1};
+              ok       => 1,
+              old_path => $old,
+              db_path  => $stored_old,
+              new_path => $new,
+              target   => $stored_new,
+              changed  => $deleted ? 1 : 0,
+              merged   => 1};
     }
   }
 
@@ -644,7 +645,26 @@ sub migrate ( $self, $dbh ) {
       <$fh>;
     };
 
-    $dbh->do( $_ ) for grep {/\S/} split /;\s*/, $sql;
+    for my $statement ( grep {/\S/} split /;\s*/, $sql ) {
+      my $ok = eval {
+        $dbh->do( $statement );
+        1;
+      };
+
+      if ( !$ok ) {
+        my $error = $@ || $dbh->errstr || 'unknown migration error';
+
+        # Some development migrations add columns to tables that may already
+        # have been partially migrated by an earlier interrupted run.  Treat a
+        # duplicate-column failure from ALTER TABLE ... ADD COLUMN as already
+        # satisfied, then continue with the remaining statements in the file.
+        next
+            if $error =~ /duplicate column name/i
+            && $statement =~ /\bALTER\s+TABLE\b.*\bADD\s+COLUMN\b/is;
+
+        die $error;
+      }
+    }
 
     $ran++;
   }
@@ -1103,7 +1123,6 @@ sub current_qbt_hashes ( $self, $dbh ) {
   return [ map { $_->{hash} } @{$rows} ];
 }
 
-
 sub current_qbt_name_map ( $self, $dbh ) {
   my $rows = $dbh->selectall_arrayref(
     q{
@@ -1119,7 +1138,7 @@ sub current_qbt_name_map ( $self, $dbh ) {
   for my $row ( @{$rows} ) {
     next if !defined $row->{hash} || $row->{hash} eq '';
 
-    $name_by_hash{ $row->{hash} } = $row->{name};
+    $name_by_hash{$row->{hash}} = $row->{name};
   }
 
   return \%name_by_hash;
@@ -1139,7 +1158,7 @@ sub current_qbt_name_map ( $self, $dbh ) {
 
   for my $row ( @{$rows} ) {
     next if !defined $row->{hash} || $row->{hash} eq '';
-    $name{ $row->{hash} } = $row->{name};
+    $name{$row->{hash}} = $row->{name};
   }
 
   return \%name;
@@ -1451,20 +1470,21 @@ sub removed_qbt_count ( $self, $dbh ) {
 }
 
 sub _safe_promoted_column_name ( $key ) {
-  my $column = $key;
+  my $column = $key // '';
 
-  $column =~ s/[^a-z0-9]+/_/g;
+  die "invalid promoted column key '$key'\n"
+      if $column =~ /[A-Z]/;
+
+  $column =~ s/[^a-z0-9_]+/_/g;
+  $column =~ s/_+/_/g;
   $column =~ s/\A_+//;
   $column =~ s/_+\z//;
-  $column =~ s/_+/_/g;
 
-  if ( $column eq '' ) {
-    $column = 'metadata_value';
-  }
+  die "cannot build promoted column name for key '$key'\n"
+      unless length $column;
 
-  if ( $column !~ /\A[a-z]/ ) {
-    $column = "metadata_$column";
-  }
+  die "invalid promoted column name '$column' for key '$key'\n"
+      unless $column =~ /\A[a-z][a-z0-9_]*\z/;
 
   return $column;
 }
@@ -1795,9 +1815,8 @@ sub update_local_torrent_parse ( $self, $dbh, $row ) {
           path => $row->{path},};
 }
 
-
 sub record_known_local_torrent_file ( $self, $dbh, %arg ) {
-  my $path = $arg{path} // die 'known local torrent row requires path';
+  my $path = $arg{path}     // die 'known local torrent row requires path';
   my $hash = $arg{infohash} // die 'known local torrent row requires infohash';
 
   my @stat  = stat $path;
@@ -1851,11 +1870,11 @@ sub record_known_local_torrent_file ( $self, $dbh, %arg ) {
     $arg{announce}, );
 
   return {
-          ok      => 1,
-          path    => $path,
+          ok       => 1,
+          path     => $path,
           infohash => $hash,
-          size    => $size,
-          mtime   => $mtime,};
+          size     => $size,
+          mtime    => $mtime,};
 }
 
 sub upsert_key_accessor ( $self, $dbh, %arg ) {
@@ -2332,6 +2351,231 @@ sub qbt_api_values ( $self, $dbh, %arg ) {
           ok    => 1,
           rows  => $rows,
           count => scalar @{$rows},};
+}
+
+sub record_torrent_evidence_source ( $self, $dbh, %arg ) {
+  my $hash   = $arg{hash}   // die 'torrent evidence source requires hash';
+  my $source = $arg{source} // die 'torrent evidence source requires source';
+  my $path   = $arg{path}   // '';
+
+  $dbh->do(
+    q{
+      INSERT INTO torrent_evidence_sources (
+        hash,
+        source,
+        path,
+        bucket,
+        evidence_kind,
+        first_seen_on,
+        last_seen_on
+      )
+      VALUES (
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+      )
+      ON CONFLICT(hash, source, path) DO UPDATE SET
+        bucket = excluded.bucket,
+        evidence_kind = excluded.evidence_kind,
+        last_seen_on = excluded.last_seen_on
+    },
+    undef,
+    $hash,
+    $source,
+    $path,
+    $arg{bucket},
+    $arg{evidence_kind}, );
+
+  return {
+          ok     => 1,
+          hash   => $hash,
+          source => $source,
+          path   => $path,};
+}
+
+sub replace_torrent_trackers ( $self, $dbh, %arg ) {
+  my $hash     = $arg{hash}     // die 'torrent trackers require hash';
+  my $source   = $arg{source}   // die 'torrent trackers require source';
+  my $trackers = $arg{trackers} // [];
+
+  $dbh->do( q{DELETE FROM torrent_trackers WHERE hash = ? AND source = ?},
+            undef, $hash, $source );
+
+  my $insert = $dbh->prepare(
+    q{
+      INSERT INTO torrent_trackers (
+        hash,
+        source,
+        tracker_url,
+        tracker_host,
+        tracker_domain,
+        tier,
+        position,
+        first_seen_on,
+        last_seen_on
+      )
+      VALUES (
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+      )
+    }
+  );
+
+  my $stored = 0;
+
+  for my $tracker ( @{$trackers} ) {
+    next if !defined $tracker->{tracker_url} || $tracker->{tracker_url} eq '';
+
+    $insert->execute(
+                      $hash,                      $source,
+                      $tracker->{tracker_url},    $tracker->{tracker_host},
+                      $tracker->{tracker_domain}, $tracker->{tier},
+                      $tracker->{position}, );
+
+    $stored++;
+  }
+
+  return {
+          ok     => 1,
+          hash   => $hash,
+          source => $source,
+          stored => $stored,};
+}
+
+sub replace_torrent_payload_files ( $self, $dbh, %arg ) {
+  my $hash   = $arg{hash}   // die 'torrent payload files require hash';
+  my $source = $arg{source} // die 'torrent payload files require source';
+  my $files  = $arg{files}  // [];
+
+  $dbh->do( q{DELETE FROM torrent_payload_files WHERE hash = ? AND source = ?},
+            undef, $hash, $source );
+
+  my $insert = $dbh->prepare(
+    q{
+      INSERT INTO torrent_payload_files (
+        hash,
+        source,
+        file_index,
+        path,
+        name,
+        size,
+        first_seen_on,
+        last_seen_on
+      )
+      VALUES (
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+      )
+    }
+  );
+
+  my $stored = 0;
+
+  for my $file ( @{$files} ) {
+    next if !defined $file->{path} || $file->{path} eq '';
+
+    $insert->execute( $hash, $source, $file->{file_index}, $file->{path},
+                      $file->{name}, $file->{size}, );
+
+    $stored++;
+  }
+
+  return {
+          ok     => 1,
+          hash   => $hash,
+          source => $source,
+          stored => $stored,};
+}
+
+sub replace_torrent_info_fields ( $self, $dbh, %arg ) {
+  my $hash   = $arg{hash}   // die 'torrent info fields require hash';
+  my $source = $arg{source} // die 'torrent info fields require source';
+  my $fields = $arg{fields} // [];
+
+  $dbh->do( q{DELETE FROM torrent_info_fields WHERE hash = ? AND source = ?},
+            undef, $hash, $source );
+
+  my $insert = $dbh->prepare(
+    q{
+      INSERT INTO torrent_info_fields (
+        hash,
+        source,
+        key,
+        value,
+        value_type,
+        storage_policy,
+        byte_length,
+        omission_reason,
+        first_seen_on,
+        last_seen_on
+      )
+      VALUES (
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+      )
+      ON CONFLICT(hash, source, key) DO UPDATE SET
+        value = excluded.value,
+        value_type = excluded.value_type,
+        storage_policy = excluded.storage_policy,
+        byte_length = excluded.byte_length,
+        omission_reason = excluded.omission_reason,
+        last_seen_on = excluded.last_seen_on
+    }
+  );
+
+  my $stored = 0;
+
+  for my $field ( @{$fields} ) {
+    next if !defined $field->{key} || $field->{key} eq '';
+
+    $insert->execute(
+                      $hash,                 $source,
+                      $field->{key},         $field->{value},
+                      $field->{value_type},  $field->{storage_policy},
+                      $field->{byte_length}, $field->{omission_reason}, );
+
+    $self->upsert_key_accessor(
+                                $dbh,
+                                key    => $field->{key},
+                                kind   => 'observed',
+                                source => 'torrent_info_fields',
+                                status => 'todo',
+                                note   => 'Observed during qBT export infill',
+    );
+
+    $stored++;
+  }
+
+  return {
+          ok     => 1,
+          hash   => $hash,
+          source => $source,
+          stored => $stored,};
 }
 
 sub update_qbt_last ( $self, $dbh, %arg ) {

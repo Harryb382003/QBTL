@@ -162,6 +162,146 @@ sub help ( $self, $help ) {
   return 0;
 }
 
+
+sub _qbt_export_dedupe_problem_count ( $self, $result ) {
+  return scalar @{ $result->{problems} // [] };
+}
+
+sub _qbt_export_dedupe_summary ( $self, $result, %arg ) {
+  my $out    = $self->{out};
+  my $indent = $arg{indent} // '  ';
+
+  say {$out} $indent . 'kept:                             ' . ( $result->{kept}    // 0 );
+  say {$out} $indent . 'renamed:                          ' . ( $result->{renamed} // 0 );
+  say {$out} $indent . 'moved:                            ' . ( $result->{moved}   // 0 );
+  say {$out} $indent . 'copied completed -> downloaded:   '
+      . ( $result->{copied_completed_to_downloaded} // 0 );
+  say {$out} $indent . 'moved stale completed:            '
+      . ( $result->{moved_stale_completed} // 0 );
+  say {$out} $indent . 'restored missing qBT exports:     '
+      . ( $result->{bt_backup_restored} // $result->{restored_missing_qbt_exports} // 0 );
+
+  if ( $result->{infill} ) {
+    say {$out} $indent . 'infilled torrents:                '
+        . ( $result->{infilled_torrents} // 0 );
+    say {$out} $indent . 'infilled evidence sources:        '
+        . ( $result->{infilled_evidence_sources} // 0 );
+    say {$out} $indent . 'infilled trackers:                '
+        . ( $result->{infilled_trackers} // 0 );
+    say {$out} $indent . 'infilled payload files:           '
+        . ( $result->{infilled_payload_files} // 0 );
+    say {$out} $indent . 'infilled info fields:             '
+        . ( $result->{infilled_info_fields} // 0 );
+    say {$out} $indent . 'infilled BT_backup evidence:      '
+        . ( $result->{infilled_bt_backup_evidence} // 0 );
+  }
+
+  say {$out} $indent . 'problems:                         '
+      . $self->_qbt_export_dedupe_problem_count($result);
+}
+
+sub _qbt_export_dedupe_problem_lines ( $self, $result ) {
+  my @line;
+
+  my $missing_export_todo_count = $result->{missing_export_todo_count} // 0;
+  my $uncoded_collision_count   = 0;
+
+  for my $problem ( @{ $result->{problems} // [] } ) {
+    next if ref $problem ne 'HASH';
+
+    my $error = $problem->{error} // '';
+    $uncoded_collision_count++
+        if $error =~ /uncoded collision type occurred\. # TODO\z/;
+  }
+
+  if ($missing_export_todo_count) {
+    push @line,
+        '  export_dir: there were '
+        . $missing_export_todo_count
+        . ' current qBT torrents missing from export filesystem. # TODO no searching code written.';
+  }
+
+  if ($uncoded_collision_count) {
+    push @line,
+        '  export_dir: there were '
+        . $uncoded_collision_count
+        . ' uncoded filename collisions. # TODO no "<name> avert collision" code written.';
+  }
+
+  for my $problem ( @{ $result->{problems} // [] } ) {
+    next if ref $problem ne 'HASH';
+
+    my $which = defined $problem->{which} && length $problem->{which}
+        ? $problem->{which}
+        : undef;
+    my $path  = defined $problem->{path}  && length $problem->{path}  ? $problem->{path}  : undef;
+    my $hash  = defined $problem->{hash}  && length $problem->{hash}  ? $problem->{hash}  : undef;
+    my $name  = defined $problem->{name}  && length $problem->{name}  ? $problem->{name}  : undef;
+    my $error = defined $problem->{error} && length $problem->{error} ? $problem->{error} : undef;
+
+    next if defined $error && $error =~ /uncoded collision type occurred\. # TODO\z/;
+    next if defined $error && $error =~ /missing from export filesystem\. # TODO no searching code written\.?\z/;
+
+    next
+        if !defined $which
+        && !defined $path
+        && !defined $hash
+        && !defined $name
+        && !defined $error
+        && !defined $problem->{action}
+        && !defined $problem->{source_path}
+        && !defined $problem->{expected_hash}
+        && !defined $problem->{actual_hash}
+        && !defined $problem->{parse_ok}
+        && !defined $problem->{parse_problem};
+
+    my $subject = defined $path ? $path : defined $hash ? $hash : defined $name ? $name : '(none)';
+    if ( defined $name && defined $hash && length $name && $name ne $hash ) {
+      $subject .= qq{ "$name"};
+    }
+
+    push @line, '  ' . ( $which // '(unknown)' ) . ": $subject: " . ( $error // '(no error text)' );
+
+    if ( defined $problem->{action} && length $problem->{action} ) {
+      push @line, "    action: $problem->{action}";
+    }
+
+    if ( defined $problem->{source_path} && length $problem->{source_path} ) {
+      push @line, "    source: $problem->{source_path}";
+    }
+
+    if (   defined $problem->{expected_hash}
+        || defined $problem->{actual_hash}
+        || defined $problem->{parse_ok}
+        || defined $problem->{parse_problem} ) {
+      push @line, '    expected hash: ' . ( $problem->{expected_hash} // '(unknown)' );
+      push @line, '    actual hash:   ' . ( $problem->{actual_hash}   // '(unknown)' );
+      push @line, '    parse_ok:      ' . ( $problem->{parse_ok}      // '(unknown)' );
+      push @line, '    parse problem: ' . ( $problem->{parse_problem} // '(none)' );
+    }
+  }
+
+  return \@line;
+}
+
+sub _print_qbt_export_dedupe_problems ( $self, $result, %arg ) {
+  my $out    = $self->{out};
+  my $header = $arg{header} // 'Problems:';
+  my $indent = $arg{indent} // '';
+  my $lines  = $self->_qbt_export_dedupe_problem_lines($result);
+
+  return 0 if !@{$lines};
+
+  say {$out} '' if $arg{blank_before} // 1;
+  say {$out} $indent . $header;
+
+  for my $line ( @{$lines} ) {
+    say {$out} $indent . $line;
+  }
+
+  return scalar @{$lines};
+}
+
 sub init ( $self, $result ) {
   my $out = $self->{out};
 
@@ -211,10 +351,12 @@ sub init ( $self, $result ) {
 
     say {$out} '';
     say {$out} 'qBT export dedupe:';
-    say {$out} '  kept:     ' . ( $export->{kept}    // 0 );
-    say {$out} '  renamed:  ' . ( $export->{renamed} // 0 );
-    say {$out} '  moved:    ' . ( $export->{moved}   // 0 );
-    say {$out} '  problems: ' . scalar @{ $export->{problems} // [] };
+    $self->_qbt_export_dedupe_summary( $export, indent => '  ' );
+    $self->_print_qbt_export_dedupe_problems(
+                                             $export,
+                                             header       => 'Problems:',
+                                             blank_before => 1,
+                                             indent       => '', );
   }
 
   say {$out} '';
@@ -864,10 +1006,12 @@ sub qbt_refresh ( $self, $result ) {
 
     say {$out} "";
     say {$out} "qBT export dedupe:";
-    say {$out} "  kept:     " . ( $export->{kept}    // 0 );
-    say {$out} "  renamed:  " . ( $export->{renamed} // 0 );
-    say {$out} "  moved:    " . ( $export->{moved}   // 0 );
-    say {$out} "  problems: " . scalar @{ $export->{problems} // [] };
+    $self->_qbt_export_dedupe_summary( $export, indent => '  ' );
+    $self->_print_qbt_export_dedupe_problems(
+                                             $export,
+                                             header       => 'Problems:',
+                                             blank_before => 1,
+                                             indent       => '', );
   }
 
   if ( @{$result->{problems}} ) {
@@ -897,17 +1041,7 @@ sub qbt_export_dedupe ( $self, $result ) {
   }
 
   say {$out} '  queued for deletion:              ' . ( $result->{queue_dir} // '' );
-  say {$out} '  kept:                             ' . ( $result->{kept}      // 0 );
-  say {$out} '  renamed:                          ' . ( $result->{renamed}   // 0 );
-  say {$out} '  moved:                            ' . ( $result->{moved}     // 0 );
-  say {$out} '  copied completed -> downloaded:   '
-      . ( $result->{copied_completed_to_downloaded} // 0 );
-  say {$out} '  moved stale completed:            '
-      . ( $result->{moved_stale_completed} // 0 );
-  say {$out} '  current qBT missing downloaded:   '
-      . ( $result->{current_qbt_missing_downloaded} // 0 );
-  say {$out} '  restored:                         '
-      . ( $result->{bt_backup_restored} // 0 );
+  $self->_qbt_export_dedupe_summary( $result, indent => '  ' );
 
   for my $bucket ( @{ $result->{buckets} // [] } ) {
     say {$out} '';
@@ -924,69 +1058,7 @@ sub qbt_export_dedupe ( $self, $result ) {
     say {$out} '  moved:            ' . ( $bucket->{moved}            // 0 );
   }
 
-  my $missing_export_todo_count = $result->{missing_export_todo_count} // 0;
-
-  if ( $missing_export_todo_count || @{ $result->{problems} // [] } ) {
-    say {$out} '';
-    say {$out} 'Problems:';
-
-    if ( $missing_export_todo_count ) {
-      say {$out}
-          '  export_dir: there were '
-          . $missing_export_todo_count
-          . ' current qBT torrents missing from export filesystem. # TODO no searching code written';
-    }
-
-    for my $problem ( @{ $result->{problems} } ) {
-      next if ref $problem ne 'HASH';
-
-      my $which = defined $problem->{which} && length $problem->{which}
-          ? $problem->{which}
-          : undef;
-      my $path  = defined $problem->{path}  && length $problem->{path} ? $problem->{path}  : undef;
-      my $hash  = defined $problem->{hash}  && length $problem->{hash} ? $problem->{hash}  : undef;
-      my $name  = defined $problem->{name}  && length $problem->{name} ? $problem->{name}  : undef;
-      my $error = defined $problem->{error} && length $problem->{error} ? $problem->{error} : undef;
-
-      next
-          if !defined $which
-          && !defined $path
-          && !defined $hash
-          && !defined $name
-          && !defined $error
-          && !defined $problem->{action}
-          && !defined $problem->{source_path}
-          && !defined $problem->{expected_hash}
-          && !defined $problem->{actual_hash}
-          && !defined $problem->{parse_ok}
-          && !defined $problem->{parse_problem};
-
-      my $subject = defined $path ? $path : defined $hash ? $hash : defined $name ? $name : '(none)';
-      if ( defined $name && defined $hash && length $name && $name ne $hash ) {
-        $subject .= qq{ "$name"};
-      }
-
-      say {$out} '  ' . ( $which // '(unknown)' ) . ": $subject: " . ( $error // '(no error text)' );
-
-      if ( defined $problem->{action} && length $problem->{action} ) {
-        say {$out} "    action: $problem->{action}";
-      }
-
-      if ( defined $problem->{source_path} && length $problem->{source_path} ) {
-        say {$out} "    source: $problem->{source_path}";
-      }
-
-      if (   defined $problem->{expected_hash}
-          || defined $problem->{actual_hash}
-          || defined $problem->{parse_ok}
-          || defined $problem->{parse_problem} ) {
-        say {$out} '    expected hash: ' . ( $problem->{expected_hash} // '(unknown)' );
-        say {$out} '    actual hash:   ' . ( $problem->{actual_hash}   // '(unknown)' );
-        say {$out} '    parse_ok:      ' . ( $problem->{parse_ok}      // '(unknown)' );
-        say {$out} '    parse problem: ' . ( $problem->{parse_problem} // '(none)' );
-      }
-    }
-
+  if ( $self->_print_qbt_export_dedupe_problems( $result ) ) {
     return 1;
   }
 
