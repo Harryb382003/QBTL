@@ -317,7 +317,6 @@ for my $plan (@planned) {
   return $result;
 }
 
-
 sub _apply_tracker_prefix_collision_plan ( $self, %arg ) {
   my $planned = $arg{planned} // [];
   my $result  = $arg{result};
@@ -632,8 +631,7 @@ if ( -e $new_path ) {
         old_path  => $old_path,
         new_path  => $new_path,
         };
-  }
-
+}
 
 sub _tracker_tag ( $self, $torrent ) {
   my $announce = $torrent->{announce} // '';
@@ -1073,7 +1071,6 @@ sub _audit_current_qbt_downloaded ( $self, %arg ) {
   my $downloaded_bucket = $arg{downloaded_bucket};
   my $completed_bucket  = $arg{completed_bucket};
   my $qbt_name_by_hash  = $arg{qbt_name_by_hash} // {};
-
   my @missing;
   my @restored;
   my @problem;
@@ -1081,18 +1078,13 @@ sub _audit_current_qbt_downloaded ( $self, %arg ) {
   for my $hash ( @{ $db->current_qbt_hashes( $dbh ) } ) {
     next if exists $downloaded_bucket->{keeper_by_hash}{$hash};
 
-    # If Completed_torrents has it, the Completed -> Downloaded repair owns it.
-    # Do not also emit a generic current-qBT-missing problem.
-    next if exists $completed_bucket->{keeper_by_hash}{$hash};
-
     my $name = $qbt_name_by_hash->{$hash};
-
     my $restore = $self->_restore_current_qbt_from_bt_backup(
-                                                             db                => $db,
-                                                             dbh               => $dbh,
-                                                             downloaded_bucket => $downloaded_bucket,
-                                                             hash              => $hash,
-                                                             name              => $name, );
+      db => $db,
+      dbh               => $dbh,
+      downloaded_bucket => $downloaded_bucket,
+      hash              => $hash,
+      name              => $name, );
 
     if ( $restore->{ok} && $restore->{restored} ) {
       push @restored, $restore->{row};
@@ -1101,6 +1093,14 @@ sub _audit_current_qbt_downloaded ( $self, %arg ) {
 
     if ( !$restore->{ok} && $restore->{problem} ) {
       push @problem, $restore->{problem};
+      push @missing, {
+        which => 'export_dir',
+        path  => undef,
+        hash  => $hash,
+        name  => $name,
+        error => 'current qBT torrent missing from Downloaded_torrents.'
+          . '# TODO no repair code written',
+      };
       next;
     }
 
@@ -1110,7 +1110,7 @@ sub _audit_current_qbt_downloaded ( $self, %arg ) {
          path  => undef,
          hash  => $hash,
          name  => $name,
-         error => 'missing from export filesystem. # TODO no searching code written',};
+         error => 'current qBT torrent missing from Downloaded_torrents. # TODO no repair code written',};
   }
 
   return {
@@ -1119,6 +1119,47 @@ sub _audit_current_qbt_downloaded ( $self, %arg ) {
           restored => \@restored,
           problems => \@problem,
           count    => scalar @missing,};
+}
+
+sub _audit_current_qbt_completed ( $self, %arg ) {
+  my $db                = $arg{db};
+  my $dbh               = $arg{dbh};
+  my $downloaded_bucket = $arg{downloaded_bucket};
+  my $completed_bucket  = $arg{completed_bucket};
+  my $qbt_name_by_hash  = $arg{qbt_name_by_hash} // {};
+  my $current_completed = $db->current_qbt_completed_hash_map($dbh);
+  my @missing;
+  my $downloaded_available = 0;
+  my $downloaded_missing   = 0;
+
+  for my $hash ( sort keys %{$current_completed} ) {
+    next if exists $completed_bucket->{keeper_by_hash}{$hash};
+
+    my $has_downloaded =
+        exists $downloaded_bucket->{keeper_by_hash}{$hash} ? 1 : 0;
+
+    if ($has_downloaded) {
+      $downloaded_available++;
+    } else {
+      $downloaded_missing++;
+    }
+
+    push @missing,
+        {
+         which                => 'export_dir_fin',
+         path                 => undef,
+         hash                 => $hash,
+         name                 => $qbt_name_by_hash->{$hash},
+         downloaded_available => $has_downloaded,
+         error                => 'completed current qBT torrent missing from Completed_torrents. # TODO no repair code written',};
+  }
+
+  return {
+          ok                   => @missing ? 0 : 1,
+          missing              => \@missing,
+          count                => scalar @missing,
+          downloaded_available => $downloaded_available,
+          downloaded_missing   => $downloaded_missing,};
 }
 
 sub _finalize_bucket_counts ( $self, $bucket ) {
@@ -1199,6 +1240,14 @@ sub run ( $self, %arg ) {
       );
       push @problem, @{ $current_missing->{problems} // [] };
 
+      my $completed_missing = $self->_audit_current_qbt_completed(
+        db                => $db,
+        dbh               => $dbh,
+        downloaded_bucket => $bucket_by_which{export_dir},
+        completed_bucket  => $bucket_by_which{export_dir_fin},
+        qbt_name_by_hash  => $qbt_name_by_hash,
+      );
+
       my $infill = $self->{infill_process}->infill_known_exports(
         db      => $db,
         dbh     => $dbh,
@@ -1260,7 +1309,7 @@ sub run ( $self, %arg ) {
       }
 
       return {
-              ok                             => @problem || ( $current_missing->{count} // 0 ) ? 0 : 1,
+              ok                             => @problem || ( $current_missing->{count} // 0 ) || ( $completed_missing->{count} // 0 ) ? 0 : 1,
               action                         => 'qbt_export_dedupe',
               queue_dir                      => $queue_dir,
               torrent_pool                   => $torrent_pool,
@@ -1285,8 +1334,19 @@ sub run ( $self, %arg ) {
               copied_completed_to_downloaded => $completed_copied,
               moved_stale_completed          => $stale_completed->{moved} // 0,
               current_qbt_missing_downloaded => $current_missing->{count} // 0,
+              current_qbt_missing_completed  => $completed_missing->{count} // 0,
+              current_qbt_completed_missing_downloaded_available =>
+                  $completed_missing->{downloaded_available} // 0,
+              current_qbt_completed_missing_downloaded_missing =>
+                  $completed_missing->{downloaded_missing} // 0,
               current_qbt_missing            => $current_missing->{missing} // [],
+              current_qbt_completed_missing  => $completed_missing->{missing} // [],
               missing_export_todo_count      => $current_missing->{count} // 0,
+              missing_completed_todo_count   => $completed_missing->{count} // 0,
+              missing_completed_downloaded_available_todo_count =>
+                  $completed_missing->{downloaded_available} // 0,
+              missing_completed_downloaded_missing_todo_count =>
+                  $completed_missing->{downloaded_missing} // 0,
               bt_backup_restored             => $bt_restored,
               infill                         => $infill,
               infilled_torrents              => $infill->{torrents} // 0,

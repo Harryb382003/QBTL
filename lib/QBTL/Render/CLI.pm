@@ -162,7 +162,6 @@ sub help ( $self, $help ) {
   return 0;
 }
 
-
 sub _qbt_export_dedupe_problem_count ( $self, $result ) {
   return scalar @{ $result->{problems} // [] };
 }
@@ -200,6 +199,14 @@ sub _qbt_export_dedupe_summary ( $self, $result, %arg ) {
       . ( $result->{copied_completed_to_downloaded} // 0 );
   say {$out} $indent . 'moved stale completed:            '
       . ( $result->{moved_stale_completed} // 0 );
+  say {$out} $indent . 'current missing downloaded:       '
+      . ( $result->{current_qbt_missing_downloaded} // 0 );
+  say {$out} $indent . 'completed missing completed:      '
+      . ( $result->{current_qbt_missing_completed} // 0 );
+  say {$out} $indent . 'completed missing downloaded ok:  '
+      . ( $result->{current_qbt_completed_missing_downloaded_available} // 0 );
+  say {$out} $indent . 'completed missing downloaded miss:'
+      . ( $result->{current_qbt_completed_missing_downloaded_missing} // 0 );
   say {$out} $indent . 'restored missing qBT exports:     '
       . ( $result->{bt_backup_restored} // $result->{restored_missing_qbt_exports} // 0 );
 
@@ -225,29 +232,52 @@ sub _qbt_export_dedupe_summary ( $self, $result, %arg ) {
 sub _qbt_export_dedupe_problem_lines ( $self, $result ) {
   my @line;
 
-  my $missing_export_todo_count = $result->{missing_export_todo_count} // 0;
-  my $uncoded_collision_count   = 0;
-
-  for my $problem ( @{ $result->{problems} // [] } ) {
-    next if ref $problem ne 'HASH';
-
-    my $error = $problem->{error} // '';
-    $uncoded_collision_count++
-        if $error =~ /uncoded collision type occurred\. # TODO\z/;
-  }
+  my $missing_export_todo_count    = $result->{missing_export_todo_count} // 0;
+  my $missing_completed_todo_count = $result->{missing_completed_todo_count} // 0;
+  my $missing_completed_downloaded_available =
+      $result->{missing_completed_downloaded_available_todo_count} // 0;
+  my $missing_completed_downloaded_missing =
+      $result->{missing_completed_downloaded_missing_todo_count} // 0;
+  my $different_hash_collision_count = $result->{rename_target_other_hash} // 0;
 
   if ($missing_export_todo_count) {
     push @line,
         '  export_dir: there were '
         . $missing_export_todo_count
-        . ' current qBT torrents missing from export filesystem. # TODO no searching code written.';
+        . ' current qBT torrents missing from Downloaded_torrents. # TODO no repair code written.';
   }
 
-  if ($uncoded_collision_count) {
+  if ($missing_completed_todo_count) {
     push @line,
-        '  export_dir: there were '
-        . $uncoded_collision_count
-        . ' uncoded filename collisions. # TODO no "<name> avert collision" code written.';
+        '  export_dir_fin: there were '
+        . $missing_completed_todo_count
+        . ' completed qBT torrents missing from Completed_torrents.';
+
+    if ( $missing_completed_downloaded_missing == $missing_completed_todo_count ) {
+      push @line,
+          '    '
+          . $missing_completed_todo_count
+          . ' are also missing from Downloaded_torrents, so there is no filesystem source to copy from.';
+    }
+    else {
+      push @line,
+          '    '
+          . $missing_completed_downloaded_missing
+          . ' are also missing from Downloaded_torrents.';
+      push @line,
+          '    '
+          . $missing_completed_downloaded_available
+          . ' have Downloaded_torrents source.';
+    }
+
+    push @line, '    # TODO queue for qBT API add.';
+  }
+
+  if ($different_hash_collision_count) {
+    push @line,
+        '  export dirs: there were '
+        . $different_hash_collision_count
+        . ' different-hash filename collisions. # TODO no "<name> avert collision" code written.';
   }
 
   for my $problem ( @{ $result->{problems} // [] } ) {
@@ -262,7 +292,8 @@ sub _qbt_export_dedupe_problem_lines ( $self, $result ) {
     my $error = defined $problem->{error} && length $problem->{error} ? $problem->{error} : undef;
 
     next if defined $error && $error =~ /uncoded collision type occurred\. # TODO\z/;
-    next if defined $error && $error =~ /missing from export filesystem\. # TODO no searching code written\.?\z/;
+    next if defined $error && $error =~ /current qBT torrent missing from Downloaded_torrents\. # TODO no repair code written\.?\z/;
+    next if defined $error && $error =~ /completed current qBT torrent missing from Completed_torrents\. # TODO no repair code written\.?\z/;
 
     next
         if !defined $which
@@ -413,7 +444,6 @@ sub local_reset ( $self, $result ) {
 
   return 0;
 }
-
 
 sub help_all ( $self, $topics ) {
   my $out = $self->{out};
@@ -1053,7 +1083,6 @@ sub qbt_refresh ( $self, $result ) {
   return 0;
 }
 
-
 sub _print_qbt_export_dedupe_rename_collision_samples ( $self, $result ) {
   my @sample = @{ $result->{rename_target_collision_samples} // [] };
   return if !@sample;
@@ -1235,7 +1264,6 @@ sub qbt_status ( $self, $result ) {
   return 0;
 }
 
-
 sub search_hat ( $self, $result ) {
   if ( !$result->{ok} ) {
     return $self->db_error($result);
@@ -1307,7 +1335,6 @@ sub search_list ( $self, $result ) {
 
   return;
 }
-
 
 sub search_hash ( $self, $result ) {
   my $out = $self->{out};
