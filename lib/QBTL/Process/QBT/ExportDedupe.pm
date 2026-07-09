@@ -86,6 +86,7 @@ sub _dedupe_bucket ( $self, %arg ) {
   my $which     = $arg{which};
   my $dir       = $arg{dir};
   my $queue_dir         = $arg{queue_dir};
+  my $torrent_pool     = $arg{torrent_pool};
   my $qbt_name_by_hash = $arg{qbt_name_by_hash} // {};
 
   my @problem;
@@ -116,6 +117,8 @@ sub _dedupe_bucket ( $self, %arg ) {
                 rename_tracker_prefix_unresolved => 0,
                 rename_already_named  => 0,
                 rename_target_collision_samples => [],
+                torrent_pool_copied_unused => 0,
+                torrent_pool_existing_unused => 0,
                 keeper_by_hash        => {},
                 problems              => \@problem,};
 
@@ -310,6 +313,25 @@ for my $plan (@planned) {
 
   $result->{keeper_by_hash}{$hash} = $keeper;
   $result->{kept}++;
+
+  my $pool_copy = $self->_copy_unused_keeper_to_torrent_pool(
+    db           => $db,
+    dbh          => $dbh,
+    keeper       => $keeper,
+    torrent_pool => $torrent_pool,
+    which        => $which,
+  );
+
+  if ( !$pool_copy->{ok} ) {
+    push @problem, $pool_copy->{problem};
+  }
+  elsif ( $pool_copy->{copied} ) {
+    $result->{torrent_pool_copied_unused}++;
+  }
+  elsif ( $pool_copy->{existing} ) {
+    $result->{torrent_pool_existing_unused}++;
+  }
+
 }
 
   $result->{ok} = @problem ? 0 : 1;
@@ -409,6 +431,192 @@ sub _directory_inventory ( $self, $dir ) {
   return ( [ sort @torrent ], \%meta );
 }
 
+sub _torrent_pool_copy_target ( $self, %arg ) {
+  my $torrent_pool = $arg{torrent_pool};
+  my $keeper       = $arg{keeper};
+
+  my $hash = $keeper->{hash} // '';
+  my $base = basename( $keeper->{path} // '' );
+
+  return {
+          ok      => 0,
+          problem => 'torrent pool copy requires keeper hash',
+  } if $hash eq '';
+
+  return {
+          ok      => 0,
+          problem => 'torrent pool copy requires keeper path',
+  } if $base eq '';
+
+  my $target = File::Spec->catfile( $torrent_pool, $base );
+
+  if ( -e $target ) {
+    my $parse = $self->parser->parse_file($target);
+
+    if ( $parse->{ok} && ( $parse->{infohash} // '' ) eq $hash ) {
+      return {
+              ok       => 1,
+              target   => $target,
+              existing => 1,
+      };
+    }
+
+    $target = File::Spec->catfile( $torrent_pool, $hash . '.torrent' );
+
+    if ( -e $target ) {
+      my $hash_parse = $self->parser->parse_file($target);
+
+      if ( $hash_parse->{ok} && ( $hash_parse->{infohash} // '' ) eq $hash ) {
+        return {
+                ok       => 1,
+                target   => $target,
+                existing => 1,
+        };
+      }
+
+      return {
+              ok      => 0,
+              target  => $target,
+              problem => 'torrent pool fallback target exists with different or unreadable infohash',
+      };
+    }
+  }
+
+  return {
+          ok       => 1,
+          target   => $target,
+          existing => 0,
+  };
+}
+
+
+sub _write_torrent_pool_copy ( $self, %arg ) {
+  my $source = $arg{source};
+  my $target = $arg{target};
+
+  # Centralized writer hook:
+  # when QBTL starts storing intentional dictionary overrides, such as a
+  # rewritten comment, this is where the bencoded torrent should be written
+  # with those overrides. Until an override exists, preserve source bytes.
+  if ( !copy( $source, $target ) ) {
+    return {
+            ok      => 0,
+            problem => "copy unused keeper to torrent pool failed: $!",
+    };
+  }
+
+  return {
+          ok     => 1,
+          target => $target,
+  };
+}
+
+
+sub _copy_unused_keeper_to_torrent_pool ( $self, %arg ) {
+  my $db           = $arg{db};
+  my $dbh          = $arg{dbh};
+  my $keeper       = $arg{keeper};
+  my $torrent_pool = $arg{torrent_pool};
+  my $which        = $arg{which};
+
+  return { ok => 1, copied => 0, existing => 0 }
+      if !defined $torrent_pool || $torrent_pool eq '';
+
+  return { ok => 1, copied => 0, existing => 0 }
+    if $current_qbt_hash->{$keeper->{hash}};
+
+  my $source = $keeper->{path};
+
+  return {
+          ok      => 0,
+          problem => {
+                      which => 'torrent_pool',
+                      path  => $source,
+                      hash  => $keeper->{hash},
+                      error => 'unused keeper has no readable source path',
+          },
+  } if !defined $source || !-f $source;
+
+  my $target = $self->_torrent_pool_copy_target(
+    torrent_pool => $torrent_pool,
+    keeper       => $keeper,
+  );
+
+  if ( !$target->{ok} ) {
+    return {
+            ok      => 0,
+            problem => {
+                        which => 'torrent_pool',
+                        path  => $source,
+                        hash  => $keeper->{hash},
+                        target => $target->{target},
+                        error => $target->{problem}
+                          // 'could not choose torrent pool target',
+            },
+    };
+  }
+
+  return { ok => 1, copied => 0, existing => 1, target => $target->{target} }
+      if $target->{existing};
+
+  my $written = $self->_write_torrent_pool_copy(
+    source => $source,
+    target => $target->{target},
+    keeper => $keeper,
+    which  => $which,
+  );
+
+  if ( !$written->{ok} ) {
+    return {
+            ok      => 0,
+            problem => {
+                        which  => 'torrent_pool',
+                        path   => $source,
+                        hash   => $keeper->{hash},
+                        target => $target->{target},
+                        error  => $written->{problem}
+                          // 'write torrent pool copy failed',
+            },
+    };
+  }
+
+  my $stored = $self->_store_torrent_file( $db, $dbh, $target->{target}, 'torrent_pool' );
+
+  if ( !$stored->{ok} || !$stored->{parse_ok} ) {
+    return {
+            ok      => 0,
+            problem => {
+                        which  => 'torrent_pool',
+                        path   => $target->{target},
+                        hash   => $keeper->{hash},
+                        error  => $stored->{problem}
+                          // 'torrent pool copy did not parse after write',
+            },
+    };
+  }
+
+  if ( ( $stored->{hash} // '' ) ne ( $keeper->{hash} // '' ) ) {
+    return {
+            ok      => 0,
+            problem => {
+                        which         => 'torrent_pool',
+                        path          => $target->{target},
+                        hash          => $keeper->{hash},
+                        existing_hash => $stored->{hash},
+                        error         => 'torrent pool copy hash mismatch after write',
+            },
+    };
+  }
+
+  return {
+          ok       => 1,
+          copied   => 1,
+          existing => 0,
+          target   => $target->{target},
+  };
+}
+
+
 sub _move_duplicate ( $self, %arg ) {
   my $db        = $arg{db};
   my $dbh       = $arg{dbh};
@@ -418,6 +626,42 @@ sub _move_duplicate ( $self, %arg ) {
 
   my $old_path = $item->{path};
   my $target   = $self->_unique_path( $queue_dir, basename( $old_path ) );
+
+  my $stored = $self->_store_torrent_file(
+    $db,
+    $dbh,
+    $old_path,
+    $which,
+    force_parse => 1,
+  );
+
+  if ( !$stored->{ok} || !$stored->{parse_ok} ) {
+    return {
+            ok      => 0,
+            problem => {
+                        which => $which,
+                        path  => $old_path,
+                        hash  => $item->{hash},
+                        error => 'duplicate metadata was not promoted; refused to queue/cull duplicate',
+            },};
+  }
+
+  if (    defined $item->{hash}
+       && length $item->{hash}
+       && defined $stored->{hash}
+       && length $stored->{hash}
+       && $stored->{hash} ne $item->{hash} )
+  {
+    return {
+            ok      => 0,
+            problem => {
+                        which         => $which,
+                        path          => $old_path,
+                        hash          => $item->{hash},
+                        existing_hash => $stored->{hash},
+                        error         => 'duplicate metadata hash mismatch; refused to queue/cull duplicate',
+            },};
+  }
 
   if ( !move( $old_path, $target ) ) {
     return {
@@ -429,16 +673,30 @@ sub _move_duplicate ( $self, %arg ) {
             },};
   }
 
-  my $updated = $db->update_local_torrent_file_path(
+  my $updated = $db->cull_moved_duplicate_torrent_file(
     $dbh,
     old_path => $old_path,
     new_path => $target,
+    hash     => $stored->{hash} // $item->{hash} // '',
   );
+
+  if ( !$updated->{ok} ) {
+    return {
+            ok      => 0,
+            problem => {
+                        which => $which,
+                        path  => $old_path,
+                        hash  => $stored->{hash} // $item->{hash},
+                        error => $updated->{problem}
+                          // 'queued duplicate DB cleanup failed',
+            },};
+  }
 
   return {
           ok       => $updated->{ok},
           old_path => $old_path,
           new_path => $target,
+          culled   => $updated->{deleted} // 0,
           };
 }
 
@@ -1204,6 +1462,7 @@ sub run ( $self, %arg ) {
                                    which            => $which,
                                    dir              => $dir,
                                    queue_dir        => $queue_dir,
+                                   torrent_pool     => $torrent_pool,
                                    qbt_name_by_hash => $qbt_name_by_hash, );
 
         push @bucket,  $result;
@@ -1281,6 +1540,8 @@ sub run ( $self, %arg ) {
       my $rename_tracker_prefixed = 0;
       my $rename_tracker_prefix_unresolved = 0;
       my $rename_already_named  = 0;
+      my $torrent_pool_copied_unused = 0;
+      my $torrent_pool_existing_unused = 0;
       my @rename_target_collision_sample;
       my $kept                  = 0;
 
@@ -1299,6 +1560,10 @@ sub run ( $self, %arg ) {
         $rename_tracker_prefixed += $bucket->{rename_tracker_prefixed} // 0;
         $rename_tracker_prefix_unresolved += $bucket->{rename_tracker_prefix_unresolved} // 0;
         $rename_already_named += $bucket->{rename_already_named} // 0;
+        $torrent_pool_copied_unused +=
+            $bucket->{torrent_pool_copied_unused} // 0;
+        $torrent_pool_existing_unused +=
+            $bucket->{torrent_pool_existing_unused} // 0;
 
         for my $sample ( @{ $bucket->{rename_target_collision_samples} // [] } ) {
           last if @rename_target_collision_sample >= 25;
@@ -1315,6 +1580,8 @@ sub run ( $self, %arg ) {
               torrent_pool                   => $torrent_pool,
               torrent_pool_created           => $torrent_pool_result->{created} // 0,
               torrent_pool_existing          => $torrent_pool_result->{existing} // 0,
+              torrent_pool_copied_unused     => $torrent_pool_copied_unused,
+              torrent_pool_existing_unused   => $torrent_pool_existing_unused,
               buckets                        => \@bucket,
               kept                           => $kept,
               moved                          => $moved,
@@ -1371,7 +1638,7 @@ sub _safe_basename ( $self, $name ) {
   return $name;
 }
 
-sub _store_torrent_file ( $self, $db, $dbh, $path, $backend ) {
+sub _store_torrent_file ( $self, $db, $dbh, $path, $backend, %arg ) {
 
   if ( !-f $path ) {
     return {
@@ -1392,7 +1659,8 @@ sub _store_torrent_file ( $self, $db, $dbh, $path, $backend ) {
   my $mtime = $stat[9] // 0;
 
   my $existing = $db->local_torrent_file_by_path( $dbh, $path );
-  if (    $existing
+  if (    !$arg{force_parse}
+       && $existing
        && ( $existing->{parse_ok} // 0 )
        && defined $existing->{infohash}
        && length $existing->{infohash}

@@ -1117,22 +1117,27 @@ sub qbt_export_dedupe ( $self, $result ) {
     say {$out} 'qBT export dedupe complete.';
   }
 
-  say {$out} '  queued for deletion:              ' . ( $result->{queue_dir} // '' );
-  say {$out} '  torrent pool:                     ' . ( $result->{torrent_pool} // '' );
+  say {$out} '  queued for deletion:        ' . ( $result->{queue_dir} // '' );
+  say {$out} '  torrent pool:               ' . ( $result->{torrent_pool} // '' );
+  say {$out} $indent . 'torrent pool copied unused:      '
+      . ( $result->{torrent_pool_copied_unused} // 0 );
+  say {$out} $indent . 'torrent pool existing unused:    '
+      . ( $result->{torrent_pool_existing_unused} // 0 );
+
   $self->_qbt_export_dedupe_summary( $result, indent => '  ' );
 
   for my $bucket ( @{ $result->{buckets} // [] } ) {
     say {$out} '';
     say {$out} ( $bucket->{which} // '' ) . ':';
-    say {$out} '  directory:        ' . ( $bucket->{directory}        // '' );
-    say {$out} '  torrent files:    ' . ( $bucket->{scanned}          // 0 );
-    say {$out} '  stored:           ' . ( $bucket->{stored}           // 0 );
-    say {$out} '  parsed:           ' . ( $bucket->{parsed}           // 0 );
-    say {$out} '  parse problems:   ' . ( $bucket->{parse_problems}   // 0 );
-    say {$out} '  hashes:           ' . ( $bucket->{hashes}           // 0 );
-    say {$out} '  duplicate groups: ' . ( $bucket->{duplicate_groups} // 0 );
-    say {$out} '  kept:             ' . ( $bucket->{kept}             // 0 );
-    say {$out} '  renamed:          ' . ( $bucket->{renamed}          // 0 );
+    say {$out} '  directory:         ' . ( $bucket->{directory}        // '' );
+    say {$out} '  torrent files:     ' . ( $bucket->{scanned}          // 0 );
+    say {$out} '  stored:            ' . ( $bucket->{stored}           // 0 );
+    say {$out} '  parsed:            ' . ( $bucket->{parsed}           // 0 );
+    say {$out} '  parse problems:    ' . ( $bucket->{parse_problems}   // 0 );
+    say {$out} '  hashes:            ' . ( $bucket->{hashes}           // 0 );
+    say {$out} '  duplicate groups:  ' . ( $bucket->{duplicate_groups} // 0 );
+    say {$out} '  kept:              ' . ( $bucket->{kept}             // 0 );
+    say {$out} '  renamed:           ' . ( $bucket->{renamed}          // 0 );
     say {$out} '  rename candidates: ' . ( $bucket->{rename_candidates} // 0 );
     say {$out} '  rename not needed: ' . ( $bucket->{rename_not_needed} // 0 );
     say {$out} '  rename target exists: '

@@ -1769,6 +1769,74 @@ sub update_local_fastresume_parse ( $self, $dbh, $row ) {
           path => $row->{path},};
 }
 
+sub cull_moved_duplicate_torrent_file ( $self, $dbh, %arg ) {
+  my $old  = $arg{old_path} // die 'old_path is required';
+  my $new  = $arg{new_path} // die 'new_path is required';
+  my $hash = $arg{hash}     // '';
+
+  my $old_row = $self->local_torrent_file_by_path( $dbh, $old );
+  my $new_row = $self->local_torrent_file_by_path( $dbh, $new );
+
+  my $stored_old =
+      $old_row && defined $old_row->{path} ? $old_row->{path} : $old;
+
+  my @delete_path = ($stored_old);
+
+  if ($new_row) {
+    my $stored_new = $new_row->{path};
+
+    if ( defined $stored_new && $stored_new ne $stored_old ) {
+      my $old_hash = $old_row->{infohash};
+      my $new_hash = $new_row->{infohash};
+
+      if (    defined $old_hash
+           && defined $new_hash
+           && $old_hash ne ''
+           && $new_hash ne ''
+           && $old_hash ne $new_hash )
+      {
+        return {
+                ok       => 0,
+                old_path => $old,
+                db_path  => $stored_old,
+                new_path => $new,
+                target   => $stored_new,
+                problem  => 'queued duplicate target path already exists with different infohash',
+        };
+      }
+
+      push @delete_path, $stored_new if defined $stored_new && length $stored_new;
+    }
+  }
+
+  push @delete_path, $new;
+
+  my %seen;
+  my $deleted = 0;
+
+  for my $path ( grep { defined && length && !$seen{$_}++ } @delete_path ) {
+    my $rows = $dbh->do(
+      q{
+        DELETE FROM local_torrent_files
+        WHERE path = ?
+      },
+      undef,
+      $path, );
+
+    $deleted += $rows || 0;
+  }
+
+  return {
+          ok       => 1,
+          old_path => $old,
+          db_path  => $stored_old,
+          new_path => $new,
+          hash     => $hash,
+          changed  => $deleted ? 1 : 0,
+          deleted  => $deleted,};
+}
+
+
 sub update_local_torrent_parse ( $self, $dbh, $row ) {
   die 'local torrent parse row requires path' if !defined $row->{path};
 
