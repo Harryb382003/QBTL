@@ -17,7 +17,7 @@ use QBTL::Process::Local;
 use QBTL::Process::Metadata;
 use QBTL::Process::Browse;
 use QBTL::Process::QBT;
-use QBTL::Process::QBT::ExportDedupe;
+use QBTL::Process::QBT::Dedupe;
 use QBTL::Process::Search;
 use QBTL::Render::CLI;
 use QBTL::Util qw( epoch_time human_duration );
@@ -796,7 +796,7 @@ $self->{config}->local_search_tool,
 }
 
 sub _qbt_export_dedupe_result ( $self ) {
-  my $process = QBTL::Process::QBT::ExportDedupe->new(
+  my $process = QBTL::Process::QBT::Dedupe->new(
     db_path => $self->{config}->db_path,
   );
 

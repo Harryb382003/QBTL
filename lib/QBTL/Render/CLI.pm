@@ -269,8 +269,6 @@ sub _qbt_export_dedupe_problem_lines ( $self, $result ) {
           . $missing_completed_downloaded_available
           . ' have Downloaded_torrents source.';
     }
-
-    push @line, '    # TODO queue for qBT API add.';
   }
 
   if ($different_hash_collision_count) {
@@ -1119,10 +1117,10 @@ sub qbt_export_dedupe ( $self, $result ) {
 
   say {$out} '  queued for deletion:        ' . ( $result->{queue_dir} // '' );
   say {$out} '  torrent pool:               ' . ( $result->{torrent_pool} // '' );
-  say {$out} $indent . 'torrent pool copied unused:      '
-      . ( $result->{torrent_pool_copied_unused} // 0 );
-  say {$out} $indent . 'torrent pool existing unused:    '
-      . ( $result->{torrent_pool_existing_unused} // 0 );
+  say {$out} '  torrent pool copied add candidates:      '
+      . ( $result->{torrent_pool_copied_add_candidates} // 0 );
+  say {$out} '  torrent pool existing add candidates:    '
+      . ( $result->{torrent_pool_existing_add_candidates} // 0 );
 
   $self->_qbt_export_dedupe_summary( $result, indent => '  ' );
 

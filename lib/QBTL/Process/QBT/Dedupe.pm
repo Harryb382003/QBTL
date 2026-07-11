@@ -1,4 +1,4 @@
-package QBTL::Process::QBT::ExportDedupe;
+package QBTL::Process::QBT::Dedupe;
 
 use v5.40;
 use common::sense;
@@ -8,16 +8,17 @@ use File::Basename qw( basename dirname );
 use File::Copy     qw( copy move );
 use File::Path     qw( make_path );
 use File::Spec;
+use Encode qw( decode encode FB_CROAK );
 use Encode qw( decode FB_DEFAULT );
 
 use QBTL::Local::Parser;
-use QBTL::Process::QBT::ExportInfill;
+use QBTL::Process::Metadata;
 use QBTL::Process::WithDB;
 
 sub new ( $class, %arg ) {
   $arg{db_process} //= QBTL::Process::WithDB->new( db_path => $arg{db_path}, );
   $arg{parser}     //= QBTL::Local::Parser->new;
-  $arg{infill_process} //= QBTL::Process::QBT::ExportInfill->new;
+  $arg{metadata_process} //= QBTL::Process::Metadata->new( db_path => $arg{db_path} );
 
   return bless \%arg, $class;
 }
@@ -117,8 +118,8 @@ sub _dedupe_bucket ( $self, %arg ) {
                 rename_tracker_prefix_unresolved => 0,
                 rename_already_named  => 0,
                 rename_target_collision_samples => [],
-                torrent_pool_copied_unused => 0,
-                torrent_pool_existing_unused => 0,
+                torrent_pool_copied_add_candidates => 0,
+                torrent_pool_existing_add_candidates => 0,
                 keeper_by_hash        => {},
                 problems              => \@problem,};
 
@@ -314,7 +315,7 @@ for my $plan (@planned) {
   $result->{keeper_by_hash}{$hash} = $keeper;
   $result->{kept}++;
 
-  my $pool_copy = $self->_copy_unused_keeper_to_torrent_pool(
+  my $pool_copy = $self->_copy_add_candidate_keeper_to_torrent_pool(
     db           => $db,
     dbh          => $dbh,
     keeper       => $keeper,
@@ -326,10 +327,10 @@ for my $plan (@planned) {
     push @problem, $pool_copy->{problem};
   }
   elsif ( $pool_copy->{copied} ) {
-    $result->{torrent_pool_copied_unused}++;
+    $result->{torrent_pool_copied_add_candidates}++;
   }
   elsif ( $pool_copy->{existing} ) {
-    $result->{torrent_pool_existing_unused}++;
+    $result->{torrent_pool_existing_add_candidates}++;
   }
 
 }
@@ -431,6 +432,106 @@ sub _directory_inventory ( $self, $dir ) {
   return ( [ sort @torrent ], \%meta );
 }
 
+sub _repair_mojibake_utf8 ( $self, $value ) {
+  return $value if !defined $value;
+
+  # Some torrent metadata/path values arrive as UTF-8 bytes that were decoded
+  # as Latin-1-ish characters.  On macOS that can later become an illegal byte
+  # sequence when we use the value as a filesystem path.
+  #
+  # Try to round-trip those characters back through Latin-1 bytes and decode
+  # them as real UTF-8.  If it is not that kind of string, leave it alone.
+  return $value
+      if $value !~ /[\x80-\xff]/;
+
+  my $fixed = eval {
+    decode( 'UTF-8', encode( 'ISO-8859-1', $value, FB_CROAK ), FB_CROAK );
+  };
+
+  return defined $fixed ? $fixed : $value;
+}
+
+
+sub _normalize_torrent_name ( $self, $name ) {
+  $name //= '';
+  $name = $self->_repair_mojibake_utf8($name);
+  $name = basename($name);
+
+  $name =~ s/\.torrent\z//i;
+  $name =~ s/\A\s+//;
+  $name =~ s/\s+\z//;
+  $name =~ s/[\x00-\x1f]+/ /g;
+  $name =~ s{[/:]+}{ - }g;
+  $name =~ s/\s+/ /g;
+  $name =~ s/\A[.\s]+//;
+  $name =~ s/[.\s]+\z//;
+
+  return length $name ? $name : 'unnamed';
+}
+
+
+sub _torrent_metadata_base ( $self, $torrent ) {
+  my $name =
+         $torrent->{torrent_name}
+      // $torrent->{metadata_name}
+      // $torrent->{name}
+      // $torrent->{desired_base};
+
+  if ( defined $name && length $name ) {
+    $name = $self->_repair_mojibake_utf8($name);
+  }
+  else {
+    $name = basename( $torrent->{path} // '' );
+  }
+
+  $name =~ s/\.torrent\z//i;
+
+  return $self->_normalize_torrent_name($name) . '.torrent';
+}
+
+
+sub _numeric_suffix_path ( $self, %arg ) {
+  my $db   = $arg{db};
+  my $dbh  = $arg{dbh};
+  my $dir  = $arg{dir}  // die 'numeric suffix path requires dir';
+  my $base = $arg{base} // die 'numeric suffix path requires base';
+
+  $base = $self->_repair_mojibake_utf8($base);
+
+  my ( $stem, $suffix ) =
+      $base =~ /\A(.+?)(\.torrent)\z/i ? ( $1, $2 ) : ( $base, '' );
+
+  for my $n ( 1 .. 10_000 ) {
+    my $candidate_base = $n == 1 ? $base : $stem . '-' . $n . $suffix;
+    my $candidate      = File::Spec->catfile( $dir, $candidate_base );
+
+    next if -e $candidate;
+    next if $db && $dbh && $db->local_torrent_file_by_path( $dbh, $candidate );
+
+    return $candidate;
+  }
+
+  die "could not choose unique torrent write target for $base";
+}
+
+
+sub _torrent_write_target ( $self, %arg ) {
+  my $db      = $arg{db};
+  my $dbh     = $arg{dbh};
+  my $dir     = $arg{dir}     // die 'torrent write target requires dir';
+  my $torrent = $arg{torrent} // die 'torrent write target requires torrent';
+
+  my $base = $self->_torrent_metadata_base($torrent);
+
+  return $self->_numeric_suffix_path(
+    db   => $db,
+    dbh  => $dbh,
+    dir  => $dir,
+    base => $base,
+  );
+}
+
+
 sub _torrent_pool_copy_target ( $self, %arg ) {
   my $torrent_pool = $arg{torrent_pool};
   my $keeper       = $arg{keeper};
@@ -448,7 +549,12 @@ sub _torrent_pool_copy_target ( $self, %arg ) {
           problem => 'torrent pool copy requires keeper path',
   } if $base eq '';
 
-  my $target = File::Spec->catfile( $torrent_pool, $base );
+  my $target = $self->_torrent_write_target(
+    db      => $arg{db},
+    dbh     => $arg{dbh},
+    dir     => $torrent_pool,
+    torrent => $keeper,
+  );
 
   if ( -e $target ) {
     my $parse = $self->parser->parse_file($target);
@@ -461,25 +567,6 @@ sub _torrent_pool_copy_target ( $self, %arg ) {
       };
     }
 
-    $target = File::Spec->catfile( $torrent_pool, $hash . '.torrent' );
-
-    if ( -e $target ) {
-      my $hash_parse = $self->parser->parse_file($target);
-
-      if ( $hash_parse->{ok} && ( $hash_parse->{infohash} // '' ) eq $hash ) {
-        return {
-                ok       => 1,
-                target   => $target,
-                existing => 1,
-        };
-      }
-
-      return {
-              ok      => 0,
-              target  => $target,
-              problem => 'torrent pool fallback target exists with different or unreadable infohash',
-      };
-    }
   }
 
   return {
@@ -501,7 +588,7 @@ sub _write_torrent_pool_copy ( $self, %arg ) {
   if ( !copy( $source, $target ) ) {
     return {
             ok      => 0,
-            problem => "copy unused keeper to torrent pool failed: $!",
+            problem => "copy add-candidate keeper to torrent pool failed: $!",
     };
   }
 
@@ -512,7 +599,7 @@ sub _write_torrent_pool_copy ( $self, %arg ) {
 }
 
 
-sub _copy_unused_keeper_to_torrent_pool ( $self, %arg ) {
+sub _copy_add_candidate_keeper_to_torrent_pool ( $self, %arg ) {
   my $db           = $arg{db};
   my $dbh          = $arg{dbh};
   my $keeper       = $arg{keeper};
@@ -522,8 +609,11 @@ sub _copy_unused_keeper_to_torrent_pool ( $self, %arg ) {
   return { ok => 1, copied => 0, existing => 0 }
       if !defined $torrent_pool || $torrent_pool eq '';
 
+  # The torrent pool is an add/re-add source. Properly loaded current qBT
+  # keepers do not need a pool copy here, but hash-as-name repair candidates
+  # are allowed into the pool.
   return { ok => 1, copied => 0, existing => 0 }
-    if $current_qbt_hash->{$keeper->{hash}};
+      if $keeper->{current_qbt};
 
   my $source = $keeper->{path};
 
@@ -533,11 +623,13 @@ sub _copy_unused_keeper_to_torrent_pool ( $self, %arg ) {
                       which => 'torrent_pool',
                       path  => $source,
                       hash  => $keeper->{hash},
-                      error => 'unused keeper has no readable source path',
+                      error => 'add-candidate keeper has no readable source path',
           },
   } if !defined $source || !-f $source;
 
   my $target = $self->_torrent_pool_copy_target(
+    db           => $db,
+    dbh          => $dbh,
     torrent_pool => $torrent_pool,
     keeper       => $keeper,
   );
@@ -625,7 +717,12 @@ sub _move_duplicate ( $self, %arg ) {
   my $which     = $arg{which};
 
   my $old_path = $item->{path};
-  my $target   = $self->_unique_path( $queue_dir, basename( $old_path ) );
+  my $target   = $self->_torrent_write_target(
+    db      => $db,
+    dbh     => $dbh,
+    dir     => $queue_dir,
+    torrent => $item,
+  );
 
   my $stored = $self->_store_torrent_file(
     $db,
@@ -901,12 +998,19 @@ sub _tracker_tag ( $self, $torrent ) {
   my @part = grep { length } split /\./, $host;
   return '' if @part < 2;
 
-  my $tag = $part[-2];
-  $tag =~ s/[^A-Za-z0-9_-]+/_/g;
-  $tag =~ s/\A_+//;
-  $tag =~ s/_+\z//;
+  my @candidate = reverse @part[ 0 .. $#part - 1 ];
 
-  return $tag;
+  for my $tag (@candidate) {
+    next if $tag =~ /\A(?:tracker|announce|udp|http|https|bt)\z/i;
+
+    $tag =~ s/[^A-Za-z0-9_-]+/_/g;
+    $tag =~ s/\A_+//;
+    $tag =~ s/_+\z//;
+
+    return $tag if length $tag;
+  }
+
+  return '';
 }
 
 sub _collision_averted_base ( $self, $torrent, $base ) {
@@ -1507,7 +1611,7 @@ sub run ( $self, %arg ) {
         qbt_name_by_hash  => $qbt_name_by_hash,
       );
 
-      my $infill = $self->{infill_process}->infill_known_exports(
+      my $infill = $self->{metadata_process}->infill_known_exports(
         db      => $db,
         dbh     => $dbh,
         buckets => \@bucket,
@@ -1540,8 +1644,8 @@ sub run ( $self, %arg ) {
       my $rename_tracker_prefixed = 0;
       my $rename_tracker_prefix_unresolved = 0;
       my $rename_already_named  = 0;
-      my $torrent_pool_copied_unused = 0;
-      my $torrent_pool_existing_unused = 0;
+      my $torrent_pool_copied_add_candidates = 0;
+      my $torrent_pool_existing_add_candidates = 0;
       my @rename_target_collision_sample;
       my $kept                  = 0;
 
@@ -1560,10 +1664,10 @@ sub run ( $self, %arg ) {
         $rename_tracker_prefixed += $bucket->{rename_tracker_prefixed} // 0;
         $rename_tracker_prefix_unresolved += $bucket->{rename_tracker_prefix_unresolved} // 0;
         $rename_already_named += $bucket->{rename_already_named} // 0;
-        $torrent_pool_copied_unused +=
-            $bucket->{torrent_pool_copied_unused} // 0;
-        $torrent_pool_existing_unused +=
-            $bucket->{torrent_pool_existing_unused} // 0;
+        $torrent_pool_copied_add_candidates +=
+            $bucket->{torrent_pool_copied_add_candidates} // 0;
+        $torrent_pool_existing_add_candidates +=
+            $bucket->{torrent_pool_existing_add_candidates} // 0;
 
         for my $sample ( @{ $bucket->{rename_target_collision_samples} // [] } ) {
           last if @rename_target_collision_sample >= 25;
@@ -1580,8 +1684,8 @@ sub run ( $self, %arg ) {
               torrent_pool                   => $torrent_pool,
               torrent_pool_created           => $torrent_pool_result->{created} // 0,
               torrent_pool_existing          => $torrent_pool_result->{existing} // 0,
-              torrent_pool_copied_unused     => $torrent_pool_copied_unused,
-              torrent_pool_existing_unused   => $torrent_pool_existing_unused,
+              torrent_pool_copied_add_candidates     => $torrent_pool_copied_add_candidates,
+              torrent_pool_existing_add_candidates   => $torrent_pool_existing_add_candidates,
               buckets                        => \@bucket,
               kept                           => $kept,
               moved                          => $moved,
