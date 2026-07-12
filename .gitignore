@@ -12,7 +12,6 @@
 *.bak
 *.swp
 .DS_Store
-local/
 tmp/
 cover_db/
 OKSN-223.QBTL-test-obvious-extra-fields.torrent

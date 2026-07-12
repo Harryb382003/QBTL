@@ -10,12 +10,19 @@ use File::Spec;
 use Unicode::Normalize qw( NFC NFD );
 
 sub new ( $class, %arg ) {
-  die 'db_path is required' if !defined $arg{db_path};
-
-  $arg{migration_dir} //= File::Spec->catdir( 'share', 'migrations' );
+  $arg{metadata_process} //=
+      QBTL::Process::Metadata->new( db_path => $arg{db_path}, );
 
   return bless \%arg, $class;
 }
+
+# sub new ( $class, %arg ) {
+#   die 'db_path is required' if !defined $arg{db_path};
+#
+#   $arg{migration_dir} //= File::Spec->catdir( 'share', 'migrations' );
+#
+#   return bless \%arg, $class;
+# }
 
 sub clear_current_qbt ( $self, $dbh ) {
   $dbh->do( q{UPDATE qbt_info SET current_qbt = 0} );
@@ -1780,9 +1787,9 @@ sub cull_moved_duplicate_torrent_file ( $self, $dbh, %arg ) {
   my $stored_old =
       $old_row && defined $old_row->{path} ? $old_row->{path} : $old;
 
-  my @delete_path = ($stored_old);
+  my @delete_path = ( $stored_old );
 
-  if ($new_row) {
+  if ( $new_row ) {
     my $stored_new = $new_row->{path};
 
     if ( defined $stored_new && $stored_new ne $stored_old ) {
@@ -1796,16 +1803,18 @@ sub cull_moved_duplicate_torrent_file ( $self, $dbh, %arg ) {
            && $old_hash ne $new_hash )
       {
         return {
-                ok       => 0,
-                old_path => $old,
-                db_path  => $stored_old,
-                new_path => $new,
-                target   => $stored_new,
-                problem  => 'queued duplicate target path already exists with different infohash',
+          ok       => 0,
+          old_path => $old,
+          db_path  => $stored_old,
+          new_path => $new,
+          target   => $stored_new,
+          problem  =>
+'queued duplicate target path already exists with different infohash',
         };
       }
 
-      push @delete_path, $stored_new if defined $stored_new && length $stored_new;
+      push @delete_path, $stored_new
+          if defined $stored_new && length $stored_new;
     }
   }
 
@@ -1835,7 +1844,6 @@ sub cull_moved_duplicate_torrent_file ( $self, $dbh, %arg ) {
           changed  => $deleted ? 1 : 0,
           deleted  => $deleted,};
 }
-
 
 sub update_local_torrent_parse ( $self, $dbh, $row ) {
   die 'local torrent parse row requires path' if !defined $row->{path};

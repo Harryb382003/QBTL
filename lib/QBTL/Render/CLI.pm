@@ -4,6 +4,7 @@ use v5.40;
 use common::sense;
 use feature qw( signatures );
 
+use parent 'QBTL::Render::Base';
 use QBTL::Util qw( epoch_time human_bytes );
 
 binmode STDOUT, ':encoding(UTF-8)';
@@ -16,7 +17,7 @@ sub new ( $class, %arg ) {
   return bless \%arg, $class;
 }
 
-sub db_error ( $self, $result ) {
+sub _db_error ( $self, $result ) {
   return $self->setup(
     {
       ok        => 0,
@@ -28,17 +29,9 @@ sub db_error ( $self, $result ) {
   );
 }
 
-sub db_random ( $self, $result ) {
-  if ( !$result->{ok} ) {
-    return $self->db_error($result);
-  }
-
-  return $self->db_torrent( $result->{row} );
-}
-
 sub db_summary ( $self, $result ) {
   if ( !$result->{ok} ) {
-    return $self->db_error($result);
+    return $self->_db_error($result);
   }
 
   my $summary = $result->{summary} // {};
@@ -162,195 +155,17 @@ sub help ( $self, $help ) {
   return 0;
 }
 
-sub _qbt_export_dedupe_problem_count ( $self, $result ) {
-  return scalar @{ $result->{problems} // [] };
-}
+sub help_all ( $self, $topics ) {
+  my $out = $self->{out};
 
-sub _qbt_export_dedupe_summary ( $self, $result, %arg ) {
-  my $out    = $self->{out};
-  my $indent = $arg{indent} // '  ';
+  $topics //= [];
 
-  say {$out} $indent . 'kept:                             ' . ( $result->{kept}    // 0 );
-  say {$out} $indent . 'renamed:                          ' . ( $result->{renamed} // 0 );
-  say {$out} $indent . 'rename candidates:                '
-      . ( $result->{rename_candidates} // 0 );
-  say {$out} $indent . 'rename not needed:                '
-      . ( $result->{rename_not_needed} // 0 );
-  say {$out} $indent . 'rename target exists:             '
-      . ( $result->{rename_target_exists} // 0 );
-  say {$out} $indent . 'rename target same hash:          '
-      . ( $result->{rename_target_same_hash} // 0 );
-  say {$out} $indent . 'rename target other hash:         '
-      . ( $result->{rename_target_other_hash} // 0 );
-  say {$out} $indent . 'rename target already averted:    '
-      . ( $result->{rename_target_already_averted} // 0 );
-  say {$out} $indent . 'rename target unknown:            '
-      . ( $result->{rename_target_unknown} // 0 );
-  say {$out} $indent . 'rename tracker-prefix groups:     '
-      . ( $result->{rename_tracker_prefix_groups} // 0 );
-  say {$out} $indent . 'rename tracker-prefixed:          '
-      . ( $result->{rename_tracker_prefixed} // 0 );
-  say {$out} $indent . 'rename tracker-prefix unresolved: '
-      . ( $result->{rename_tracker_prefix_unresolved} // 0 );
-  say {$out} $indent . 'rename already named:             '
-      . ( $result->{rename_already_named} // 0 );
-  say {$out} $indent . 'moved:                            ' . ( $result->{moved}   // 0 );
-  say {$out} $indent . 'copied completed -> downloaded:   '
-      . ( $result->{copied_completed_to_downloaded} // 0 );
-  say {$out} $indent . 'moved stale completed:            '
-      . ( $result->{moved_stale_completed} // 0 );
-  say {$out} $indent . 'current missing downloaded:       '
-      . ( $result->{current_qbt_missing_downloaded} // 0 );
-  say {$out} $indent . 'completed missing completed:      '
-      . ( $result->{current_qbt_missing_completed} // 0 );
-  say {$out} $indent . 'completed missing downloaded ok:  '
-      . ( $result->{current_qbt_completed_missing_downloaded_available} // 0 );
-  say {$out} $indent . 'completed missing downloaded miss:'
-      . ( $result->{current_qbt_completed_missing_downloaded_missing} // 0 );
-  say {$out} $indent . 'restored missing qBT exports:     '
-      . ( $result->{bt_backup_restored} // $result->{restored_missing_qbt_exports} // 0 );
-
-  if ( $result->{infill} ) {
-    say {$out} $indent . 'infilled torrents:                '
-        . ( $result->{infilled_torrents} // 0 );
-    say {$out} $indent . 'infilled evidence sources:        '
-        . ( $result->{infilled_evidence_sources} // 0 );
-    say {$out} $indent . 'infilled trackers:                '
-        . ( $result->{infilled_trackers} // 0 );
-    say {$out} $indent . 'infilled payload files:           '
-        . ( $result->{infilled_payload_files} // 0 );
-    say {$out} $indent . 'infilled info fields:             '
-        . ( $result->{infilled_info_fields} // 0 );
-    say {$out} $indent . 'infilled BT_backup evidence:      '
-        . ( $result->{infilled_bt_backup_evidence} // 0 );
+  for my $idx ( 0 .. $#$topics ) {
+    say {$out} '' if $idx;
+    $self->help( $topics->[$idx] );
   }
 
-  say {$out} $indent . 'problems:                         '
-      . $self->_qbt_export_dedupe_problem_count($result);
-}
-
-sub _qbt_export_dedupe_problem_lines ( $self, $result ) {
-  my @line;
-
-  my $missing_export_todo_count    = $result->{missing_export_todo_count} // 0;
-  my $missing_completed_todo_count = $result->{missing_completed_todo_count} // 0;
-  my $missing_completed_downloaded_available =
-      $result->{missing_completed_downloaded_available_todo_count} // 0;
-  my $missing_completed_downloaded_missing =
-      $result->{missing_completed_downloaded_missing_todo_count} // 0;
-  my $different_hash_collision_count = $result->{rename_target_other_hash} // 0;
-
-  if ($missing_export_todo_count) {
-    push @line,
-        '  export_dir: there were '
-        . $missing_export_todo_count
-        . ' current qBT torrents missing from Downloaded_torrents. # TODO no repair code written.';
-  }
-
-  if ($missing_completed_todo_count) {
-    push @line,
-        '  export_dir_fin: there were '
-        . $missing_completed_todo_count
-        . ' completed qBT torrents missing from Completed_torrents.';
-
-    if ( $missing_completed_downloaded_missing == $missing_completed_todo_count ) {
-      push @line,
-          '    '
-          . $missing_completed_todo_count
-          . ' are also missing from Downloaded_torrents, so there is no filesystem source to copy from.';
-    }
-    else {
-      push @line,
-          '    '
-          . $missing_completed_downloaded_missing
-          . ' are also missing from Downloaded_torrents.';
-      push @line,
-          '    '
-          . $missing_completed_downloaded_available
-          . ' have Downloaded_torrents source.';
-    }
-  }
-
-  if ($different_hash_collision_count) {
-    push @line,
-        '  export dirs: there were '
-        . $different_hash_collision_count
-        . ' different-hash filename collisions. # TODO no "<name> avert collision" code written.';
-  }
-
-  for my $problem ( @{ $result->{problems} // [] } ) {
-    next if ref $problem ne 'HASH';
-
-    my $which = defined $problem->{which} && length $problem->{which}
-        ? $problem->{which}
-        : undef;
-    my $path  = defined $problem->{path}  && length $problem->{path}  ? $problem->{path}  : undef;
-    my $hash  = defined $problem->{hash}  && length $problem->{hash}  ? $problem->{hash}  : undef;
-    my $name  = defined $problem->{name}  && length $problem->{name}  ? $problem->{name}  : undef;
-    my $error = defined $problem->{error} && length $problem->{error} ? $problem->{error} : undef;
-
-    next if defined $error && $error =~ /uncoded collision type occurred\. # TODO\z/;
-    next if defined $error && $error =~ /current qBT torrent missing from Downloaded_torrents\. # TODO no repair code written\.?\z/;
-    next if defined $error && $error =~ /completed current qBT torrent missing from Completed_torrents\. # TODO no repair code written\.?\z/;
-
-    next
-        if !defined $which
-        && !defined $path
-        && !defined $hash
-        && !defined $name
-        && !defined $error
-        && !defined $problem->{action}
-        && !defined $problem->{source_path}
-        && !defined $problem->{expected_hash}
-        && !defined $problem->{actual_hash}
-        && !defined $problem->{parse_ok}
-        && !defined $problem->{parse_problem};
-
-    my $subject = defined $path ? $path : defined $hash ? $hash : defined $name ? $name : '(none)';
-    if ( defined $name && defined $hash && length $name && $name ne $hash ) {
-      $subject .= qq{ "$name"};
-    }
-
-    push @line, '  ' . ( $which // '(unknown)' ) . ": $subject: " . ( $error // '(no error text)' );
-
-    if ( defined $problem->{action} && length $problem->{action} ) {
-      push @line, "    action: $problem->{action}";
-    }
-
-    if ( defined $problem->{source_path} && length $problem->{source_path} ) {
-      push @line, "    source: $problem->{source_path}";
-    }
-
-    if (   defined $problem->{expected_hash}
-        || defined $problem->{actual_hash}
-        || defined $problem->{parse_ok}
-        || defined $problem->{parse_problem} ) {
-      push @line, '    expected hash: ' . ( $problem->{expected_hash} // '(unknown)' );
-      push @line, '    actual hash:   ' . ( $problem->{actual_hash}   // '(unknown)' );
-      push @line, '    parse_ok:      ' . ( $problem->{parse_ok}      // '(unknown)' );
-      push @line, '    parse problem: ' . ( $problem->{parse_problem} // '(none)' );
-    }
-  }
-
-  return \@line;
-}
-
-sub _print_qbt_export_dedupe_problems ( $self, $result, %arg ) {
-  my $out    = $self->{out};
-  my $header = $arg{header} // 'Problems:';
-  my $indent = $arg{indent} // '';
-  my $lines  = $self->_qbt_export_dedupe_problem_lines($result);
-
-  return 0 if !@{$lines};
-
-  say {$out} '' if $arg{blank_before} // 1;
-  say {$out} $indent . $header;
-
-  for my $line ( @{$lines} ) {
-    say {$out} $indent . $line;
-  }
-
-  return scalar @{$lines};
+  return 0;
 }
 
 sub init ( $self, $result ) {
@@ -443,19 +258,6 @@ sub local_reset ( $self, $result ) {
   return 0;
 }
 
-sub help_all ( $self, $topics ) {
-  my $out = $self->{out};
-
-  $topics //= [];
-
-  for my $idx ( 0 .. $#$topics ) {
-    say {$out} '' if $idx;
-    $self->help( $topics->[$idx] );
-  }
-
-  return 0;
-}
-
 sub local_scan ( $self, $result ) {
   my $out = $self->{out};
 
@@ -488,14 +290,17 @@ sub local_scan ( $self, $result ) {
     return;
   }
 
-  my $label = ($result->{action} // '') eq 'local_refresh' ? 'Local refresh' : 'Local scan';
+  my $label = ($result->{action} // '') eq 'local_refresh'
+    ? 'Local refresh'
+    : 'Local scan';
 
   if ( defined $result->{target} && length $result->{target} ) {
     say {$out} $label . ' of ' . $result->{target} . ' complete.';
   } else {
     say {$out} $label . ' complete.';
   }
-  say {$out} '  scanner backend:  ' . ( $result->{scanner_backend} // $result->{backend} // 'unknown' );
+  say {$out} '  scanner backend:  ' . ( $result->{scanner_backend} //
+$result->{backend} // 'unknown' );
   say {$out} '  seen:             ' . ( $result->{seen} // 0 );
   say {$out} '  torrent stored:   ' . ( $result->{stored} // 0 );
   say {$out} '  torrent parsed:   ' . ( $result->{parsed} // 0 );
@@ -504,7 +309,7 @@ sub local_scan ( $self, $result ) {
   say {$out} '  torrent problems: ' . ( $result->{parse_problems} // 0 );
   say {$out} '  torrent total:    ' . ( $result->{total} // 0 );
 
-      say {$out} '';
+  say {$out} '';
   say {$out} '  fastres stored:   '
     . ( $result->{fastresume_stored} // 0 );
   say {$out} '  fastres parsed:   '
@@ -527,7 +332,7 @@ sub local_scan ( $self, $result ) {
       . ( $result->{bt_backup_count_source} // 'unknown' );
   }
 
-      say {$out} '';
+    say {$out} '';
 #   say {$out} '  elapsed:  ' . ( $result->{elapsed} // '' ) . 's';
 
   my $metadata_candidates = $result->{metadata_candidates};
@@ -565,7 +370,6 @@ sub local_summary ( $self, $result ) {
 
   my $summary = $result->{summary} // {};
   my $qbt_mismatch = $result->{qbt_mismatch} // 0;
-
   say {$out} 'Local torrent files:';
   say {$out} '  scanner backend: ' . ( $summary->{scanner_backend} // 'unknown' );
   say {$out} '  latest scan:     ' . ( $summary->{latest_seen} // '' );
@@ -579,7 +383,8 @@ sub local_summary ( $self, $result ) {
     say {$out} 'queued_for_deletion:';
     say {$out} '  total:                ' . ( $deletion->{total} // 0 );
     say {$out} '  should restore:       ' . ( $deletion->{should_restore} // 0 );
-    say {$out} '  should remain queued: ' . ( $deletion->{should_remain_queued} // 0 );
+    say {$out} '  should remain queued: '
+		 . ( $deletion->{should_remain_queued} // 0 );
   }
 
   my $restoration = $result->{restoration};
@@ -587,14 +392,518 @@ sub local_summary ( $self, $result ) {
     say {$out} '';
     say {$out} 'queued_for_restoration:';
     say {$out} '  total:                 ' . ( $restoration->{total} // 0 );
-    say {$out} '  should restore:        ' . ( $restoration->{should_restore} // 0 );
-    say {$out} '  should queue deletion: ' . ( $restoration->{should_queue_deletion} // 0 );
+    say {$out} '  should restore:        '
+		 . ( $restoration->{should_restore} // 0 );
+    say {$out} '  should queue deletion: '
+		 . ( $restoration->{should_queue_deletion} // 0 );
   }
 
   say {$out} '';
   say {$out} 'qBT mis-match:      ' . $qbt_mismatch;
 
   return;
+}
+
+sub manual_values_for_hash ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->_db_error($result);
+  }
+
+  my $out = $self->{out};
+
+  say {$out} 'Manual metadata:';
+  say {$out} '  hash: ' . ( $result->{hash} // '' );
+  say {$out} '';
+
+  if ( !@{ $result->{rows} // [] } ) {
+    say {$out} '  none';
+    return;
+  }
+
+  for my $row ( @{ $result->{rows} } ) {
+    say {$out} '  '
+        . ( $row->{key} // '' )
+        . ': '
+        . ( $row->{value} // '' );
+  }
+
+  return;
+}
+
+sub manual_value_set ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->_db_error($result);
+  }
+
+  my $out = $self->{out};
+
+  say {$out} 'Manual metadata set.';
+  say {$out} '  hash:  ' . ( $result->{hash}  // '' );
+  say {$out} '  key:   ' . ( $result->{key}   // '' );
+  say {$out} '  value: ' . ( $result->{value} // '' );
+
+  return;
+}
+
+sub manual_value_unset ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->_db_error($result);
+  }
+
+  my $out = $self->{out};
+
+  say {$out} 'Manual metadata removed.';
+  say {$out} '  hash: ' . ( $result->{hash}    // '' );
+  say {$out} '  key:  ' . ( $result->{key}     // '' );
+  say {$out} '  rows: ' . ( $result->{removed} // 0 );
+
+  return;
+}
+
+sub metadata_key ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->_db_error($result);
+  }
+
+  my $out     = $self->{out};
+  my $summary = $result->{summary} // {};
+
+  say {$out} 'Observed metadata key:';
+  say {$out} '  key:    ' . ( $result->{key} // '' );
+  say {$out} '  hashes: ' . ( $summary->{hashes}      // 0 );
+  say {$out} '  values: ' . ( $summary->{values_seen} // 0 );
+  say {$out} '  seen:   ' . ( $summary->{seen}        // 0 );
+  say {$out} '';
+
+  if ( !@{ $result->{rows} // [] } ) {
+    say {$out} 'Examples:';
+    say {$out} '  none';
+    return;
+  }
+
+  say {$out} 'Examples:';
+
+  for my $row ( @{ $result->{rows} } ) {
+    say {$out} '  '
+        . ( $row->{hash}  // '' )
+        . '  '
+        . ( $row->{value} // '' );
+  }
+
+  return;
+}
+
+sub metadata_keys ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->_db_error($result);
+  }
+
+  my $out = $self->{out};
+
+  say {$out} 'Observed metadata keys:';
+  say {$out} '';
+
+  if ( !@{ $result->{rows} // [] } ) {
+    say {$out} '  none';
+    return 0;
+  }
+
+  printf {$out} "%-32s %8s %8s %8s\n",
+      'Key',
+      'Hashes',
+      'Values',
+      'Seen';
+
+  printf {$out} "%-32s %8s %8s %8s\n",
+      '-' x 32,
+      '-' x 8,
+      '-' x 8,
+      '-' x 8;
+
+  for my $row ( @{ $result->{rows} } ) {
+    printf {$out} "%-32s %8s %8s %8s\n",
+        $row->{key},
+        $row->{hashes}      // 0,
+        $row->{values_seen} // 0,
+        $row->{seen}        // 0;
+  }
+
+  return 0;
+}
+
+sub metadata_keys_all ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->_db_error($result);
+  }
+
+  my $out = $self->{out};
+
+  say {$out} 'All metadata/evidence keys:';
+  say {$out} '';
+
+  if ( !@{ $result->{rows} // [] } ) {
+    say {$out} '  none';
+    return;
+  }
+
+  printf {$out} "%-45s %-10s %-50s %-12s %s\n",
+    'Key', 'Kind', 'Data', 'Status', 'Accessor';
+
+  printf {$out} "%-45s %-10s %-50s %-12s %s\n",
+    '-' x 45, '-' x 10, '-' x 50, '-' x 12, '-' x 24;
+
+  for my $row ( @{ $result->{rows} } ) {
+    printf {$out} "%-45s %-10s %-50s %-12s %s\n",
+        $row->{key}      // '',
+        $row->{kind}     // '',
+        $row->{data}   // '',
+        $row->{status}   // '',
+        $row->{accessor} // 'TODO';
+  }
+
+  return;
+}
+
+sub metadata_candidates ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->_db_error($result);
+  }
+
+  my $out = $self->{out};
+
+  say {$out} 'Metadata promotion candidates:';
+  say {$out} '  threshold: ' . ( $result->{threshold} // '' );
+  say {$out} '';
+
+  if ( !@{ $result->{candidates} // [] } ) {
+    say {$out} '  none';
+    return;
+  }
+
+  printf {$out} "%-36s %8s %8s %8s  %s\n",
+      'Key',
+      'Hashes',
+      'Values',
+      'Seen',
+      'Action';
+
+  printf {$out} "%-36s %8s %8s %8s  %s\n",
+      '-' x 36,
+      '-' x 8,
+      '-' x 8,
+      '-' x 8,
+      '-' x 24;
+
+  for my $row ( @{ $result->{candidates} } ) {
+    printf {$out} "%-36s %8s %8s %8s  %s\n",
+        $row->{key},
+        $row->{hashes}      // 0,
+        $row->{values_seen} // 0,
+        $row->{seen}        // 0,
+        $row->{action}      // '';
+  }
+
+  return;
+}
+
+sub metadata_promote ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->_db_error($result);
+  }
+
+  my $out = $self->{out};
+
+  if ( ( $result->{status} // '' ) eq 'already_promoted' ) {
+    say {$out} 'Metadata key already promoted.';
+  } else {
+    say {$out} 'Metadata key promoted.';
+  }
+
+  say {$out} '  key:        ' . ( $result->{key}           // '' );
+  say {$out} '  column:     ' . ( $result->{target_column} // '' );
+  say {$out} '  backfilled: ' . ( $result->{backfilled}    // 0 );
+
+  return;
+}
+
+sub metadata_promoted ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->_db_error($result);
+  }
+
+  my $out = $self->{out};
+
+  say {$out} 'Promoted metadata keys:';
+  say {$out} '';
+
+  if ( !@{ $result->{rows} // [] } ) {
+    say {$out} '  none';
+    return;
+  }
+
+  printf {$out} "%-32s %-32s %-10s %s\n",
+      'Key',
+      'Column',
+      'Type',
+      'Created';
+
+  printf {$out} "%-32s %-32s %-10s %s\n",
+      '-' x 32,
+      '-' x 32,
+      '-' x 10,
+      '-' x 19;
+
+  for my $row ( @{ $result->{rows} } ) {
+    printf {$out} "%-32s %-32s %-10s %s\n",
+        $row->{key},
+        $row->{target_column},
+        $row->{value_type} // '',
+        $row->{created_on} // '';
+  }
+
+  return;
+}
+
+sub _print_qbt_export_dedupe_problems ( $self, $result, %arg ) {
+  my $out    = $self->{out};
+  my $header = $arg{header} // 'Problems:';
+  my $indent = $arg{indent} // '';
+  my $lines  = $self->_qbt_export_dedupe_problem_lines($result);
+
+  return 0 if !@{$lines};
+
+  say {$out} '' if $arg{blank_before} // 1;
+  say {$out} $indent . $header;
+
+  for my $line ( @{$lines} ) {
+    say {$out} $indent . $line;
+  }
+
+  return scalar @{$lines};
+}
+
+sub _print_qbt_export_dedupe_rename_collision_samples ( $self, $result ) {
+  my @sample = @{ $result->{rename_target_collision_samples} // [] };
+  return if !@sample;
+
+  my $out = $self->{out};
+
+  say {$out} '';
+  say {$out} 'Rename target collisions (sample):';
+
+  my $shown = 0;
+
+  for my $row ( @sample ) {
+    last if $shown++ >= 25;
+
+    say {$out} '  ' . ( $row->{which} // '(unknown)' ) . ':';
+    say {$out} '    hash:        ' . ( $row->{hash} // '' );
+    say {$out} '    source:      ' . ( $row->{path} // '' );
+    say {$out} '    target:      ' . ( $row->{target} // '' );
+    say {$out} '    target hash: ' . ( $row->{target_hash} // '(unknown)' );
+    say {$out} '    action:      '
+      . ( $row->{action} // 'TODO inspect filename collision' );
+  }
+
+  return;
+}
+
+sub _qbt_export_dedupe_summary ( $self, $result, %arg ) {
+  my $out    = $self->{out};
+  my $indent = $arg{indent} // '  ';
+
+  say {$out} $indent . 'kept:                             '
+		 . ( $result->{kept} // 0 );
+  say {$out} $indent . 'renamed:                          '
+		 . ( $result->{renamed} // 0 );
+  say {$out} $indent . 'rename candidates:                '
+      . ( $result->{rename_candidates} // 0 );
+  say {$out} $indent . 'rename not needed:                '
+      . ( $result->{rename_not_needed} // 0 );
+  say {$out} $indent . 'rename target exists:             '
+      . ( $result->{rename_target_exists} // 0 );
+  say {$out} $indent . 'rename target same hash:          '
+      . ( $result->{rename_target_same_hash} // 0 );
+  say {$out} $indent . 'rename target other hash:         '
+      . ( $result->{rename_target_other_hash} // 0 );
+  say {$out} $indent . 'rename target already averted:    '
+      . ( $result->{rename_target_already_averted} // 0 );
+  say {$out} $indent . 'rename target unknown:            '
+      . ( $result->{rename_target_unknown} // 0 );
+  say {$out} $indent . 'rename tracker-prefix groups:     '
+      . ( $result->{rename_tracker_prefix_groups} // 0 );
+  say {$out} $indent . 'rename tracker-prefixed:          '
+      . ( $result->{rename_tracker_prefixed} // 0 );
+  say {$out} $indent . 'rename tracker-prefix unresolved: '
+      . ( $result->{rename_tracker_prefix_unresolved} // 0 );
+  say {$out} $indent . 'rename already named:             '
+      . ( $result->{rename_already_named} // 0 );
+  say {$out} $indent . 'moved:                            '
+		 . ( $result->{moved} // 0 );
+  say {$out} $indent . 'copied completed -> downloaded:   '
+      . ( $result->{copied_completed_to_downloaded} // 0 );
+  say {$out} $indent . 'moved stale completed:            '
+      . ( $result->{moved_stale_completed} // 0 );
+  say {$out} $indent . 'current missing downloaded:       '
+      . ( $result->{current_qbt_missing_downloaded} // 0 );
+  say {$out} $indent . 'completed missing completed:      '
+      . ( $result->{current_qbt_missing_completed} // 0 );
+  say {$out} $indent . 'completed missing downloaded ok:  '
+      . ( $result->{current_qbt_completed_missing_downloaded_available} // 0 );
+  say {$out} $indent . 'completed missing downloaded miss:'
+      . ( $result->{current_qbt_completed_missing_downloaded_missing} // 0 );
+  say {$out} $indent . 'restored missing qBT exports:     '
+      . ( $result->{bt_backup_restored}
+        // $result->{restored_missing_qbt_exports}
+        // 0 );
+
+  if ( $result->{infill} ) {
+    say {$out} $indent . 'infilled torrents:                '
+        . ( $result->{infilled_torrents} // 0 );
+    say {$out} $indent . 'infilled evidence sources:        '
+        . ( $result->{infilled_evidence_sources} // 0 );
+    say {$out} $indent . 'infilled trackers:                '
+        . ( $result->{infilled_trackers} // 0 );
+    say {$out} $indent . 'infilled payload files:           '
+        . ( $result->{infilled_payload_files} // 0 );
+    say {$out} $indent . 'infilled info fields:             '
+        . ( $result->{infilled_info_fields} // 0 );
+    say {$out} $indent . 'infilled BT_backup evidence:      '
+        . ( $result->{infilled_bt_backup_evidence} // 0 );
+  }
+
+  say {$out} $indent . 'problems:                         '
+      . $self->_qbt_export_dedupe_problem_count($result);
+}
+
+sub _qbt_export_dedupe_problem_lines ( $self, $result ) {
+  my @line;
+
+  my $missing_export_todo_count    = $result->{missing_export_todo_count} // 0;
+  my $missing_completed_todo_count = $result->{missing_completed_todo_count} // 0;
+  my $missing_completed_downloaded_available =
+      $result->{missing_completed_downloaded_available_todo_count} // 0;
+  my $missing_completed_downloaded_missing =
+      $result->{missing_completed_downloaded_missing_todo_count} // 0;
+  my $different_hash_collision_count = $result->{rename_target_other_hash} // 0;
+
+  if ($missing_export_todo_count) {
+    push @line,
+        '  export_dir: there were '
+        . $missing_export_todo_count
+        . ' current qBT torrents missing from Downloaded_torrents.'
+        . ' # TODO no repair code written.';
+  }
+
+  if ($missing_completed_todo_count) {
+    push @line,
+        '  export_dir_fin: there were '
+        . $missing_completed_todo_count
+        . ' completed qBT torrents missing from Completed_torrents.';
+
+    if ( $missing_completed_downloaded_missing == $missing_completed_todo_count ) {
+      push @line,
+          '    '
+          . $missing_completed_todo_count
+          . ' are also missing from Downloaded_torrents,'
+          . 'so there is no filesystem source to copy from.';
+    }
+    else {
+      push @line,
+          '    '
+          . $missing_completed_downloaded_missing
+          . ' are also missing from Downloaded_torrents.';
+      push @line,
+          '    '
+          . $missing_completed_downloaded_available
+          . ' have Downloaded_torrents source.';
+    }
+  }
+
+  if ($different_hash_collision_count) {
+    push @line,
+        '  export dirs: there were '
+        . $different_hash_collision_count
+        . ' different-hash filename collisions.'
+        . ' # TODO no "<name> avert collision" code written.';
+  }
+
+  for my $problem ( @{ $result->{problems} // [] } ) {
+    next if ref $problem ne 'HASH';
+
+    my $which = defined $problem->{which} && length $problem->{which}
+        ? $problem->{which}
+        : undef;
+    my $path  = defined $problem->{path}  && length $problem->{path}
+        ? $problem->{path}
+        : undef;
+    my $hash  = defined $problem->{hash}  && length $problem->{hash}
+        ? $problem->{hash}
+        : undef;
+    my $name  = defined $problem->{name}  && length $problem->{name}
+        ? $problem->{name}
+        : undef;
+    my $error = defined $problem->{error} && length $problem->{error}
+        ? $problem->{error}
+        : undef;
+
+    next if defined $error && $error =~ /uncoded collision type occurred\. #
+TODO\z/;
+    next if defined $error && $error =~ /current qBT torrent missing from
+Downloaded_torrents\. # TODO no repair code written\.?\z/;
+    next if defined $error && $error =~ /completed current qBT torrent missing from
+Completed_torrents\. # TODO no repair code written\.?\z/;
+
+    next
+        if !defined $which
+        && !defined $path
+        && !defined $hash
+        && !defined $name
+        && !defined $error
+        && !defined $problem->{action}
+        && !defined $problem->{source_path}
+        && !defined $problem->{expected_hash}
+        && !defined $problem->{actual_hash}
+        && !defined $problem->{parse_ok}
+        && !defined $problem->{parse_problem};
+
+    my $subject = defined $path
+        ? $path : defined $hash
+        ? $hash : defined $name
+        ? $name : '(none)';
+    if ( defined $name && defined $hash && length $name && $name ne $hash ) {
+      $subject .= qq{ "$name"};
+    }
+
+    push @line, '  '
+      . ( $which // '(unknown)' )
+      . ": $subject: "
+      . ( $error // '(no error text)' );
+
+    if ( defined $problem->{action} && length $problem->{action} ) {
+      push @line, "    action: $problem->{action}";
+    }
+
+    if ( defined $problem->{source_path} && length $problem->{source_path} ) {
+      push @line, "    source: $problem->{source_path}";
+    }
+
+    if (   defined $problem->{expected_hash}
+        || defined $problem->{actual_hash}
+        || defined $problem->{parse_ok}
+        || defined $problem->{parse_problem} ) {
+      push @line, '    expected hash: '
+        . ( $problem->{expected_hash} // '(unknown)' );
+      push @line, '    actual hash:   '
+        . ( $problem->{actual_hash}   // '(unknown)' );
+      push @line, '    parse_ok:      '
+        . ( $problem->{parse_ok}      // '(unknown)' );
+      push @line, '    parse problem: '
+        . ( $problem->{parse_problem} // '(none)' );
+    }
+  }
+
+  return \@line;
 }
 
 sub qbt_mismatch ( $self, $result ) {
@@ -638,275 +947,16 @@ sub qbt_mismatch ( $self, $result ) {
   return 0;
 }
 
-sub metadata_key ( $self, $result ) {
-  if ( !$result->{ok} ) {
-    return $self->db_error($result);
-  }
-
-  my $out     = $self->{out};
-  my $summary = $result->{summary} // {};
-
-  say {$out} 'Observed metadata key:';
-  say {$out} '  key:    ' . ( $result->{key} // '' );
-  say {$out} '  hashes: ' . ( $summary->{hashes}      // 0 );
-  say {$out} '  values: ' . ( $summary->{values_seen} // 0 );
-  say {$out} '  seen:   ' . ( $summary->{seen}        // 0 );
-  say {$out} '';
-
-  if ( !@{ $result->{rows} // [] } ) {
-    say {$out} 'Examples:';
-    say {$out} '  none';
-    return;
-  }
-
-  say {$out} 'Examples:';
-
-  for my $row ( @{ $result->{rows} } ) {
-    say {$out} '  '
-        . ( $row->{hash}  // '' )
-        . '  '
-        . ( $row->{value} // '' );
-  }
-
-  return;
-}
-
-sub metadata_keys ( $self, $result ) {
-  if ( !$result->{ok} ) {
-    return $self->db_error($result);
-  }
-
-  my $out = $self->{out};
-
-  say {$out} 'Observed metadata keys:';
-  say {$out} '';
-
-  if ( !@{ $result->{rows} // [] } ) {
-    say {$out} '  none';
-    return 0;
-  }
-
-  printf {$out} "%-32s %8s %8s %8s\n",
-      'Key',
-      'Hashes',
-      'Values',
-      'Seen';
-
-  printf {$out} "%-32s %8s %8s %8s\n",
-      '-' x 32,
-      '-' x 8,
-      '-' x 8,
-      '-' x 8;
-
-  for my $row ( @{ $result->{rows} } ) {
-    printf {$out} "%-32s %8s %8s %8s\n",
-        $row->{key},
-        $row->{hashes}      // 0,
-        $row->{values_seen} // 0,
-        $row->{seen}        // 0;
-  }
-
-  return 0;
-}
-
-sub metadata_keys_all ( $self, $result ) {
-  if ( !$result->{ok} ) {
-    return $self->db_error($result);
-  }
-
-  my $out = $self->{out};
-
-  say {$out} 'All metadata/evidence keys:';
-  say {$out} '';
-
-  if ( !@{ $result->{rows} // [] } ) {
-    say {$out} '  none';
-    return;
-  }
-
-  printf {$out} "%-45s %-10s %-50s %-12s %s\n",
-    'Key', 'Kind', 'Data', 'Status', 'Accessor';
-
-  printf {$out} "%-45s %-10s %-50s %-12s %s\n",
-    '-' x 45, '-' x 10, '-' x 50, '-' x 12, '-' x 24;
-
-  for my $row ( @{ $result->{rows} } ) {
-    printf {$out} "%-45s %-10s %-50s %-12s %s\n",
-        $row->{key}      // '',
-        $row->{kind}     // '',
-        $row->{data}   // '',
-        $row->{status}   // '',
-        $row->{accessor} // 'TODO';
-  }
-
-  return;
-}
-
-sub metadata_candidates ( $self, $result ) {
-  if ( !$result->{ok} ) {
-    return $self->db_error($result);
-  }
-
-  my $out = $self->{out};
-
-  say {$out} 'Metadata promotion candidates:';
-  say {$out} '  threshold: ' . ( $result->{threshold} // '' );
-  say {$out} '';
-
-  if ( !@{ $result->{candidates} // [] } ) {
-    say {$out} '  none';
-    return;
-  }
-
-  printf {$out} "%-36s %8s %8s %8s  %s\n",
-      'Key',
-      'Hashes',
-      'Values',
-      'Seen',
-      'Action';
-
-  printf {$out} "%-36s %8s %8s %8s  %s\n",
-      '-' x 36,
-      '-' x 8,
-      '-' x 8,
-      '-' x 8,
-      '-' x 24;
-
-  for my $row ( @{ $result->{candidates} } ) {
-    printf {$out} "%-36s %8s %8s %8s  %s\n",
-        $row->{key},
-        $row->{hashes}      // 0,
-        $row->{values_seen} // 0,
-        $row->{seen}        // 0,
-        $row->{action}      // '';
-  }
-
-  return;
-}
-
-sub metadata_promote ( $self, $result ) {
-  if ( !$result->{ok} ) {
-    return $self->db_error($result);
-  }
-
-  my $out = $self->{out};
-
-  if ( ( $result->{status} // '' ) eq 'already_promoted' ) {
-    say {$out} 'Metadata key already promoted.';
-  } else {
-    say {$out} 'Metadata key promoted.';
-  }
-
-  say {$out} '  key:        ' . ( $result->{key}           // '' );
-  say {$out} '  column:     ' . ( $result->{target_column} // '' );
-  say {$out} '  backfilled: ' . ( $result->{backfilled}    // 0 );
-
-  return;
-}
-
-sub metadata_promoted ( $self, $result ) {
-  if ( !$result->{ok} ) {
-    return $self->db_error($result);
-  }
-
-  my $out = $self->{out};
-
-  say {$out} 'Promoted metadata keys:';
-  say {$out} '';
-
-  if ( !@{ $result->{rows} // [] } ) {
-    say {$out} '  none';
-    return;
-  }
-
-  printf {$out} "%-32s %-32s %-10s %s\n",
-      'Key',
-      'Column',
-      'Type',
-      'Created';
-
-  printf {$out} "%-32s %-32s %-10s %s\n",
-      '-' x 32,
-      '-' x 32,
-      '-' x 10,
-      '-' x 19;
-
-  for my $row ( @{ $result->{rows} } ) {
-    printf {$out} "%-32s %-32s %-10s %s\n",
-        $row->{key},
-        $row->{target_column},
-        $row->{value_type} // '',
-        $row->{created_on} // '';
-  }
-
-  return;
-}
-
-sub manual_value_set ( $self, $result ) {
-  if ( !$result->{ok} ) {
-    return $self->db_error($result);
-  }
-
-  my $out = $self->{out};
-
-  say {$out} 'Manual metadata set.';
-  say {$out} '  hash:  ' . ( $result->{hash}  // '' );
-  say {$out} '  key:   ' . ( $result->{key}   // '' );
-  say {$out} '  value: ' . ( $result->{value} // '' );
-
-  return;
-}
-
-sub manual_values_for_hash ( $self, $result ) {
-  if ( !$result->{ok} ) {
-    return $self->db_error($result);
-  }
-
-  my $out = $self->{out};
-
-  say {$out} 'Manual metadata:';
-  say {$out} '  hash: ' . ( $result->{hash} // '' );
-  say {$out} '';
-
-  if ( !@{ $result->{rows} // [] } ) {
-    say {$out} '  none';
-    return;
-  }
-
-  for my $row ( @{ $result->{rows} } ) {
-    say {$out} '  '
-        . ( $row->{key} // '' )
-        . ': '
-        . ( $row->{value} // '' );
-  }
-
-  return;
-}
-
-sub manual_value_unset ( $self, $result ) {
-  if ( !$result->{ok} ) {
-    return $self->db_error($result);
-  }
-
-  my $out = $self->{out};
-
-  say {$out} 'Manual metadata removed.';
-  say {$out} '  hash: ' . ( $result->{hash}    // '' );
-  say {$out} '  key:  ' . ( $result->{key}     // '' );
-  say {$out} '  rows: ' . ( $result->{removed} // 0 );
-
-  return;
-}
-
 sub qbt_preference_keys ( $self, $result ) {
   if ( !$result->{ok} ) {
-    return $self->db_error($result);
+    return $self->_db_error($result);
   }
 
   my $out = $self->{out};
 
   say {$out} 'qBT preference keys:';
-  say {$out} '  count: ' . ( $result->{count} // scalar @{ $result->{rows} // [] } );
+  say {$out} '  count: '
+    . ( $result->{count} // scalar @{ $result->{rows} // [] } );
   say {$out} '';
 
   if ( !@{ $result->{rows} // [] } ) {
@@ -1081,31 +1131,6 @@ sub qbt_refresh ( $self, $result ) {
   return 0;
 }
 
-sub _print_qbt_export_dedupe_rename_collision_samples ( $self, $result ) {
-  my @sample = @{ $result->{rename_target_collision_samples} // [] };
-  return if !@sample;
-
-  my $out = $self->{out};
-
-  say {$out} '';
-  say {$out} 'Rename target collisions (sample):';
-
-  my $shown = 0;
-
-  for my $row ( @sample ) {
-    last if $shown++ >= 25;
-
-    say {$out} '  ' . ( $row->{which} // '(unknown)' ) . ':';
-    say {$out} '    hash:        ' . ( $row->{hash} // '' );
-    say {$out} '    source:      ' . ( $row->{path} // '' );
-    say {$out} '    target:      ' . ( $row->{target} // '' );
-    say {$out} '    target hash: ' . ( $row->{target_hash} // '(unknown)' );
-    say {$out} '    action:      ' . ( $row->{action} // 'TODO inspect filename collision' );
-  }
-
-  return;
-}
-
 sub qbt_export_dedupe ( $self, $result ) {
   my $out = $self->{out};
 
@@ -1267,78 +1292,6 @@ sub qbt_status ( $self, $result ) {
   return 0;
 }
 
-sub search_hat ( $self, $result ) {
-  if ( !$result->{ok} ) {
-    return $self->db_error($result);
-  }
-
-  my $out       = $self->{out};
-  my $inventory = $result->{inventory} // {};
-  my $rows      = $result->{rows} // [];
-
-  if ( !$inventory->{ok} ) {
-    say {$out} '';
-    say {$out} 'BT_backup inventory warning: ' . ( $inventory->{status} // 'unknown' );
-    say {$out} '  dir: ' . ( $inventory->{dir} // '' );
-  }
-
-  if ( !@{$rows} ) {
-    say {$out} 'No local .torrent matches.';
-    say {$out} '';
-    say {$out} 'Search: hat';
-    say {$out} 'Definition: hash as name';
-    say {$out} '  qBT loaded hashes:          ' . ( $inventory->{current_qbt} // 0 );
-    say {$out} '  BT_backup torrents:        ' . ( $inventory->{torrents}    // 0 );
-    say {$out} '  hash as name candidates:   ' . ( $result->{hash_as_name_hashes} // 0 );
-    say {$out} '  hashes with local matches: ' . ( $result->{hashes_with_matches} // 0 );
-    say {$out} '  local torrent files:       ' . ( $result->{count} // 0 );
-    return;
-  }
-
-
-  my $last_hash = '';
-
-  for my $row ( @{$rows} ) {
-    my $hash = $row->{hash} // '';
-
-    if ( $hash ne $last_hash ) {
-      say {$out} '' if $last_hash ne '';
-      say {$out} $hash;
-      $last_hash = $hash;
-    }
-
-    say {$out} "\t" . ( $row->{torrent_path} // '' );
-  }
-
-  say {$out} '';
-  say {$out} 'Search: hat';
-  say {$out} 'Definition: hash as name';
-  say {$out} '  qBT loaded hashes:          ' . ( $inventory->{current_qbt} // 0 );
-  say {$out} '  BT_backup torrents:        ' . ( $inventory->{torrents}    // 0 );
-  say {$out} '  hash as name candidates:   ' . ( $result->{hash_as_name_hashes} // 0 );
-  say {$out} '  hashes with local matches: ' . ( $result->{hashes_with_matches} // 0 );
-  say {$out} '  local torrent files:       ' . ( $result->{count} // 0 );
-
-  return;
-}
-
-sub search_list ( $self, $result ) {
-  if ( !$result->{ok} ) {
-    return $self->db_error($result);
-  }
-
-  my $out = $self->{out};
-
-  say {$out} 'Searchable qBT fields:';
-  say {$out} '';
-
-  for my $field ( @{ $result->{fields} // [] } ) {
-    say {$out} "  $field";
-  }
-
-  return;
-}
-
 sub search_hash ( $self, $result ) {
   my $out = $self->{out};
 
@@ -1374,7 +1327,8 @@ sub search_hash ( $self, $result ) {
   say {$out} '  status:           ' . ( $result->{qbt_status} // '' );
 
   if ( $row && defined $row->{qbt_torrent_file_checked_on} ) {
-    say {$out} '  checked on:       ' . ( $row->{qbt_torrent_file_checked_on} // '' );
+    say {$out} '  checked on:       '
+		 . ( $row->{qbt_torrent_file_checked_on} // '' );
   }
 
   if ( ( $result->{qbt_status} // '' ) eq 'LOADED/RUNNING' ) {
@@ -1393,6 +1347,90 @@ sub search_hash ( $self, $result ) {
 
   for my $match ( @{$matches} ) {
     say {$out} '  ' . ( $match->{path} // '' );
+  }
+
+  return;
+}
+
+sub search_hat ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->_db_error($result);
+  }
+
+  my $out       = $self->{out};
+  my $inventory = $result->{inventory} // {};
+  my $rows      = $result->{rows} // [];
+
+  if ( !$inventory->{ok} ) {
+    say {$out} '';
+    say {$out} 'BT_backup inventory warning: '
+      . ( $inventory->{status} // 'unknown' );
+    say {$out} '  dir: ' . ( $inventory->{dir} // '' );
+  }
+
+  if ( !@{$rows} ) {
+    say {$out} 'No local .torrent matches.';
+    say {$out} '';
+    say {$out} 'Search: hat';
+    say {$out} 'Definition: hash as name';
+    say {$out} '  qBT loaded hashes:          '
+      . ( $inventory->{current_qbt} // 0 );
+    say {$out} '  BT_backup torrents:        '
+      . ( $inventory->{torrents}    // 0 );
+    say {$out} '  hash as name candidates:   '
+      . ( $result->{hash_as_name_hashes} // 0 );
+    say {$out} '  hashes with local matches: '
+      . ( $result->{hashes_with_matches} // 0 );
+    say {$out} '  local torrent files:       '
+      . ( $result->{count} // 0 );
+
+    return;
+  }
+
+
+  my $last_hash = '';
+
+  for my $row ( @{$rows} ) {
+    my $hash = $row->{hash} // '';
+
+    if ( $hash ne $last_hash ) {
+      say {$out} '' if $last_hash ne '';
+      say {$out} $hash;
+      $last_hash = $hash;
+    }
+
+    say {$out} "\t" . ( $row->{torrent_path} // '' );
+  }
+
+  say {$out} '';
+  say {$out} 'Search: hat';
+  say {$out} 'Definition: hash as name';
+  say {$out} '  qBT loaded hashes:          '
+		 . ( $inventory->{current_qbt} // 0 );
+  say {$out} '  BT_backup torrents:        '
+		 . ( $inventory->{torrents}    // 0 );
+  say {$out} '  hash as name candidates:   '
+		 . ( $result->{hash_as_name_hashes} // 0 );
+  say {$out} '  hashes with local matches: '
+		 . ( $result->{hashes_with_matches} // 0 );
+  say {$out} '  local torrent files:       '
+		 . ( $result->{count} // 0 );
+
+  return;
+}
+
+sub search_list ( $self, $result ) {
+  if ( !$result->{ok} ) {
+    return $self->_db_error($result);
+  }
+
+  my $out = $self->{out};
+
+  say {$out} 'Searchable qBT fields:';
+  say {$out} '';
+
+  for my $field ( @{ $result->{fields} // [] } ) {
+    say {$out} "  $field";
   }
 
   return;
@@ -1487,18 +1525,6 @@ sub setup ( $self, $result ) {
   }
 
   return 0;
-}
-
-sub _short_value ( $value, $limit = 40 ) {
-  return '' if !defined $value;
-
-  $value =~ s/\s+/ /g;
-
-  if ( length $value <= $limit ) {
-    return $value;
-  }
-
-  return substr( $value, 0, $limit - 3 ) . '...';
 }
 
 sub status ( $self, $result ) {
