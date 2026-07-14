@@ -138,93 +138,115 @@ sub infill_known_exports ( $self, %arg ) {
                 payload_files      => 0,
                 info_fields        => 0,
                 bt_backup_evidence => 0,
-                problems           => \@problem,};
+                problems           => \@problem,
+              };
 
-  for my $bucket ( @{$buckets} ) {
-    next if ref $bucket ne 'HASH';
+  my $started_txn = 0;
 
-    my $which = $bucket->{which} // next;
-    my $keeper_by_hash = $bucket->{keeper_by_hash} // {};
-
-    for my $hash ( sort keys %{$keeper_by_hash} ) {
-      my $keeper = $keeper_by_hash->{$hash};
-      next if ref $keeper ne 'HASH';
-
-      my $path = $keeper->{path};
-
-      if ( !defined $path || $path eq '' || !-f $path ) {
-        next;
-      }
-
-      my $decoded = $parser->parse_file($path);
-
-      if ( !$decoded->{ok} ) {
-        push @problem,
-            {
-             which => $which,
-             path  => $path,
-             hash  => $hash,
-             error => 'metadata parse failed',
-             parse_problem => $decoded->{problem},};
-        next;
-      }
-
-      if ( ( $decoded->{infohash} // '' ) ne $hash ) {
-        push @problem,
-            {
-             which => $which,
-             path  => $path,
-             hash  => $hash,
-             error => 'metadata source hash mismatch',
-             expected_hash => $hash,
-             actual_hash   => $decoded->{infohash},
-             parse_ok      => 1,
-             parse_problem => undef,};
-        next;
-      }
-
-      $db->record_torrent_evidence_source(
-        $dbh,
-        hash          => $hash,
-        source        => $which,
-        path          => $path,
-        bucket        => $which,
-        evidence_kind => 'torrent_metadata',
-      );
-      $result->{evidence_sources}++;
-
-      my $tracker_result = $db->replace_torrent_trackers(
-        $dbh,
-        hash     => $hash,
-        source   => $which,
-        trackers => $decoded->{trackers},
-      );
-
-      my $payload_result = $db->replace_torrent_payload_files(
-        $dbh,
-        hash   => $hash,
-        source => $which,
-        files  => $decoded->{payload_files},
-      );
-
-      my $field_result = $db->replace_torrent_info_fields(
-        $dbh,
-        hash   => $hash,
-        source => $which,
-        fields => $decoded->{info_fields},
-      );
-
-      $result->{torrents}++;
-      $result->{trackers}      += $tracker_result->{stored} // 0;
-      $result->{payload_files} += $payload_result->{stored} // 0;
-      $result->{info_fields}   += $field_result->{stored}   // 0;
+  my $ok = eval {
+    if ( $dbh->{AutoCommit} ) {
+      $dbh->begin_work;
+      $started_txn = 1;
     }
-  }
 
-  my $bt_backup = $self->_infill_bt_backup_evidence( db => $db, dbh => $dbh );
-  $result->{bt_backup_evidence} = $bt_backup->{stored} // 0;
-  $result->{evidence_sources} += $bt_backup->{stored} // 0;
-  push @problem, @{ $bt_backup->{problems} // [] };
+    for my $bucket ( @{$buckets} ) {
+      next if ref $bucket ne 'HASH';
+
+      my $which = $bucket->{which} // next;
+      my $keeper_by_hash = $bucket->{keeper_by_hash} // {};
+
+      for my $hash ( sort keys %{$keeper_by_hash} ) {
+        my $keeper = $keeper_by_hash->{$hash};
+        next if ref $keeper ne 'HASH';
+
+        my $path = $keeper->{path};
+
+        if ( !defined $path || $path eq '' || !-f $path ) {
+          next;
+        }
+
+        my $decoded = $parser->parse_file($path);
+
+        if ( !$decoded->{ok} ) {
+          push @problem,
+              {
+               which         => $which,
+               path          => $path,
+               hash          => $hash,
+               error         => 'metadata parse failed',
+               parse_problem => $decoded->{problem},
+              };
+          next;
+        }
+
+        if ( ( $decoded->{infohash} // '' ) ne $hash ) {
+          push @problem,
+              {
+               which          => $which,
+               path           => $path,
+               hash           => $hash,
+               error          => 'metadata source hash mismatch',
+               expected_hash  => $hash,
+               actual_hash    => $decoded->{infohash},
+               parse_ok       => 1,
+               parse_problem  => undef,
+              };
+          next;
+        }
+
+        $db->record_torrent_evidence_source(
+          $dbh,
+          hash          => $hash,
+          source        => $which,
+          path          => $path,
+          bucket        => $which,
+          evidence_kind => 'torrent_metadata',
+        );
+        $result->{evidence_sources}++;
+
+        my $tracker_result = $db->replace_torrent_trackers(
+          $dbh,
+          hash     => $hash,
+          source   => $which,
+          trackers => $decoded->{trackers},
+        );
+
+        my $payload_result = $db->replace_torrent_payload_files(
+          $dbh,
+          hash   => $hash,
+          source => $which,
+          files  => $decoded->{payload_files},
+        );
+
+        my $field_result = $db->replace_torrent_info_fields(
+          $dbh,
+          hash   => $hash,
+          source => $which,
+          fields => $decoded->{info_fields},
+        );
+
+        $result->{torrents}++;
+        $result->{trackers}      += $tracker_result->{stored} // 0;
+        $result->{payload_files} += $payload_result->{stored} // 0;
+        $result->{info_fields}   += $field_result->{stored}   // 0;
+      }
+    }
+
+    my $bt_backup = $self->_infill_bt_backup_evidence( db => $db, dbh => $dbh );
+
+    $result->{bt_backup_evidence} = $bt_backup->{stored} // 0;
+    $result->{evidence_sources} += $bt_backup->{stored} // 0;
+    push @problem, @{ $bt_backup->{problems} // [] };
+
+    $dbh->commit if $started_txn;
+    1;
+  };
+
+  if ( !$ok ) {
+    my $error = $@ || 'unknown metadata infill transaction error';
+    eval { $dbh->rollback if $started_txn };
+    die $error;
+  }
 
   $result->{ok} = @problem ? 0 : 1;
 

@@ -10,19 +10,14 @@ use File::Spec;
 use Unicode::Normalize qw( NFC NFD );
 
 sub new ( $class, %arg ) {
-  $arg{metadata_process} //=
-      QBTL::Process::Metadata->new( db_path => $arg{db_path}, );
+  die 'db_path is required' if !defined $arg{db_path} || $arg{db_path} eq '';
 
-  return bless \%arg, $class;
+  return
+      bless {
+             db_path       => $arg{db_path},
+             migration_dir => $arg{migration_dir},
+      }, $class;
 }
-
-# sub new ( $class, %arg ) {
-#   die 'db_path is required' if !defined $arg{db_path};
-#
-#   $arg{migration_dir} //= File::Spec->catdir( 'share', 'migrations' );
-#
-#   return bless \%arg, $class;
-# }
 
 sub clear_current_qbt ( $self, $dbh ) {
   $dbh->do( q{UPDATE qbt_info SET current_qbt = 0} );
@@ -682,7 +677,7 @@ sub migrate ( $self, $dbh ) {
 }
 
 sub migration_dir ( $self ) {
-  return $self->{migration_dir};
+  return $self->{migration_dir} // File::Spec->catdir( 'share', 'migrations' );
 }
 
 sub migration_files ( $self ) {
@@ -1060,6 +1055,8 @@ sub local_torrent_file_by_path ( $self, $dbh, $path ) {
 
   return $row if $row;
 
+  return undef if $path =~ /\A[\x00-\x7f]*\z/;
+
   my $dir = dirname( $path );
 
   my $rows = $dbh->selectall_arrayref(
@@ -1075,9 +1072,13 @@ sub local_torrent_file_by_path ( $self, $dbh, $path ) {
   my $wanted_nfd = NFD( $path );
 
   for my $candidate ( @{$rows} ) {
-    return $candidate
-        if NFC( $candidate->{path} ) eq $wanted_nfc
-        || NFD( $candidate->{path} ) eq $wanted_nfd;
+    my $candidate_path = $candidate->{path} // next;
+
+    my $candidate_nfc = NFC( $candidate_path );
+    return $candidate if $candidate_nfc eq $wanted_nfc;
+
+    my $candidate_nfd = NFD( $candidate_path );
+    return $candidate if $candidate_nfd eq $wanted_nfd;
   }
 
   return undef;

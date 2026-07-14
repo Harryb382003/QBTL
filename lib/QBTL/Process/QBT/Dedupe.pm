@@ -23,6 +23,201 @@ sub new ( $class, %arg ) {
   return bless \%arg, $class;
 }
 
+sub _apply_tracker_prefix_collision_plan ( $self, %arg ) {
+  my $planned = $arg{planned} // [];
+  my $result  = $arg{result};
+
+  my %by_desired_base;
+
+  for my $plan ( @{$planned} ) {
+    my $keeper = $plan->{keeper};
+    my $base   = $keeper->{desired_base} // '';
+
+    next if !length $base;
+
+    push @{ $by_desired_base{$base} }, $plan;
+  }
+
+  for my $base ( sort keys %by_desired_base ) {
+    my @collision = @{ $by_desired_base{$base} };
+
+    next if @collision < 2;
+
+    my %hash_seen = map { $_->{hash} => 1 } @collision;
+    next if keys(%hash_seen) < 2;
+
+    my %prefixed_base_by_hash;
+    my %prefixed_seen;
+    my $unresolved = 0;
+
+    for my $plan (@collision) {
+      my $keeper       = $plan->{keeper};
+      my $prefixed_base = $self->_collision_averted_base( $keeper, $base );
+
+      if ( !length $prefixed_base || $prefixed_seen{$prefixed_base}++ ) {
+        $unresolved = 1;
+        last;
+      }
+
+      $prefixed_base_by_hash{ $plan->{hash} } = $prefixed_base;
+    }
+
+    if ($unresolved) {
+      $result->{rename_tracker_prefix_unresolved}++;
+      next;
+    }
+
+    $result->{rename_tracker_prefix_groups}++;
+
+    for my $plan (@collision) {
+      my $keeper        = $plan->{keeper};
+      my $prefixed_base = $prefixed_base_by_hash{ $plan->{hash} };
+
+      $keeper->{desired_base}        = $prefixed_base;
+      $keeper->{desired_name_source} = 'tracker_prefix_collision';
+      $keeper->{should_rename} =
+          ( ( $keeper->{_base} // '' ) eq $prefixed_base ) ? 0 : 1;
+
+      $result->{rename_tracker_prefixed}++;
+    }
+  }
+
+  return;
+}
+
+sub _assign_delete_queue_targets ( $self, %arg ) {
+  my $queue_dir = $arg{queue_dir} // die 'delete queue target assignment requires
+queue_dir';
+  my $queue     = $arg{queue}     // [];
+
+  my %seen;
+
+  for my $entry ( @{$queue} ) {
+    my $base = $entry->{basename} // basename( $entry->{source_path} // '' );
+    $base = $self->_normalize_torrent_name($base);
+    $base =~ s/\.torrent\z//i;
+    $base .= '.torrent';
+
+    my $n = ++$seen{$base};
+    my $target_base = $self->_suffix_torrent_basename( $base, $n );
+
+    $entry->{target_path} = File::Spec->catfile( $queue_dir, $target_base );
+  }
+
+  return $queue;
+}
+
+sub _audit_current_qbt_downloaded ( $self, %arg ) {
+  my $db                = $arg{db};
+  my $dbh               = $arg{dbh};
+  my $downloaded_bucket = $arg{downloaded_bucket};
+  my $completed_bucket  = $arg{completed_bucket};
+  my $qbt_name_by_hash  = $arg{qbt_name_by_hash} // {};
+  my @missing;
+  my @restored;
+  my @problem;
+
+  for my $hash ( @{ $db->current_qbt_hashes( $dbh ) } ) {
+    next if exists $downloaded_bucket->{keeper_by_hash}{$hash};
+
+    my $name = $qbt_name_by_hash->{$hash};
+    my $restore = $self->_restore_current_qbt_from_bt_backup(
+      db => $db,
+      dbh               => $dbh,
+      downloaded_bucket => $downloaded_bucket,
+      hash              => $hash,
+      name              => $name, );
+
+    if ( $restore->{ok} && $restore->{restored} ) {
+      push @restored, $restore->{row};
+      next;
+    }
+
+    if ( !$restore->{ok} && $restore->{problem} ) {
+      push @problem, $restore->{problem};
+      push @missing, {
+        which => 'export_dir',
+        path  => undef,
+        hash  => $hash,
+        name  => $name,
+        error => 'current qBT torrent missing from Downloaded_torrents.'
+          . '# TODO no repair code written',
+      };
+      next;
+    }
+
+    push @missing,
+        {
+         which => 'export_dir',
+         path  => undef,
+         hash  => $hash,
+         name  => $name,
+         error => 'current qBT torrent missing from Downloaded_torrents. # TODO no
+repair code written',};
+  }
+
+  return {
+          ok       => @missing || @problem ? 0 : 1,
+          missing  => \@missing,
+          restored => \@restored,
+          problems => \@problem,
+          count    => scalar @missing,};
+}
+
+sub _audit_current_qbt_completed ( $self, %arg ) {
+  my $db                = $arg{db};
+  my $dbh               = $arg{dbh};
+  my $downloaded_bucket = $arg{downloaded_bucket};
+  my $completed_bucket  = $arg{completed_bucket};
+  my $qbt_name_by_hash  = $arg{qbt_name_by_hash} // {};
+  my $current_completed = $db->current_qbt_completed_hash_map($dbh);
+  my @missing;
+  my $downloaded_available = 0;
+  my $downloaded_missing   = 0;
+
+  for my $hash ( sort keys %{$current_completed} ) {
+    next if exists $completed_bucket->{keeper_by_hash}{$hash};
+
+    my $has_downloaded =
+        exists $downloaded_bucket->{keeper_by_hash}{$hash} ? 1 : 0;
+
+    if ($has_downloaded) {
+      $downloaded_available++;
+    } else {
+      $downloaded_missing++;
+    }
+
+    push @missing,
+        {
+         which                => 'export_dir_fin',
+         path                 => undef,
+         hash                 => $hash,
+         name                 => $qbt_name_by_hash->{$hash},
+         downloaded_available => $has_downloaded,
+         error                => 'completed current qBT torrent missing from
+Completed_torrents. # TODO no repair code written',};
+  }
+
+  return {
+          ok                   => @missing ? 0 : 1,
+          missing              => \@missing,
+          count                => scalar @missing,
+          downloaded_available => $downloaded_available,
+          downloaded_missing   => $downloaded_missing,};
+}
+
+sub _bt_backup_dir ( $self ) {
+  my $home = $ENV{HOME} // '';
+  return '' if $home eq '';
+
+  return File::Spec->catdir(
+                             $home,
+                             'Library',
+                             'Application Support',
+                             'qBittorrent',
+                             'BT_backup', );
+}
+
 sub _choose_keeper ( $self, %arg ) {
   my $meta_basenames = $arg{meta_basenames};
   my $items          = $arg{items};
@@ -77,6 +272,527 @@ sub _choose_keeper ( $self, %arg ) {
   return $keeper;
 }
 
+sub _collision_averted_base ( $self, $torrent, $base ) {
+  my $tag = $self->_tracker_tag( $torrent );
+  return '' if !length $tag;
+
+  return '[' . $tag . '] ' . $base;
+}
+
+sub _commit_delete_queue ( $self, %arg ) {
+  my $db        = $arg{db};
+  my $dbh       = $arg{dbh};
+  my $queue_dir = $arg{queue_dir};
+  my $queue     = $arg{queue} // [];
+
+  my @problem;
+  my @moved;
+  my @moved_pending_db;
+  my %moved_by_which;
+  my $moved_stale_completed = 0;
+
+  $self->_assign_delete_queue_targets(
+    queue_dir => $queue_dir,
+    queue     => $queue,
+  );
+
+  for my $entry ( @{$queue} ) {
+    my $old_path = $entry->{source_path};
+    my $target   = $entry->{target_path};
+
+    if ( !defined $old_path || !length $old_path || !-f $old_path ) {
+      push @problem,
+          {
+           which  => $entry->{which},
+           path   => $old_path,
+           hash   => $entry->{hash},
+           target => $target,
+           error  => 'queued duplicate source path is not readable',
+          };
+      next;
+    }
+
+    if ( defined $target && -e $target ) {
+      push @problem,
+          {
+           which  => $entry->{which},
+           path   => $old_path,
+           hash   => $entry->{hash},
+           target => $target,
+           error  => 'queued duplicate target path already exists',
+          };
+      next;
+    }
+
+    if ( !move( $old_path, $target ) ) {
+      push @problem,
+          {
+           which  => $entry->{which},
+           path   => $old_path,
+           hash   => $entry->{hash},
+           target => $target,
+           error  => "move to queued_for_deletion failed: $!",
+          };
+      next;
+    }
+
+    push @moved_pending_db,
+        {
+         kind     => $entry->{kind},
+         which    => $entry->{which},
+         hash     => $entry->{hash},
+         old_path => $old_path,
+         new_path => $target,
+        };
+  }
+
+  my $started_txn = 0;
+
+  my $ok = eval {
+    if ( $dbh->{AutoCommit} ) {
+      $dbh->begin_work;
+      $started_txn = 1;
+    }
+
+    for my $entry (@moved_pending_db) {
+      my $updated = $db->cull_moved_duplicate_torrent_file(
+        $dbh,
+        old_path => $entry->{old_path},
+        new_path => $entry->{new_path},
+        hash     => $entry->{hash} // '',
+      );
+
+      if ( !$updated->{ok} ) {
+        push @problem,
+            {
+             which  => $entry->{which},
+             path   => $entry->{old_path},
+             hash   => $entry->{hash},
+             target => $entry->{new_path},
+             error  => $updated->{problem}
+               // 'queued duplicate DB cleanup failed',
+            };
+        next;
+      }
+
+      push @moved,
+          {
+           kind     => $entry->{kind},
+           which    => $entry->{which},
+           hash     => $entry->{hash},
+           old_path => $entry->{old_path},
+           new_path => $entry->{new_path},
+          };
+
+      if ( ( $entry->{kind} // '' ) eq 'stale_completed' ) {
+        $moved_stale_completed++;
+      }
+      else {
+        $moved_by_which{ $entry->{which} // '' }++;
+      }
+    }
+
+    $dbh->commit if $started_txn;
+    1;
+  };
+
+  if ( !$ok ) {
+    my $error = $@ || 'unknown delete queue DB transaction error';
+    eval { $dbh->rollback if $started_txn };
+    die $error;
+  }
+
+  return {
+          ok                    => @problem ? 0 : 1,
+          moved                 => scalar @moved,
+          moved_stale_completed => $moved_stale_completed,
+          moved_by_which        => \%moved_by_which,
+          rows                  => \@moved,
+          problems              => \@problem,};
+}
+
+sub _copy_add_candidate_keeper_to_torrent_pool ( $self, %arg ) {
+  my $db           = $arg{db};
+  my $dbh          = $arg{dbh};
+  my $keeper       = $arg{keeper};
+  my $torrent_pool = $arg{torrent_pool};
+  my $which        = $arg{which};
+
+  return { ok => 1, copied => 0, existing => 0 }
+      if !defined $torrent_pool || $torrent_pool eq '';
+
+  # The torrent pool is an add/re-add source. Properly loaded current qBT
+  # keepers do not need a pool copy here, but hash-as-name repair candidates
+  # are allowed into the pool.
+  return { ok => 1, copied => 0, existing => 0 }
+      if $keeper->{current_qbt};
+
+  my $source = $keeper->{path};
+
+  return {
+          ok      => 0,
+          problem => {
+                      which => 'torrent_pool',
+                      path  => $source,
+                      hash  => $keeper->{hash},
+                      error => 'add-candidate keeper has no readable source path',
+          },
+  } if !defined $source || !-f $source;
+
+  my $target = $self->_torrent_pool_copy_target(
+    db           => $db,
+    dbh          => $dbh,
+    torrent_pool => $torrent_pool,
+    keeper       => $keeper,
+  );
+
+  if ( !$target->{ok} ) {
+    return {
+            ok      => 0,
+            problem => {
+                        which => 'torrent_pool',
+                        path  => $source,
+                        hash  => $keeper->{hash},
+                        target => $target->{target},
+                        error => $target->{problem}
+                          // 'could not choose torrent pool target',
+            },
+    };
+  }
+
+  return { ok => 1, copied => 0, existing => 1, target => $target->{target} }
+      if $target->{existing};
+
+  my $written = $self->_write_torrent_pool_copy(
+    source => $source,
+    target => $target->{target},
+    keeper => $keeper,
+    which  => $which,
+  );
+
+  if ( !$written->{ok} ) {
+    return {
+            ok      => 0,
+            problem => {
+                        which  => 'torrent_pool',
+                        path   => $source,
+                        hash   => $keeper->{hash},
+                        target => $target->{target},
+                        error  => $written->{problem}
+                          // 'write torrent pool copy failed',
+            },
+    };
+  }
+
+  my $stored = $self->_store_torrent_file( $db, $dbh, $target->{target},
+'torrent_pool' );
+
+  if ( !$stored->{ok} || !$stored->{parse_ok} ) {
+    return {
+            ok      => 0,
+            problem => {
+                        which  => 'torrent_pool',
+                        path   => $target->{target},
+                        hash   => $keeper->{hash},
+                        error  => $stored->{problem}
+                          // 'torrent pool copy did not parse after write',
+            },
+    };
+  }
+
+  if ( ( $stored->{hash} // '' ) ne ( $keeper->{hash} // '' ) ) {
+    return {
+            ok      => 0,
+            problem => {
+                        which         => 'torrent_pool',
+                        path          => $target->{target},
+                        hash          => $keeper->{hash},
+                        existing_hash => $stored->{hash},
+                        error         => 'torrent pool copy hash mismatch after
+write',
+            },
+    };
+  }
+
+  return {
+          ok       => 1,
+          copied   => 1,
+          existing => 0,
+          target   => $target->{target},
+  };
+}
+
+sub _copy_target_for_torrent ( $self, %arg ) {
+  my $db      = $arg{db};
+  my $dbh     = $arg{dbh};
+  my $dir     = $arg{dir};
+  my $torrent = $arg{torrent};
+  my $base    = $arg{base};
+
+  my $hash = $torrent->{hash};
+  my $target = File::Spec->catfile( $dir, $base . '.torrent' );
+
+  if ( !-e $target ) {
+    return {ok => 1, target => $target, already_present => 0};
+  }
+
+  my $existing = $self->_store_torrent_file( $db, $dbh, $target, 'export_dir' );
+
+  if ( $existing->{parse_ok} && ( $existing->{hash} // '' ) eq $hash ) {
+    return {
+            ok              => 1,
+            target          => $target,
+            already_present => 1,
+            existing        => $existing,};
+  }
+
+  my $averted_base = $self->_collision_averted_base( $torrent, $base );
+
+  if ( !length $averted_base ) {
+    return {
+            ok      => 0,
+            problem => {
+                        which         => 'export_dir',
+                        path          => $target,
+                        hash          => $hash,
+                        name          => $torrent->{torrent_name},
+                        existing_hash => $existing->{hash},
+                        error         => ( $torrent->{torrent_name} // $hash )
+                          . ' uncoded collision type occurred. # TODO',
+            },};
+  }
+
+  my $averted_target = File::Spec->catfile( $dir, $averted_base . '.torrent' );
+
+  if ( !-e $averted_target ) {
+    return {ok => 1, target => $averted_target, already_present => 0};
+  }
+
+  my $averted_existing =
+      $self->_store_torrent_file( $db, $dbh, $averted_target, 'export_dir' );
+
+  if ( $averted_existing->{parse_ok} && ( $averted_existing->{hash} // '' ) eq
+$hash ) {
+    return {
+            ok              => 1,
+            target          => $averted_target,
+            already_present => 1,
+            existing        => $averted_existing,};
+  }
+
+  return {
+          ok      => 0,
+          problem => {
+                      which         => 'export_dir',
+                      path          => $averted_target,
+                      hash          => $hash,
+                      name          => $torrent->{torrent_name},
+                      existing_hash => $averted_existing->{hash},
+                      error         => ( $torrent->{torrent_name} // $hash )
+                        . ' uncoded collision type occurred. # TODO',
+          },};
+}
+
+sub _copy_completed_to_downloaded ( $self, %arg ) {
+  my $db                = $arg{db};
+  my $dbh               = $arg{dbh};
+  my $downloaded_bucket = $arg{downloaded_bucket};
+  my $completed_bucket  = $arg{completed_bucket};
+  my $qbt_name_by_hash  = $arg{qbt_name_by_hash} // {};
+
+  my @problem;
+  my @copied;
+  my @copied_pending_db;
+
+  my $downloaded_dir = $downloaded_bucket->{directory};
+
+  return {
+          ok       => 1,
+          copied   => 0,
+          rows     => \@copied,
+          problems => \@problem,
+         }
+      if !defined $downloaded_dir || $downloaded_dir eq '' || !-d $downloaded_dir;
+
+  for my $expected_hash ( sort keys %{ $completed_bucket->{keeper_by_hash} // {} } )
+{
+    next if exists $downloaded_bucket->{keeper_by_hash}{$expected_hash};
+
+    my $keeper = $completed_bucket->{keeper_by_hash}{$expected_hash};
+    my $source = $keeper->{path};
+
+    if ( !defined $source || !-f $source ) {
+      push @problem,
+          {
+           which => 'export_dir',
+           path  => $source,
+           hash  => $expected_hash,
+           error => 'completed keeper missing; cannot copy to downloaded',
+          };
+      next;
+    }
+
+    my $verified = $keeper;
+
+    if (
+      !defined $verified->{hash}
+      || !length $verified->{hash}
+      || $verified->{hash} ne $expected_hash
+    ) {
+      $verified = $self->_store_torrent_file(
+        $db, $dbh, $source, 'export_dir_fin'
+      );
+    }
+
+    my $actual_hash =
+        defined $verified->{hash} && length $verified->{hash}
+        ? $verified->{hash}
+        : '(none)';
+
+    if ( !$verified->{parse_ok} || $actual_hash ne $expected_hash ) {
+      push @problem,
+          {
+           which         => 'export_dir_fin',
+           path          => $source,
+           hash          => $expected_hash,
+           expected_hash => $expected_hash,
+           actual_hash   => $actual_hash,
+           parse_ok      => $verified->{parse_ok} ? 1 : 0,
+           parse_problem => $verified->{problem} // '(none)',
+           action        => 'copy to Downloaded_torrents skipped',
+           error         => 'Completed_torrents source hash mismatch',
+          };
+      next;
+    }
+
+    my $hash = $verified->{hash};
+
+    my $base = $self->_safe_basename(
+      $qbt_name_by_hash->{$hash}
+          // $verified->{torrent_name}
+          // $self->_torrent_basename($source)
+          // $hash
+    );
+    $base = $hash if !length $base;
+
+    my $target_result = $self->_copy_target_for_torrent(
+      db      => $db,
+      dbh     => $dbh,
+      dir     => $downloaded_dir,
+      torrent => $verified,
+      base    => $base,
+    );
+
+    if ( !$target_result->{ok} ) {
+      push @problem, $target_result->{problem};
+      next;
+    }
+
+    if ( $target_result->{already_present} ) {
+      $downloaded_bucket->{keeper_by_hash}{$hash} =
+          $target_result->{existing} // $verified;
+      next;
+    }
+
+    my $target = $target_result->{target};
+
+    if ( !copy( $source, $target ) ) {
+      push @problem,
+          {
+           which => 'export_dir',
+           path  => $source,
+           hash  => $hash,
+           error => "copy completed to downloaded failed: $!",
+          };
+      next;
+    }
+
+    push @copied_pending_db,
+        {
+         hash     => $hash,
+         old_path => $source,
+         new_path => $target,
+        };
+  }
+
+  my $started_txn = 0;
+
+  my $ok = eval {
+    if ( $dbh->{AutoCommit} ) {
+      $dbh->begin_work;
+      $started_txn = 1;
+    }
+
+    for my $copy (@copied_pending_db) {
+      my $hash   = $copy->{hash};
+      my $source = $copy->{old_path};
+      my $target = $copy->{new_path};
+
+      my $stored = $self->_store_torrent_file( $db, $dbh, $target, 'export_dir' );
+
+      if ( !$stored->{parse_ok} || !$stored->{hash} || $stored->{hash} ne $hash ) {
+        my $actual_target_hash =
+            defined $stored->{hash} && length $stored->{hash}
+            ? $stored->{hash}
+            : '(none)';
+
+        my $parse_ok      = $stored->{parse_ok} ? 1 : 0;
+        my $parse_problem = $stored->{problem} // '(none)';
+
+        push @problem,
+            {
+             which         => 'export_dir',
+             path          => $target,
+             source_path   => $source,
+             hash          => $hash,
+             expected_hash => $hash,
+             actual_hash   => $actual_target_hash,
+             parse_ok      => $parse_ok,
+             parse_problem => $parse_problem,
+             action        => 'copied Completed_torrents keeper to
+Downloaded_torrents;'
+                            . ' copied file left in place for inspection',
+             error         => 'copied completed torrent verification failed',
+            };
+        next;
+      }
+
+      $db->update_qbt_export_dir_file_state(
+          $dbh,
+          which  => 'export_dir',
+          hash   => $hash,
+          name   => $stored->{torrent_name},
+          exists => 1,
+        );
+
+      $downloaded_bucket->{keeper_by_hash}{$hash} = $stored;
+
+      push @copied,
+          {
+           hash     => $hash,
+           old_path => $source,
+           new_path => $target,
+          };
+    }
+
+    $dbh->commit if $started_txn;
+    1;
+  };
+
+  if ( !$ok ) {
+    my $error = $@ || 'unknown completed-to-downloaded DB transaction error';
+    eval { $dbh->rollback if $started_txn };
+    die $error;
+  }
+
+  return {
+          ok       => @problem ? 0 : 1,
+          copied   => scalar @copied,
+          rows     => \@copied,
+          problems => \@problem,
+         };
+}
+
 sub db_process ( $self ) {
   return $self->{db_process};
 }
@@ -121,6 +837,7 @@ sub _dedupe_bucket ( $self, %arg ) {
                 torrent_pool_copied_add_candidates => 0,
                 torrent_pool_existing_add_candidates => 0,
                 keeper_by_hash        => {},
+                delete_queue          => [],
                 problems              => \@problem,};
 
   if ( !defined $dir || $dir eq '' ) {
@@ -146,13 +863,16 @@ sub _dedupe_bucket ( $self, %arg ) {
     return $result;
   }
 
+my ( $torrent_files, $meta_basenames ) = $self->_directory_inventory( $dir );
+
+$result->{scanned} = scalar @{$torrent_files};
+
+my %group;
+
+my $ok = eval {
+  $dbh->begin_work if $dbh->{AutoCommit};
+
   $db->reset_qbt_export_dir_file_state( $dbh, which => $which );
-
-  my ( $torrent_files, $meta_basenames ) = $self->_directory_inventory( $dir );
-
-  $result->{scanned} = scalar @{$torrent_files};
-
-  my %group;
 
   for my $path ( @{$torrent_files} ) {
     my $stored = $self->_store_torrent_file( $db, $dbh, $path, $which );
@@ -184,9 +904,22 @@ sub _dedupe_bucket ( $self, %arg ) {
     push @{$group{$stored->{hash}}}, $stored;
   }
 
+  # After begin_work, DBI sets AutoCommit false until commit/rollback,
+  # so that condition is intentional.
+  $dbh->commit if !$dbh->{AutoCommit};
+  1;
+};
+
+if ( !$ok ) {
+  my $error = $@ || 'unknown export bucket store transaction error';
+  eval { $dbh->rollback if !$dbh->{AutoCommit} };
+  die $error;
+}
+
   $result->{hashes} = scalar keys %group;
 
   my @planned;
+  my @keeper_state_pending_db;
 
   for my $hash ( sort keys %group ) {
     my @items = sort { $a->{path} cmp $b->{path} } @{ $group{$hash} };
@@ -288,29 +1021,31 @@ for my $plan (@planned) {
     next if $item->{path} eq $keeper_original_path;
     next if $item->{path} eq $keeper->{path};
 
-    my $move = $self->_move_duplicate(
-      db        => $db,
-      dbh       => $dbh,
-      item      => $item,
-      queue_dir => $queue_dir,
-      which     => $which,
+    my $queued = $self->_queue_duplicate_for_deletion(
+      db    => $db,
+      dbh   => $dbh,
+      item  => $item,
+      which => $which,
+      kind  => 'duplicate_torrent_file',
     );
 
-    if ( !$move->{ok} ) {
-      push @problem, $move->{problem};
+    if ( !$queued->{ok} ) {
+      push @problem, $queued->{problem};
       next;
     }
 
-    $result->{moved}++;
+    push @{ $result->{delete_queue} }, $queued->{entry};
   }
 
-  $db->update_qbt_export_dir_file_state(
-    $dbh,
-    which  => $which,
-    hash   => $hash,
-    name   => $keeper->{torrent_name},
-    exists => 1,
-  );
+  push @keeper_state_pending_db,
+    {
+      which => $which,
+      hash  => $hash,
+      name  => $keeper->{torrent_name},
+    };
+
+$result->{keeper_by_hash}{$hash} = $keeper;
+$result->{kept}++;
 
   $result->{keeper_by_hash}{$hash} = $keeper;
   $result->{kept}++;
@@ -335,71 +1070,37 @@ for my $plan (@planned) {
 
 }
 
+  my $started_txn = 0;
+
+  my $ok = eval {
+    if ( $dbh->{AutoCommit} ) {
+      $dbh->begin_work;
+      $started_txn = 1;
+    }
+
+    for my $row (@keeper_state_pending_db) {
+      $db->update_qbt_export_dir_file_state(
+        $dbh,
+        which  => $row->{which},
+        hash   => $row->{hash},
+        name   => $row->{name},
+        exists => 1,
+      );
+    }
+
+    $dbh->commit if $started_txn;
+    1;
+  };
+
+  if ( !$ok ) {
+    my $error = $@ || 'unknown keeper state transaction error';
+    eval { $dbh->rollback if $started_txn };
+    die $error;
+  }
+
   $result->{ok} = @problem ? 0 : 1;
 
   return $result;
-}
-
-sub _apply_tracker_prefix_collision_plan ( $self, %arg ) {
-  my $planned = $arg{planned} // [];
-  my $result  = $arg{result};
-
-  my %by_desired_base;
-
-  for my $plan ( @{$planned} ) {
-    my $keeper = $plan->{keeper};
-    my $base   = $keeper->{desired_base} // '';
-
-    next if !length $base;
-
-    push @{ $by_desired_base{$base} }, $plan;
-  }
-
-  for my $base ( sort keys %by_desired_base ) {
-    my @collision = @{ $by_desired_base{$base} };
-
-    next if @collision < 2;
-
-    my %hash_seen = map { $_->{hash} => 1 } @collision;
-    next if keys(%hash_seen) < 2;
-
-    my %prefixed_base_by_hash;
-    my %prefixed_seen;
-    my $unresolved = 0;
-
-    for my $plan (@collision) {
-      my $keeper       = $plan->{keeper};
-      my $prefixed_base = $self->_collision_averted_base( $keeper, $base );
-
-      if ( !length $prefixed_base || $prefixed_seen{$prefixed_base}++ ) {
-        $unresolved = 1;
-        last;
-      }
-
-      $prefixed_base_by_hash{ $plan->{hash} } = $prefixed_base;
-    }
-
-    if ($unresolved) {
-      $result->{rename_tracker_prefix_unresolved}++;
-      next;
-    }
-
-    $result->{rename_tracker_prefix_groups}++;
-
-    for my $plan (@collision) {
-      my $keeper        = $plan->{keeper};
-      my $prefixed_base = $prefixed_base_by_hash{ $plan->{hash} };
-
-      $keeper->{desired_base}        = $prefixed_base;
-      $keeper->{desired_name_source} = 'tracker_prefix_collision';
-      $keeper->{should_rename} =
-          ( ( $keeper->{_base} // '' ) eq $prefixed_base ) ? 0 : 1;
-
-      $result->{rename_tracker_prefixed}++;
-    }
-  }
-
-  return;
 }
 
 sub _directory_inventory ( $self, $dir ) {
@@ -430,400 +1131,6 @@ sub _directory_inventory ( $self, $dir ) {
   closedir $dh;
 
   return ( [ sort @torrent ], \%meta );
-}
-
-sub _repair_mojibake_utf8 ( $self, $value ) {
-  return $value if !defined $value;
-
-  # Some torrent metadata/path values arrive as UTF-8 bytes that were decoded
-  # as Latin-1-ish characters.  On macOS that can later become an illegal byte
-  # sequence when we use the value as a filesystem path.
-  #
-  # Try to round-trip those characters back through Latin-1 bytes and decode
-  # them as real UTF-8.  If it is not that kind of string, leave it alone.
-  return $value
-      if $value !~ /[\x80-\xff]/;
-
-  my $fixed = eval {
-    decode( 'UTF-8', encode( 'ISO-8859-1', $value, FB_CROAK ), FB_CROAK );
-  };
-
-  return defined $fixed ? $fixed : $value;
-}
-
-
-sub _normalize_torrent_name ( $self, $name ) {
-  $name //= '';
-  $name = $self->_repair_mojibake_utf8($name);
-  $name = basename($name);
-
-  $name =~ s/\.torrent\z//i;
-  $name =~ s/\A\s+//;
-  $name =~ s/\s+\z//;
-  $name =~ s/[\x00-\x1f]+/ /g;
-  $name =~ s{[/:]+}{ - }g;
-  $name =~ s/\s+/ /g;
-  $name =~ s/\A[.\s]+//;
-  $name =~ s/[.\s]+\z//;
-
-  return length $name ? $name : 'unnamed';
-}
-
-
-sub _torrent_metadata_base ( $self, $torrent ) {
-  my $name =
-         $torrent->{torrent_name}
-      // $torrent->{metadata_name}
-      // $torrent->{name}
-      // $torrent->{desired_base};
-
-  if ( defined $name && length $name ) {
-    $name = $self->_repair_mojibake_utf8($name);
-  }
-  else {
-    $name = basename( $torrent->{path} // '' );
-  }
-
-  $name =~ s/\.torrent\z//i;
-
-  return $self->_normalize_torrent_name($name) . '.torrent';
-}
-
-
-sub _numeric_suffix_path ( $self, %arg ) {
-  my $db   = $arg{db};
-  my $dbh  = $arg{dbh};
-  my $dir  = $arg{dir}  // die 'numeric suffix path requires dir';
-  my $base = $arg{base} // die 'numeric suffix path requires base';
-
-  $base = $self->_repair_mojibake_utf8($base);
-
-  my ( $stem, $suffix ) =
-      $base =~ /\A(.+?)(\.torrent)\z/i ? ( $1, $2 ) : ( $base, '' );
-
-  for my $n ( 1 .. 10_000 ) {
-    my $candidate_base = $n == 1 ? $base : $stem . '-' . $n . $suffix;
-    my $candidate      = File::Spec->catfile( $dir, $candidate_base );
-
-    next if -e $candidate;
-    next if $db && $dbh && $db->local_torrent_file_by_path( $dbh, $candidate );
-
-    return $candidate;
-  }
-
-  die "could not choose unique torrent write target for $base";
-}
-
-
-sub _torrent_write_target ( $self, %arg ) {
-  my $db      = $arg{db};
-  my $dbh     = $arg{dbh};
-  my $dir     = $arg{dir}     // die 'torrent write target requires dir';
-  my $torrent = $arg{torrent} // die 'torrent write target requires torrent';
-
-  my $base = $self->_torrent_metadata_base($torrent);
-
-  return $self->_numeric_suffix_path(
-    db   => $db,
-    dbh  => $dbh,
-    dir  => $dir,
-    base => $base,
-  );
-}
-
-
-sub _torrent_pool_copy_target ( $self, %arg ) {
-  my $torrent_pool = $arg{torrent_pool};
-  my $keeper       = $arg{keeper};
-
-  my $hash = $keeper->{hash} // '';
-  my $base = basename( $keeper->{path} // '' );
-
-  return {
-          ok      => 0,
-          problem => 'torrent pool copy requires keeper hash',
-  } if $hash eq '';
-
-  return {
-          ok      => 0,
-          problem => 'torrent pool copy requires keeper path',
-  } if $base eq '';
-
-  my $target = $self->_torrent_write_target(
-    db      => $arg{db},
-    dbh     => $arg{dbh},
-    dir     => $torrent_pool,
-    torrent => $keeper,
-  );
-
-  if ( -e $target ) {
-    my $parse = $self->parser->parse_file($target);
-
-    if ( $parse->{ok} && ( $parse->{infohash} // '' ) eq $hash ) {
-      return {
-              ok       => 1,
-              target   => $target,
-              existing => 1,
-      };
-    }
-
-  }
-
-  return {
-          ok       => 1,
-          target   => $target,
-          existing => 0,
-  };
-}
-
-
-sub _write_torrent_pool_copy ( $self, %arg ) {
-  my $source = $arg{source};
-  my $target = $arg{target};
-
-  # Centralized writer hook:
-  # when QBTL starts storing intentional dictionary overrides, such as a
-  # rewritten comment, this is where the bencoded torrent should be written
-  # with those overrides. Until an override exists, preserve source bytes.
-  if ( !copy( $source, $target ) ) {
-    return {
-            ok      => 0,
-            problem => "copy add-candidate keeper to torrent pool failed: $!",
-    };
-  }
-
-  return {
-          ok     => 1,
-          target => $target,
-  };
-}
-
-
-sub _copy_add_candidate_keeper_to_torrent_pool ( $self, %arg ) {
-  my $db           = $arg{db};
-  my $dbh          = $arg{dbh};
-  my $keeper       = $arg{keeper};
-  my $torrent_pool = $arg{torrent_pool};
-  my $which        = $arg{which};
-
-  return { ok => 1, copied => 0, existing => 0 }
-      if !defined $torrent_pool || $torrent_pool eq '';
-
-  # The torrent pool is an add/re-add source. Properly loaded current qBT
-  # keepers do not need a pool copy here, but hash-as-name repair candidates
-  # are allowed into the pool.
-  return { ok => 1, copied => 0, existing => 0 }
-      if $keeper->{current_qbt};
-
-  my $source = $keeper->{path};
-
-  return {
-          ok      => 0,
-          problem => {
-                      which => 'torrent_pool',
-                      path  => $source,
-                      hash  => $keeper->{hash},
-                      error => 'add-candidate keeper has no readable source path',
-          },
-  } if !defined $source || !-f $source;
-
-  my $target = $self->_torrent_pool_copy_target(
-    db           => $db,
-    dbh          => $dbh,
-    torrent_pool => $torrent_pool,
-    keeper       => $keeper,
-  );
-
-  if ( !$target->{ok} ) {
-    return {
-            ok      => 0,
-            problem => {
-                        which => 'torrent_pool',
-                        path  => $source,
-                        hash  => $keeper->{hash},
-                        target => $target->{target},
-                        error => $target->{problem}
-                          // 'could not choose torrent pool target',
-            },
-    };
-  }
-
-  return { ok => 1, copied => 0, existing => 1, target => $target->{target} }
-      if $target->{existing};
-
-  my $written = $self->_write_torrent_pool_copy(
-    source => $source,
-    target => $target->{target},
-    keeper => $keeper,
-    which  => $which,
-  );
-
-  if ( !$written->{ok} ) {
-    return {
-            ok      => 0,
-            problem => {
-                        which  => 'torrent_pool',
-                        path   => $source,
-                        hash   => $keeper->{hash},
-                        target => $target->{target},
-                        error  => $written->{problem}
-                          // 'write torrent pool copy failed',
-            },
-    };
-  }
-
-  my $stored = $self->_store_torrent_file( $db, $dbh, $target->{target}, 'torrent_pool' );
-
-  if ( !$stored->{ok} || !$stored->{parse_ok} ) {
-    return {
-            ok      => 0,
-            problem => {
-                        which  => 'torrent_pool',
-                        path   => $target->{target},
-                        hash   => $keeper->{hash},
-                        error  => $stored->{problem}
-                          // 'torrent pool copy did not parse after write',
-            },
-    };
-  }
-
-  if ( ( $stored->{hash} // '' ) ne ( $keeper->{hash} // '' ) ) {
-    return {
-            ok      => 0,
-            problem => {
-                        which         => 'torrent_pool',
-                        path          => $target->{target},
-                        hash          => $keeper->{hash},
-                        existing_hash => $stored->{hash},
-                        error         => 'torrent pool copy hash mismatch after write',
-            },
-    };
-  }
-
-  return {
-          ok       => 1,
-          copied   => 1,
-          existing => 0,
-          target   => $target->{target},
-  };
-}
-
-
-sub _move_duplicate ( $self, %arg ) {
-  my $db        = $arg{db};
-  my $dbh       = $arg{dbh};
-  my $item      = $arg{item};
-  my $queue_dir = $arg{queue_dir};
-  my $which     = $arg{which};
-
-  my $old_path = $item->{path};
-  my $target   = $self->_torrent_write_target(
-    db      => $db,
-    dbh     => $dbh,
-    dir     => $queue_dir,
-    torrent => $item,
-  );
-
-  my $stored = $self->_store_torrent_file(
-    $db,
-    $dbh,
-    $old_path,
-    $which,
-    force_parse => 1,
-  );
-
-  if ( !$stored->{ok} || !$stored->{parse_ok} ) {
-    return {
-            ok      => 0,
-            problem => {
-                        which => $which,
-                        path  => $old_path,
-                        hash  => $item->{hash},
-                        error => 'duplicate metadata was not promoted; refused to queue/cull duplicate',
-            },};
-  }
-
-  if (    defined $item->{hash}
-       && length $item->{hash}
-       && defined $stored->{hash}
-       && length $stored->{hash}
-       && $stored->{hash} ne $item->{hash} )
-  {
-    return {
-            ok      => 0,
-            problem => {
-                        which         => $which,
-                        path          => $old_path,
-                        hash          => $item->{hash},
-                        existing_hash => $stored->{hash},
-                        error         => 'duplicate metadata hash mismatch; refused to queue/cull duplicate',
-            },};
-  }
-
-  if ( !move( $old_path, $target ) ) {
-    return {
-            ok      => 0,
-            problem => {
-                        which => $which,
-                        path  => $old_path,
-                        error => "move to queued_for_deletion failed: $!",
-            },};
-  }
-
-  my $updated = $db->cull_moved_duplicate_torrent_file(
-    $dbh,
-    old_path => $old_path,
-    new_path => $target,
-    hash     => $stored->{hash} // $item->{hash} // '',
-  );
-
-  if ( !$updated->{ok} ) {
-    return {
-            ok      => 0,
-            problem => {
-                        which => $which,
-                        path  => $old_path,
-                        hash  => $stored->{hash} // $item->{hash},
-                        error => $updated->{problem}
-                          // 'queued duplicate DB cleanup failed',
-            },};
-  }
-
-  return {
-          ok       => $updated->{ok},
-          old_path => $old_path,
-          new_path => $target,
-          culled   => $updated->{deleted} // 0,
-          };
-}
-
-sub parser ( $self ) {
-  return $self->{parser};
-}
-
-sub _queue_dir ( $self, $installation_root, $db ) {
-  if ( defined $installation_root && length $installation_root ) {
-    return File::Spec->catdir( $installation_root, 'queued_for_deletion' );
-  }
-
-  my $db_path = $db->{db_path} // '';
-  my $root    = dirname( $db_path );
-
-  return File::Spec->catdir( $root, 'queued_for_deletion' );
-}
-
-sub _torrent_pool_dir ( $self, $installation_root, $configured_pool, $db ) {
-  return $configured_pool
-      if defined $configured_pool && length $configured_pool;
-
-  if ( defined $installation_root && length $installation_root ) {
-    return File::Spec->catdir( $installation_root, 'torrents' );
-  }
-
-  my $db_path = $db->{db_path} // '';
-  my $root    = dirname( $db_path );
-
-  return File::Spec->catdir( $root, 'torrents' );
 }
 
 sub _ensure_torrent_pool_dir ( $self, $dir ) {
@@ -863,7 +1170,8 @@ sub _ensure_torrent_pool_dir ( $self, $dir ) {
                           {
                            which => 'torrent_pool',
                            path  => $dir,
-                           error => 'torrent pool path exists but is not a directory',
+                           error => 'torrent pool path exists but is not a
+directory',
                           },
             ],};
   }
@@ -892,6 +1200,187 @@ sub _ensure_torrent_pool_dir ( $self, $dir ) {
           created  => 1,
           existing => 0,
           problems => \@problem,};
+}
+
+sub _finalize_bucket_counts ( $self, $bucket ) {
+  return if ref $bucket ne 'HASH';
+
+  my $keeper_by_hash = $bucket->{keeper_by_hash} // {};
+  my $final_count    = scalar keys %{$keeper_by_hash};
+
+  $bucket->{scanned} = $final_count;
+  $bucket->{hashes}  = $final_count;
+  $bucket->{kept}    = $final_count;
+
+  return;
+}
+
+sub _move_stale_completed ( $self, %arg ) {
+  my $db                 = $arg{db};
+  my $dbh                = $arg{dbh};
+  my $completed_bucket   = $arg{completed_bucket};
+  my $current_completed  = $arg{current_completed} // {};
+
+  my @problem;
+  my @delete_queue;
+
+  for my $hash ( sort keys %{ $completed_bucket->{keeper_by_hash} // {} } ) {
+    next if $current_completed->{$hash};
+
+    my $keeper = $completed_bucket->{keeper_by_hash}{$hash};
+
+    my $queued = $self->_queue_duplicate_for_deletion(
+      db    => $db,
+      dbh   => $dbh,
+      item  => $keeper,
+      which => 'export_dir_fin',
+      kind  => 'stale_completed',
+    );
+
+    if ( !$queued->{ok} ) {
+      push @problem, $queued->{problem};
+      next;
+    }
+
+    $db->update_qbt_export_dir_file_state(
+                                            $dbh,
+                                            which  => 'export_dir_fin',
+                                            hash   => $hash,
+                                            name   => $keeper->{torrent_name},
+                                            exists => 1,
+                                          );
+
+    push @delete_queue, $queued->{entry};
+
+    # This keeper no longer belongs to export_dir_fin. It has been queued for
+    # deletion, so later phases such as metadata infill must not try to process
+    # the old Completed_torrents path as a live keeper.
+    delete $completed_bucket->{keeper_by_hash}{$hash};
+  }
+
+  return {
+          ok           => @problem ? 0 : 1,
+          delete_queue => \@delete_queue,
+          queued       => scalar @delete_queue,
+          problems     => \@problem,};
+}
+
+sub _normalize_torrent_name ( $self, $name ) {
+  $name //= '';
+  $name = $self->_repair_mojibake_utf8($name);
+  $name = basename($name);
+
+  $name =~ s/\.torrent\z//i;
+  $name =~ s/\A\s+//;
+  $name =~ s/\s+\z//;
+  $name =~ s/[\x00-\x1f]+/ /g;
+  $name =~ s{[/:]+}{ - }g;
+  $name =~ s/\s+/ /g;
+  $name =~ s/\A[.\s]+//;
+  $name =~ s/[.\s]+\z//;
+
+  return length $name ? $name : 'unnamed';
+}
+
+sub _numeric_suffix_path ( $self, %arg ) {
+  my $dir  = $arg{dir}  // die 'numeric suffix path requires dir';
+  my $base = $arg{base} // die 'numeric suffix path requires base';
+
+  $base = $self->_repair_mojibake_utf8($base);
+
+  my ( $stem, $suffix ) =
+      $base =~ /\A(.+?)(\.torrent)\z/i ? ( $1, $2 ) : ( $base, '' );
+
+  for my $n ( 1 .. 10_000 ) {
+    my $candidate_base = $n == 1 ? $base : $stem . '-' . $n . $suffix;
+    my $candidate      = File::Spec->catfile( $dir, $candidate_base );
+
+    next if -e $candidate;
+    return $candidate;
+  }
+
+  die "could not choose unique torrent write target for $base";
+}
+
+sub parser ( $self ) {
+  return $self->{parser};
+}
+
+sub _queue_dir ( $self, $installation_root, $db ) {
+  if ( defined $installation_root && length $installation_root ) {
+    return File::Spec->catdir( $installation_root, 'queued_for_deletion' );
+  }
+
+  my $db_path = $db->{db_path} // '';
+  my $root    = dirname( $db_path );
+
+  return File::Spec->catdir( $root, 'queued_for_deletion' );
+}
+
+sub _queue_duplicate_for_deletion ( $self, %arg ) {
+  my $db    = $arg{db};
+  my $dbh   = $arg{dbh};
+  my $item  = $arg{item};
+  my $which = $arg{which};
+  my $kind  = $arg{kind} // 'duplicate_torrent_file';
+
+  my $old_path = $item->{path};
+
+  my $stored = $self->_store_torrent_file(
+    $db,
+    $dbh,
+    $old_path,
+    $which,
+    force_parse => 0,
+  );
+
+  if ( !$stored->{ok} || !$stored->{parse_ok} ) {
+    return {
+            ok      => 0,
+            problem => {
+                        which => $which,
+                        path  => $old_path,
+                        hash  => $item->{hash},
+                        error => 'duplicate metadata was not promoted; refused to
+queue/cull duplicate',
+            },};
+  }
+
+  if (    defined $item->{hash}
+       && length $item->{hash}
+       && defined $stored->{hash}
+       && length $stored->{hash}
+       && $stored->{hash} ne $item->{hash} )
+  {
+    return {
+            ok      => 0,
+            problem => {
+                        which         => $which,
+                        path          => $old_path,
+                        hash          => $item->{hash},
+                        existing_hash => $stored->{hash},
+                        error         => 'duplicate metadata hash mismatch; refused
+to queue/cull duplicate',
+            },};
+  }
+
+  return {
+          ok    => 1,
+          entry => {
+                    kind        => $kind,
+                    which       => $which,
+                    source_path => $old_path,
+                    hash        => $stored->{hash} // $item->{hash} // '',
+                    basename    => $self->_torrent_metadata_base(
+                      {
+                        %{$item},
+                        hash         => $stored->{hash} // $item->{hash},
+                        torrent_name => $stored->{torrent_name}
+                          // $item->{torrent_name},
+                        path => $old_path,
+                      }
+                    ),
+          },};
 }
 
 sub _rename_keeper ( $self, %arg ) {
@@ -988,318 +1477,23 @@ if ( -e $new_path ) {
         };
 }
 
-sub _tracker_tag ( $self, $torrent ) {
-  my $announce = $torrent->{announce} // '';
+sub _repair_mojibake_utf8 ( $self, $value ) {
+  return $value if !defined $value;
 
-  my ( $host ) = $announce =~ m{\A[a-z][a-z0-9+.-]*://([^/:?#]+)}i;
-  $host //= '';
-  $host =~ s/\Awww\.//i;
+  # Some torrent metadata/path values arrive as UTF-8 bytes that were decoded
+  # as Latin-1-ish characters.  On macOS that can later become an illegal byte
+  # sequence when we use the value as a filesystem path.
+  #
+  # Try to round-trip those characters back through Latin-1 bytes and decode
+  # them as real UTF-8.  If it is not that kind of string, leave it alone.
+  return $value
+      if $value !~ /[\x80-\xff]/;
 
-  my @part = grep { length } split /\./, $host;
-  return '' if @part < 2;
+  my $fixed = eval {
+    decode( 'UTF-8', encode( 'ISO-8859-1', $value, FB_CROAK ), FB_CROAK );
+  };
 
-  my @candidate = reverse @part[ 0 .. $#part - 1 ];
-
-  for my $tag (@candidate) {
-    next if $tag =~ /\A(?:tracker|announce|udp|http|https|bt)\z/i;
-
-    $tag =~ s/[^A-Za-z0-9_-]+/_/g;
-    $tag =~ s/\A_+//;
-    $tag =~ s/_+\z//;
-
-    return $tag if length $tag;
-  }
-
-  return '';
-}
-
-sub _collision_averted_base ( $self, $torrent, $base ) {
-  my $tag = $self->_tracker_tag( $torrent );
-  return '' if !length $tag;
-
-  return '[' . $tag . '] ' . $base;
-}
-
-sub _copy_target_for_torrent ( $self, %arg ) {
-  my $db      = $arg{db};
-  my $dbh     = $arg{dbh};
-  my $dir     = $arg{dir};
-  my $torrent = $arg{torrent};
-  my $base    = $arg{base};
-
-  my $hash = $torrent->{hash};
-  my $target = File::Spec->catfile( $dir, $base . '.torrent' );
-
-  if ( !-e $target ) {
-    return {ok => 1, target => $target, already_present => 0};
-  }
-
-  my $existing = $self->_store_torrent_file( $db, $dbh, $target, 'export_dir' );
-
-  if ( $existing->{parse_ok} && ( $existing->{hash} // '' ) eq $hash ) {
-    return {
-            ok              => 1,
-            target          => $target,
-            already_present => 1,
-            existing        => $existing,};
-  }
-
-  my $averted_base = $self->_collision_averted_base( $torrent, $base );
-
-  if ( !length $averted_base ) {
-    return {
-            ok      => 0,
-            problem => {
-                        which         => 'export_dir',
-                        path          => $target,
-                        hash          => $hash,
-                        name          => $torrent->{torrent_name},
-                        existing_hash => $existing->{hash},
-                        error         => ( $torrent->{torrent_name} // $hash )
-                          . ' uncoded collision type occurred. # TODO',
-            },};
-  }
-
-  my $averted_target = File::Spec->catfile( $dir, $averted_base . '.torrent' );
-
-  if ( !-e $averted_target ) {
-    return {ok => 1, target => $averted_target, already_present => 0};
-  }
-
-  my $averted_existing =
-      $self->_store_torrent_file( $db, $dbh, $averted_target, 'export_dir' );
-
-  if ( $averted_existing->{parse_ok} && ( $averted_existing->{hash} // '' ) eq $hash ) {
-    return {
-            ok              => 1,
-            target          => $averted_target,
-            already_present => 1,
-            existing        => $averted_existing,};
-  }
-
-  return {
-          ok      => 0,
-          problem => {
-                      which         => 'export_dir',
-                      path          => $averted_target,
-                      hash          => $hash,
-                      name          => $torrent->{torrent_name},
-                      existing_hash => $averted_existing->{hash},
-                      error         => ( $torrent->{torrent_name} // $hash )
-                        . ' uncoded collision type occurred. # TODO',
-          },};
-}
-
-sub _copy_completed_to_downloaded ( $self, %arg ) {
-  my $db                 = $arg{db};
-  my $dbh                = $arg{dbh};
-  my $downloaded_bucket  = $arg{downloaded_bucket};
-  my $completed_bucket   = $arg{completed_bucket};
-  my $qbt_name_by_hash   = $arg{qbt_name_by_hash} // {};
-
-  my @problem;
-  my @copied;
-  my $downloaded_dir = $downloaded_bucket->{directory};
-
-  return {
-          ok       => 1,
-          copied   => 0,
-          rows     => \@copied,
-          problems => \@problem,}
-      if !defined $downloaded_dir || $downloaded_dir eq '' || !-d $downloaded_dir;
-
-  for my $expected_hash ( sort keys %{ $completed_bucket->{keeper_by_hash} // {} } ) {
-    next if exists $downloaded_bucket->{keeper_by_hash}{$expected_hash};
-
-    my $keeper = $completed_bucket->{keeper_by_hash}{$expected_hash};
-    my $source = $keeper->{path};
-
-    if ( !defined $source || !-f $source ) {
-      push @problem,
-          {
-           which => 'export_dir',
-           path  => $source,
-           hash  => $expected_hash,
-           error => 'completed keeper missing; cannot copy to downloaded',};
-      next;
-    }
-
-    my $verified = $self->_store_torrent_file( $db, $dbh, $source, 'export_dir_fin' );
-    my $actual_hash =
-        defined $verified->{hash} && length $verified->{hash}
-        ? $verified->{hash}
-        : '(none)';
-
-    if ( !$verified->{parse_ok} || $actual_hash ne $expected_hash ) {
-      push @problem,
-          {
-           which         => 'export_dir_fin',
-           path          => $source,
-           hash          => $expected_hash,
-           expected_hash => $expected_hash,
-           actual_hash   => $actual_hash,
-           parse_ok      => $verified->{parse_ok} ? 1 : 0,
-           parse_problem => $verified->{problem} // '(none)',
-           action        => 'copy to Downloaded_torrents skipped',
-           error         => 'Completed_torrents source hash mismatch',};
-      next;
-    }
-
-    my $hash = $verified->{hash};
-
-    my $base = $self->_safe_basename(
-      $qbt_name_by_hash->{$hash}
-          // $verified->{torrent_name}
-          // $self->_torrent_basename( $source )
-          // $hash
-    );
-    $base = $hash if !length $base;
-
-    my $target_result = $self->_copy_target_for_torrent(
-      db      => $db,
-      dbh     => $dbh,
-      dir     => $downloaded_dir,
-      torrent => $verified,
-      base    => $base,
-    );
-
-    if ( !$target_result->{ok} ) {
-      push @problem, $target_result->{problem};
-      next;
-    }
-
-    if ( $target_result->{already_present} ) {
-      $downloaded_bucket->{keeper_by_hash}{$hash} =
-          $target_result->{existing} // $verified;
-      next;
-    }
-
-    my $target = $target_result->{target};
-
-    if ( !copy( $source, $target ) ) {
-      push @problem,
-          {
-           which => 'export_dir',
-           path  => $source,
-           hash  => $hash,
-           error => "copy completed to downloaded failed: $!",};
-      next;
-    }
-
-    my $stored = $self->_store_torrent_file( $db, $dbh, $target, 'export_dir' );
-
-    if ( !$stored->{parse_ok} || !$stored->{hash} || $stored->{hash} ne $hash ) {
-      my $actual_target_hash =
-          defined $stored->{hash} && length $stored->{hash}
-          ? $stored->{hash}
-          : '(none)';
-
-      my $parse_ok      = $stored->{parse_ok} ? 1 : 0;
-      my $parse_problem = $stored->{problem} // '(none)';
-
-      push @problem,
-          {
-           which         => 'export_dir',
-           path          => $target,
-           source_path   => $source,
-           hash          => $hash,
-           expected_hash => $hash,
-           actual_hash   => $actual_target_hash,
-           parse_ok      => $parse_ok,
-           parse_problem => $parse_problem,
-           action        => 'copied Completed_torrents keeper to Downloaded_torrents; copied file left in place for inspection',
-           error         => 'copied completed torrent verification failed',};
-      next;
-    }
-
-    $db->update_qbt_export_dir_file_state(
-                                           $dbh,
-                                           which  => 'export_dir',
-                                           hash   => $hash,
-                                           name   => $stored->{torrent_name},
-                                           exists => 1, );
-
-    $downloaded_bucket->{keeper_by_hash}{$hash} = $stored;
-
-    push @copied,
-        {
-         hash     => $hash,
-         old_path => $source,
-         new_path => $target,};
-  }
-
-  return {
-          ok       => @problem ? 0 : 1,
-          copied   => scalar @copied,
-          rows     => \@copied,
-          problems => \@problem,};
-}
-
-sub _move_stale_completed ( $self, %arg ) {
-  my $db                 = $arg{db};
-  my $dbh                = $arg{dbh};
-  my $completed_bucket   = $arg{completed_bucket};
-  my $current_completed  = $arg{current_completed} // {};
-  my $queue_dir          = $arg{queue_dir};
-
-  my @problem;
-  my @moved;
-
-  for my $hash ( sort keys %{ $completed_bucket->{keeper_by_hash} // {} } ) {
-    next if $current_completed->{$hash};
-
-    my $keeper = $completed_bucket->{keeper_by_hash}{$hash};
-
-    my $move = $self->_move_duplicate(
-                                       db        => $db,
-                                       dbh       => $dbh,
-                                       item      => $keeper,
-                                       queue_dir => $queue_dir,
-                                       which     => 'export_dir_fin', );
-
-    if ( !$move->{ok} ) {
-      push @problem, $move->{problem};
-      next;
-    }
-
-    $db->update_qbt_export_dir_file_state(
-                                           $dbh,
-                                           which  => 'export_dir_fin',
-                                           hash   => $hash,
-                                           name   => $keeper->{torrent_name},
-                                           exists => 0, );
-
-    delete $completed_bucket->{keeper_by_hash}{$hash};
-
-    push @moved,
-        {
-         hash     => $hash,
-         old_path => $move->{old_path},
-         new_path => $move->{new_path},};
-
-    # This keeper no longer belongs to export_dir_fin. It has been moved to
-    # queued_for_deletion, so later phases such as export infill must not try
-    # to process the old Completed_torrents path as a live keeper.
-    delete $completed_bucket->{keeper_by_hash}{$hash};
-  }
-
-  return {
-          ok       => @problem ? 0 : 1,
-          moved    => scalar @moved,
-          rows     => \@moved,
-          problems => \@problem,};
-}
-
-sub _bt_backup_dir ( $self ) {
-  my $home = $ENV{HOME} // '';
-  return '' if $home eq '';
-
-  return File::Spec->catdir(
-                             $home,
-                             'Library',
-                             'Application Support',
-                             'qBittorrent',
-                             'BT_backup', );
+  return defined $fixed ? $fixed : $value;
 }
 
 sub _restore_current_qbt_from_bt_backup ( $self, %arg ) {
@@ -1381,7 +1575,8 @@ sub _restore_current_qbt_from_bt_backup ( $self, %arg ) {
                                                        path         => $target,
                                                        infohash     => $hash,
                                                        torrent_name => $name,
-                                                       backend      => 'qbt_bt_backup_restore',
+                                                       backend      =>
+'qbt_bt_backup_restore',
                                                        size         => $stat[7],
                                                        mtime        => $stat[9], );
 
@@ -1394,7 +1589,8 @@ sub _restore_current_qbt_from_bt_backup ( $self, %arg ) {
                          path  => $target,
                          hash  => $hash,
                          name  => $name,
-                         error => 'restore from BT_backup copied file but failed to record DB identity',
+                         error => 'restore from BT_backup copied file but failed to
+record DB identity',
             },};
   }
 
@@ -1409,11 +1605,12 @@ sub _restore_current_qbt_from_bt_backup ( $self, %arg ) {
   $downloaded_bucket->{keeper_by_hash}{$hash} = $row;
 
   $db->update_qbt_export_dir_file_state(
-                                         $dbh,
-                                         which  => 'export_dir',
-                                         hash   => $hash,
-                                         name   => $name,
-                                         exists => 1, );
+                                          $dbh,
+                                          which  => 'export_dir',
+                                          hash   => $hash,
+                                          name   => $name,
+                                          exists => $row->{exists},
+                                        );
 
   return {
           ok       => 1,
@@ -1425,116 +1622,6 @@ sub _restore_current_qbt_from_bt_backup ( $self, %arg ) {
                        error => 'restored from BT_backup',
                        path  => $target,
           },};
-}
-
-sub _audit_current_qbt_downloaded ( $self, %arg ) {
-  my $db                = $arg{db};
-  my $dbh               = $arg{dbh};
-  my $downloaded_bucket = $arg{downloaded_bucket};
-  my $completed_bucket  = $arg{completed_bucket};
-  my $qbt_name_by_hash  = $arg{qbt_name_by_hash} // {};
-  my @missing;
-  my @restored;
-  my @problem;
-
-  for my $hash ( @{ $db->current_qbt_hashes( $dbh ) } ) {
-    next if exists $downloaded_bucket->{keeper_by_hash}{$hash};
-
-    my $name = $qbt_name_by_hash->{$hash};
-    my $restore = $self->_restore_current_qbt_from_bt_backup(
-      db => $db,
-      dbh               => $dbh,
-      downloaded_bucket => $downloaded_bucket,
-      hash              => $hash,
-      name              => $name, );
-
-    if ( $restore->{ok} && $restore->{restored} ) {
-      push @restored, $restore->{row};
-      next;
-    }
-
-    if ( !$restore->{ok} && $restore->{problem} ) {
-      push @problem, $restore->{problem};
-      push @missing, {
-        which => 'export_dir',
-        path  => undef,
-        hash  => $hash,
-        name  => $name,
-        error => 'current qBT torrent missing from Downloaded_torrents.'
-          . '# TODO no repair code written',
-      };
-      next;
-    }
-
-    push @missing,
-        {
-         which => 'export_dir',
-         path  => undef,
-         hash  => $hash,
-         name  => $name,
-         error => 'current qBT torrent missing from Downloaded_torrents. # TODO no repair code written',};
-  }
-
-  return {
-          ok       => @missing || @problem ? 0 : 1,
-          missing  => \@missing,
-          restored => \@restored,
-          problems => \@problem,
-          count    => scalar @missing,};
-}
-
-sub _audit_current_qbt_completed ( $self, %arg ) {
-  my $db                = $arg{db};
-  my $dbh               = $arg{dbh};
-  my $downloaded_bucket = $arg{downloaded_bucket};
-  my $completed_bucket  = $arg{completed_bucket};
-  my $qbt_name_by_hash  = $arg{qbt_name_by_hash} // {};
-  my $current_completed = $db->current_qbt_completed_hash_map($dbh);
-  my @missing;
-  my $downloaded_available = 0;
-  my $downloaded_missing   = 0;
-
-  for my $hash ( sort keys %{$current_completed} ) {
-    next if exists $completed_bucket->{keeper_by_hash}{$hash};
-
-    my $has_downloaded =
-        exists $downloaded_bucket->{keeper_by_hash}{$hash} ? 1 : 0;
-
-    if ($has_downloaded) {
-      $downloaded_available++;
-    } else {
-      $downloaded_missing++;
-    }
-
-    push @missing,
-        {
-         which                => 'export_dir_fin',
-         path                 => undef,
-         hash                 => $hash,
-         name                 => $qbt_name_by_hash->{$hash},
-         downloaded_available => $has_downloaded,
-         error                => 'completed current qBT torrent missing from Completed_torrents. # TODO no repair code written',};
-  }
-
-  return {
-          ok                   => @missing ? 0 : 1,
-          missing              => \@missing,
-          count                => scalar @missing,
-          downloaded_available => $downloaded_available,
-          downloaded_missing   => $downloaded_missing,};
-}
-
-sub _finalize_bucket_counts ( $self, $bucket ) {
-  return if ref $bucket ne 'HASH';
-
-  my $keeper_by_hash = $bucket->{keeper_by_hash} // {};
-  my $final_count    = scalar keys %{$keeper_by_hash};
-
-  $bucket->{scanned} = $final_count;
-  $bucket->{hashes}  = $final_count;
-  $bucket->{kept}    = $final_count;
-
-  return;
 }
 
 sub run ( $self, %arg ) {
@@ -1594,6 +1681,26 @@ sub run ( $self, %arg ) {
       );
       push @problem, @{ $stale_completed->{problems} // [] };
 
+      my @delete_queue;
+      for my $bucket (@bucket) {
+        push @delete_queue, @{ $bucket->{delete_queue} // [] };
+      }
+      push @delete_queue, @{ $stale_completed->{delete_queue} // [] };
+
+      my $delete_commit = $self->_commit_delete_queue(
+        db        => $db,
+        dbh       => $dbh,
+        queue_dir => $queue_dir,
+        queue     => \@delete_queue,
+      );
+      push @problem, @{ $delete_commit->{problems} // [] };
+
+      my $moved_by_which = $delete_commit->{moved_by_which} // {};
+      for my $bucket (@bucket) {
+        my $which = $bucket->{which} // '';
+        $bucket->{moved} += $moved_by_which->{$which} // 0;
+      }
+
       my $current_missing = $self->_audit_current_qbt_downloaded(
         db                => $db,
         dbh               => $dbh,
@@ -1616,6 +1723,7 @@ sub run ( $self, %arg ) {
         dbh     => $dbh,
         buckets => \@bucket,
       );
+
       push @problem, @{ $infill->{problems} // [] };
 
       my $completed_copied = $completed_to_downloaded->{copied} // 0;
@@ -1631,7 +1739,7 @@ sub run ( $self, %arg ) {
         $self->_finalize_bucket_counts( $bucket_by_which{export_dir_fin} );
       }
 
-      my $moved                 = $stale_completed->{moved} // 0;
+      my $moved                 = $delete_commit->{moved_stale_completed} // 0;
       my $renamed               = 0;
       my $rename_not_needed     = 0;
       my $rename_candidates     = 0;
@@ -1660,9 +1768,11 @@ sub run ( $self, %arg ) {
         $rename_target_already_averted +=
             $bucket->{rename_target_already_averted} // 0;
         $rename_target_unknown += $bucket->{rename_target_unknown} // 0;
-        $rename_tracker_prefix_groups += $bucket->{rename_tracker_prefix_groups} // 0;
+        $rename_tracker_prefix_groups += $bucket->{rename_tracker_prefix_groups} //
+0;
         $rename_tracker_prefixed += $bucket->{rename_tracker_prefixed} // 0;
-        $rename_tracker_prefix_unresolved += $bucket->{rename_tracker_prefix_unresolved} // 0;
+        $rename_tracker_prefix_unresolved +=
+          $bucket->{rename_tracker_prefix_unresolved} // 0;
         $rename_already_named += $bucket->{rename_already_named} // 0;
         $torrent_pool_copied_add_candidates +=
             $bucket->{torrent_pool_copied_add_candidates} // 0;
@@ -1674,59 +1784,64 @@ sub run ( $self, %arg ) {
           push @rename_target_collision_sample, $sample;
         }
 
-        $kept                 += $bucket->{kept}                 // 0;
+        $kept += $bucket->{kept} // 0;
       }
 
       return {
-              ok                             => @problem || ( $current_missing->{count} // 0 ) || ( $completed_missing->{count} // 0 ) ? 0 : 1,
-              action                         => 'qbt_export_dedupe',
-              queue_dir                      => $queue_dir,
-              torrent_pool                   => $torrent_pool,
-              torrent_pool_created           => $torrent_pool_result->{created} // 0,
-              torrent_pool_existing          => $torrent_pool_result->{existing} // 0,
-              torrent_pool_copied_add_candidates     => $torrent_pool_copied_add_candidates,
-              torrent_pool_existing_add_candidates   => $torrent_pool_existing_add_candidates,
-              buckets                        => \@bucket,
-              kept                           => $kept,
-              moved                          => $moved,
-              renamed                        => $renamed,
-              rename_not_needed              => $rename_not_needed,
-              rename_candidates              => $rename_candidates,
-              rename_target_exists           => $rename_target_exists,
-              rename_target_same_hash         => $rename_target_same_hash,
-              rename_target_other_hash        => $rename_target_other_hash,
-              rename_target_already_averted   => $rename_target_already_averted,
-              rename_target_unknown           => $rename_target_unknown,
-              rename_tracker_prefix_groups   => $rename_tracker_prefix_groups,
-              rename_tracker_prefixed        => $rename_tracker_prefixed,
-              rename_tracker_prefix_unresolved => $rename_tracker_prefix_unresolved,
-              rename_already_named           => $rename_already_named,
-              rename_target_collision_samples => \@rename_target_collision_sample,
-              copied_completed_to_downloaded => $completed_copied,
-              moved_stale_completed          => $stale_completed->{moved} // 0,
-              current_qbt_missing_downloaded => $current_missing->{count} // 0,
-              current_qbt_missing_completed  => $completed_missing->{count} // 0,
-              current_qbt_completed_missing_downloaded_available =>
-                  $completed_missing->{downloaded_available} // 0,
-              current_qbt_completed_missing_downloaded_missing =>
-                  $completed_missing->{downloaded_missing} // 0,
-              current_qbt_missing            => $current_missing->{missing} // [],
-              current_qbt_completed_missing  => $completed_missing->{missing} // [],
-              missing_export_todo_count      => $current_missing->{count} // 0,
-              missing_completed_todo_count   => $completed_missing->{count} // 0,
-              missing_completed_downloaded_available_todo_count =>
-                  $completed_missing->{downloaded_available} // 0,
-              missing_completed_downloaded_missing_todo_count =>
-                  $completed_missing->{downloaded_missing} // 0,
-              bt_backup_restored             => $bt_restored,
-              infill                         => $infill,
-              infilled_torrents              => $infill->{torrents} // 0,
-              infilled_evidence_sources      => $infill->{evidence_sources} // 0,
-              infilled_trackers              => $infill->{trackers} // 0,
-              infilled_payload_files         => $infill->{payload_files} // 0,
-              infilled_info_fields           => $infill->{info_fields} // 0,
-              infilled_bt_backup_evidence    => $infill->{bt_backup_evidence} // 0,
-              problems                       => \@problem,};
+        ok => @problem
+        || ( $current_missing->{count} // 0 )
+        || ( $completed_missing->{count} // 0 )
+        ? 0
+        : 1,
+        action                         => 'qbt_export_dedupe',
+        queue_dir                      => $queue_dir,
+        torrent_pool                   => $torrent_pool,
+        torrent_pool_created => $torrent_pool_result->{created} // 0,
+        torrent_pool_existing => $torrent_pool_result->{existing} // 0,
+        torrent_pool_copied_add_candidates => $torrent_pool_copied_add_candidates,
+        torrent_pool_existing_add_candidates =>
+                $torrent_pool_existing_add_candidates,
+        buckets                        => \@bucket,
+        kept                           => $kept,
+        moved                          => $moved,
+        renamed                        => $renamed,
+        rename_not_needed              => $rename_not_needed,
+        rename_candidates              => $rename_candidates,
+        rename_target_exists           => $rename_target_exists,
+        rename_target_same_hash         => $rename_target_same_hash,
+        rename_target_other_hash        => $rename_target_other_hash,
+        rename_target_already_averted   => $rename_target_already_averted,
+        rename_target_unknown           => $rename_target_unknown,
+        rename_tracker_prefix_groups   => $rename_tracker_prefix_groups,
+        rename_tracker_prefixed        => $rename_tracker_prefixed,
+        rename_tracker_prefix_unresolved => $rename_tracker_prefix_unresolved,
+        rename_already_named           => $rename_already_named,
+        rename_target_collision_samples => \@rename_target_collision_sample,
+        copied_completed_to_downloaded => $completed_copied,
+        moved_stale_completed => $delete_commit->{moved_stale_completed} // 0,
+        current_qbt_missing_downloaded => $current_missing->{count} // 0,
+        current_qbt_missing_completed  => $completed_missing->{count} // 0,
+        current_qbt_completed_missing_downloaded_available =>
+            $completed_missing->{downloaded_available} // 0,
+        current_qbt_completed_missing_downloaded_missing =>
+            $completed_missing->{downloaded_missing} // 0,
+        current_qbt_missing            => $current_missing->{missing} // [],
+        current_qbt_completed_missing  => $completed_missing->{missing} // [],
+        missing_export_todo_count      => $current_missing->{count} // 0,
+        missing_completed_todo_count   => $completed_missing->{count} // 0,
+        missing_completed_downloaded_available_todo_count =>
+            $completed_missing->{downloaded_available} // 0,
+        missing_completed_downloaded_missing_todo_count =>
+            $completed_missing->{downloaded_missing} // 0,
+        bt_backup_restored             => $bt_restored,
+        infill                         => $infill,
+        infilled_torrents              => $infill->{torrents} // 0,
+        infilled_evidence_sources      => $infill->{evidence_sources} // 0,
+        infilled_trackers              => $infill->{trackers} // 0,
+        infilled_payload_files         => $infill->{payload_files} // 0,
+        infilled_info_fields           => $infill->{info_fields} // 0,
+        infilled_bt_backup_evidence    => $infill->{bt_backup_evidence} // 0,
+        problems                       => \@problem,};
     } );
 }
 
@@ -1852,6 +1967,133 @@ sub _torrent_basename ( $self, $path ) {
   return $base;
 }
 
+sub _suffix_torrent_basename ( $self, $base, $n ) {
+  return $base if $n <= 1;
+
+  my ( $stem, $suffix ) =
+      $base =~ /\A(.+?)(\.torrent)\z/i ? ( $1, $2 ) : ( $base, '' );
+
+  return $stem . '-' . $n . $suffix;
+}
+
+sub _torrent_metadata_base ( $self, $torrent ) {
+  my $name =
+         $torrent->{torrent_name}
+      // $torrent->{metadata_name}
+      // $torrent->{name}
+      // $torrent->{desired_base};
+
+  if ( defined $name && length $name ) {
+    $name = $self->_repair_mojibake_utf8($name);
+  }
+  else {
+    $name = basename( $torrent->{path} // '' );
+  }
+
+  $name =~ s/\.torrent\z//i;
+
+  return $self->_normalize_torrent_name($name) . '.torrent';
+}
+
+sub _torrent_pool_copy_target ( $self, %arg ) {
+  my $torrent_pool = $arg{torrent_pool};
+  my $keeper       = $arg{keeper};
+
+  my $hash = $keeper->{hash} // '';
+  my $base = basename( $keeper->{path} // '' );
+
+  return {
+          ok      => 0,
+          problem => 'torrent pool copy requires keeper hash',
+  } if $hash eq '';
+
+  return {
+          ok      => 0,
+          problem => 'torrent pool copy requires keeper path',
+  } if $base eq '';
+
+  my $target = $self->_torrent_write_target(
+    db      => $arg{db},
+    dbh     => $arg{dbh},
+    dir     => $torrent_pool,
+    torrent => $keeper,
+  );
+
+  if ( -e $target ) {
+    my $parse = $self->parser->parse_file($target);
+
+    if ( $parse->{ok} && ( $parse->{infohash} // '' ) eq $hash ) {
+      return {
+              ok       => 1,
+              target   => $target,
+              existing => 1,
+      };
+    }
+
+  }
+
+  return {
+          ok       => 1,
+          target   => $target,
+          existing => 0,
+  };
+}
+
+sub _torrent_pool_dir ( $self, $installation_root, $configured_pool, $db ) {
+  return $configured_pool
+      if defined $configured_pool && length $configured_pool;
+
+  if ( defined $installation_root && length $installation_root ) {
+    return File::Spec->catdir( $installation_root, 'torrents' );
+  }
+
+  my $db_path = $db->{db_path} // '';
+  my $root    = dirname( $db_path );
+
+  return File::Spec->catdir( $root, 'torrents' );
+}
+
+sub _torrent_write_target ( $self, %arg ) {
+  my $db      = $arg{db};
+  my $dbh     = $arg{dbh};
+  my $dir     = $arg{dir}     // die 'torrent write target requires dir';
+  my $torrent = $arg{torrent} // die 'torrent write target requires torrent';
+
+  my $base = $self->_torrent_metadata_base($torrent);
+
+  return $self->_numeric_suffix_path(
+    db   => $db,
+    dbh  => $dbh,
+    dir  => $dir,
+    base => $base,
+  );
+}
+
+sub _tracker_tag ( $self, $torrent ) {
+  my $announce = $torrent->{announce} // '';
+
+  my ( $host ) = $announce =~ m{\A[a-z][a-z0-9+.-]*://([^/:?#]+)}i;
+  $host //= '';
+  $host =~ s/\Awww\.//i;
+
+  my @part = grep { length } split /\./, $host;
+  return '' if @part < 2;
+
+  my @candidate = reverse @part[ 0 .. $#part - 1 ];
+
+  for my $tag (@candidate) {
+    next if $tag =~ /\A(?:tracker|announce|udp|http|https|bt)\z/i;
+
+    $tag =~ s/[^A-Za-z0-9_-]+/_/g;
+    $tag =~ s/\A_+//;
+    $tag =~ s/_+\z//;
+
+    return $tag if length $tag;
+  }
+
+  return '';
+}
+
 sub _unique_path ( $self, $dir, $filename ) {
   my $path = File::Spec->catfile( $dir, $filename );
 
@@ -1871,6 +2113,27 @@ sub _unique_path ( $self, $dir, $filename ) {
 
     $n++;
   }
+}
+
+sub _write_torrent_pool_copy ( $self, %arg ) {
+  my $source = $arg{source};
+  my $target = $arg{target};
+
+  # Centralized writer hook:
+  # when QBTL starts storing intentional dictionary overrides, such as a
+  # rewritten comment, this is where the bencoded torrent should be written
+  # with those overrides. Until an override exists, preserve source bytes.
+  if ( !copy( $source, $target ) ) {
+    return {
+            ok      => 0,
+            problem => "copy add-candidate keeper to torrent pool failed: $!",
+    };
+  }
+
+  return {
+          ok     => 1,
+          target => $target,
+  };
 }
 
 1;
