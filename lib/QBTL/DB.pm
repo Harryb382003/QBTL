@@ -1668,8 +1668,8 @@ sub set_manual_value ( $self, $dbh, %arg ) {
 }
 
 sub upsert_hash_value ( $self, $dbh, %arg ) {
-  my $hash = $arg{hash};
-  my $key  = $arg{key};
+  my $hash   = $arg{hash};
+  my $values = $arg{values} // [];
 
   if ( !defined $hash || $hash !~ /\A[0-9a-f]{40}\z/ ) {
     return {
@@ -1678,47 +1678,88 @@ sub upsert_hash_value ( $self, $dbh, %arg ) {
             error  => 'hash must be a 40-character lowercase hex value',};
   }
 
-  if ( !defined $key || $key eq '' ) {
-    return {
-            ok     => 0,
-            status => 'invalid_key',
-            error  => 'key is required',};
-  }
+  return {
+          ok     => 1,
+          hash   => $hash,
+          stored => 0,}
+      if !@{$values};
 
-  my $value      = defined $arg{value}      ? $arg{value}      : '';
-  my $value_type = defined $arg{value_type} ? $arg{value_type} : 'text';
+  my %key_seen;
+  my $stored     = 0;
+  my $chunk_size = 100;
 
-  $dbh->do(
-    q{
+  for ( my $offset = 0 ; $offset < @{$values} ; $offset += $chunk_size ) {
+    my $last = $offset + $chunk_size - 1;
+    $last = $#{$values} if $last > $#{$values};
+
+    my @chunk = @{$values}[ $offset .. $last ];
+
+    my @placeholder;
+    my @bind;
+
+    for my $value ( @chunk ) {
+      my $key = $value->{key};
+
+      if ( !defined $key || $key eq '' ) {
+        return {
+                ok     => 0,
+                status => 'invalid_key',
+                error  => 'key is required',};
+      }
+
+      my $stored_value =
+          defined $value->{value}
+          ? $value->{value}
+          : '';
+
+      my $value_type =
+          defined $value->{value_type}
+          ? $value->{value_type}
+          : 'text';
+
+      push @placeholder, '(?, ?, ?, ?)';
+
+      push @bind, $hash, $key, $stored_value, $value_type;
+
+      $key_seen{$key} = 1;
+    }
+
+    my $sql = q{
       INSERT INTO hash_values
         (hash, "key", value, value_type)
       VALUES
-        (?, ?, ?, ?)
-      ON CONFLICT(hash, "key", value)
-      DO UPDATE SET
-        seen_count   = seen_count + 1,
-        value_type   = excluded.value_type,
-        last_seen_on = CURRENT_TIMESTAMP
-    },
-    undef,
-    $hash,
-    $key,
-    $value,
-    $value_type, );
+    }
+        . join( ', ', @placeholder ) . q{
+          ON CONFLICT(hash, "key", value)
+          DO UPDATE SET
+            seen_count   = seen_count + 1,
+            value_type   = excluded.value_type,
+            last_seen_on = CURRENT_TIMESTAMP
+        };
 
-  $self->upsert_key_accessor(
-                              $dbh,
-                              key      => $key,
-                              kind     => 'observed',
-                              source   => 'hash_values',
-                              accessor => 'qbtl meta key ' . $key,
-                              status   => 'implemented', );
+    $dbh->do( $sql, undef, @bind );
+
+    $stored += scalar @chunk;
+  }
+
+  for my $key ( keys %key_seen ) {
+    next if $self->{_hash_value_key_accessor_seen}{$key};
+
+    $self->upsert_key_accessor(
+                                $dbh,
+                                key      => $key,
+                                kind     => 'observed',
+                                source   => 'hash_values',
+                                accessor => 'qbtl meta key ' . $key,
+                                status   => 'implemented', );
+
+    $self->{_hash_value_key_accessor_seen}{$key} = 1;
+  }
 
   return {
-          ok    => 1,
-          hash  => $hash,
-          key   => $key,
-          value => $value,};
+          ok     => 1,
+          hash   => $hash,
+          stored => $stored,};
 }
 
 sub unset_manual_value ( $self, $dbh, %arg ) {
@@ -1797,22 +1838,22 @@ sub cull_moved_duplicate_torrent_file ( $self, $dbh, %arg ) {
       my $old_hash = $old_row->{infohash};
       my $new_hash = $new_row->{infohash};
 
-      if (    defined $old_hash
-           && defined $new_hash
-           && $old_hash ne ''
-           && $new_hash ne ''
-           && $old_hash ne $new_hash )
-      {
-        return {
-          ok       => 0,
-          old_path => $old,
-          db_path  => $stored_old,
-          new_path => $new,
-          target   => $stored_new,
-          problem  =>
-'queued duplicate target path already exists with different infohash',
-        };
-      }
+      #       if (    defined $old_hash
+      #            && defined $new_hash
+      #            && $old_hash ne ''
+      #            && $new_hash ne ''
+      #            && $old_hash ne $new_hash )
+      #       {
+      #         return {
+      #           ok       => 0,
+      #           old_path => $old,
+      #           db_path  => $stored_old,
+      #           new_path => $new,
+      #           target   => $stored_new,
+      #           problem  =>
+      # 'queued duplicate target path already exists with different infohash',
+      #         };
+      #       }
 
       push @delete_path, $stored_new
           if defined $stored_new && length $stored_new;

@@ -445,27 +445,41 @@ sub _store_observed_keys ( $self, %arg ) {
 
   return if !$parse->{ok} || !$parse->{infohash};
 
+  my %seen;
+  my @observed;
+
   for my $key ( @{$parse->{observed_keys} // []} ) {
-    my $stored_key = eval {
-      $db->upsert_hash_value(
-                              $dbh,
-                              hash       => $parse->{infohash},
-                              key        => $key->{key},
-                              value      => $key->{value},
-                              value_type => $key->{value_type} // 'text', );
-    };
+    my $name       = $key->{key};
+    my $value      = defined $key->{value} ? $key->{value} : '';
+    my $value_type = $key->{value_type} // 'text';
 
-    if ( $@ ) {
-      push @$problem, "$label key store failed for $path: $@";
-      next;
-    }
+    my $dedupe_key = join "\0", $name, $value, $value_type;
 
-    if ( !$stored_key->{ok} ) {
-      push @$problem,
-          "$label key store failed for $path: "
-          . ( $stored_key->{error} // $key->{key} );
-      next;
-    }
+    next if $seen{$dedupe_key}++;
+
+    push @observed,
+        {
+         key        => $name,
+         value      => $value,
+         value_type => $value_type,};
+  }
+
+  my $stored = eval {
+    $db->upsert_hash_values(
+                             $dbh,
+                             hash   => $parse->{infohash},
+                             values => \@observed, );
+  };
+
+  if ( $@ ) {
+    push @$problem, "$label key store failed for $path: $@";
+    return;
+  }
+
+  if ( !$stored->{ok} ) {
+    push @$problem,
+        "$label key store failed for $path: "
+        . ( $stored->{error} // 'unknown hash value store error' );
   }
 
   return;

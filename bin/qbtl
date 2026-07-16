@@ -7,4 +7,4 @@ use feature qw( signatures );
 use lib 'lib';
 use QBTL::App;
 
-exit QBTL::App->new->run_cli(@ARGV);
+exit QBTL::App->new->run_cli( @ARGV );

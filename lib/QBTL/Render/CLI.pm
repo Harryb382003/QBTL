@@ -5,7 +5,7 @@ use common::sense;
 use feature qw( signatures );
 
 use parent 'QBTL::Render::Base';
-use QBTL::Util qw( epoch_time human_bytes );
+use QBTL::Util qw( epoch_time human_bytes human_duration);
 
 binmode STDOUT, ':encoding(UTF-8)';
 binmode STDERR, ':encoding(UTF-8)';
@@ -13,6 +13,7 @@ binmode STDERR, ':encoding(UTF-8)';
 sub new ( $class, %arg ) {
   $arg{out}         //= \*STDOUT;
   $arg{time_format} //= 'full';
+  $arg{started}     //= time;
 
   return bless \%arg, $class;
 }
@@ -226,7 +227,9 @@ sub init ( $self, $result ) {
   }
 
   say {$out} '';
-# say {$out} 'Elapsed: ' . ( $result->{elapsed} // '' ) . 's';
+  say {$out} 'Elapsed: ' . $self->elapsed(
+                            human_duration( $result->{elapsed} // 0 )
+                          );
 
   return $result->{ok} ? 0 : 1;
 }

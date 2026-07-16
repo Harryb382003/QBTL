@@ -52,7 +52,7 @@ sub _apply_tracker_prefix_collision_plan ( $self, %arg ) {
 
     for my $plan (@collision) {
       my $keeper       = $plan->{keeper};
-      my $prefixed_base = $self->_collision_averted_base( $keeper, $base );
+      my $prefixed_base = $self->_collision_avert_tracker( $keeper, $base );
 
       if ( !length $prefixed_base || $prefixed_seen{$prefixed_base}++ ) {
         $unresolved = 1;
@@ -86,11 +86,12 @@ sub _apply_tracker_prefix_collision_plan ( $self, %arg ) {
 }
 
 sub _assign_delete_queue_targets ( $self, %arg ) {
-  my $queue_dir = $arg{queue_dir} // die 'delete queue target assignment requires
-queue_dir';
-  my $queue     = $arg{queue}     // [];
+  my $queue_dir = $arg{queue_dir}
+      // die 'delete queue target assignment requires queue_dir';
+  my $queue = $arg{queue} // [];
 
   my %seen;
+  my %target_seen;
 
   for my $entry ( @{$queue} ) {
     my $base = $entry->{basename} // basename( $entry->{source_path} // '' );
@@ -102,6 +103,9 @@ queue_dir';
     my $target_base = $self->_suffix_torrent_basename( $base, $n );
 
     $entry->{target_path} = File::Spec->catfile( $queue_dir, $target_base );
+
+    warn "duplicate delete queue target assigned: $entry->{target_path}\n"
+        if $target_seen{ $entry->{target_path} }++;
   }
 
   return $queue;
@@ -272,11 +276,30 @@ sub _choose_keeper ( $self, %arg ) {
   return $keeper;
 }
 
-sub _collision_averted_base ( $self, $torrent, $base ) {
-  my $tag = $self->_tracker_tag( $torrent );
-  return '' if !length $tag;
+sub _collision_avert_tracker ( $self, $torrent, $base ) {
+  my $announce = $torrent->{announce} // '';
 
-  return '[' . $tag . '] ' . $base;
+  my ($host) = $announce =~ m{\A[a-z][a-z0-9+.-]*://([^/:?#]+)}i;
+  $host //= '';
+  $host =~ s/\Awww\.//i;
+
+  my @part = grep { length } split /\./, $host;
+
+  return '' if @part < 2;
+
+  my @candidate = reverse @part[ 0 .. $#part - 1 ];
+
+  for my $tag (@candidate) {
+    next if $tag =~ /\A(?:tracker|announce|udp|http|https|bt)\z/i;
+
+    $tag =~ s/[^A-Za-z0-9_-]+/_/g;
+    $tag =~ s/\A_+//;
+    $tag =~ s/_+\z//;
+
+    return '[' . $tag . '] ' . $base if length $tag;
+  }
+
+  return '';
 }
 
 sub _commit_delete_queue ( $self, %arg ) {
@@ -314,13 +337,14 @@ sub _commit_delete_queue ( $self, %arg ) {
 
     if ( defined $target && -e $target ) {
       push @problem,
-          {
-           which  => $entry->{which},
-           path   => $old_path,
-           hash   => $entry->{hash},
-           target => $target,
-           error  => 'queued duplicate target path already exists',
-          };
+        {
+          which  => $entry->{which},
+          path   => $old_path,
+          hash   => $entry->{hash},
+          target => $target,
+          error  => "queued duplicate target path already exists:"
+                  . "\n\ttarget=$target source=$old_path",
+        };
       next;
     }
 
@@ -546,7 +570,7 @@ sub _copy_target_for_torrent ( $self, %arg ) {
             existing        => $existing,};
   }
 
-  my $averted_base = $self->_collision_averted_base( $torrent, $base );
+  my $averted_base = $self->_collision_avert_tracker( $torrent, $base );
 
   if ( !length $averted_base ) {
     return {
@@ -557,9 +581,11 @@ sub _copy_target_for_torrent ( $self, %arg ) {
                         hash          => $hash,
                         name          => $torrent->{torrent_name},
                         existing_hash => $existing->{hash},
-                        error         => ( $torrent->{torrent_name} // $hash )
-                          . ' uncoded collision type occurred. # TODO',
-            },};
+                        error         =>
+                        " Unable to avoid collision via tracker prepend."
+                        . " tracker parser returned no data."
+                      },
+          };
   }
 
   my $averted_target = File::Spec->catfile( $dir, $averted_base . '.torrent' );
@@ -589,8 +615,9 @@ $hash ) {
                       name          => $torrent->{torrent_name},
                       existing_hash => $averted_existing->{hash},
                       error         => ( $torrent->{torrent_name} // $hash )
-                        . ' uncoded collision type occurred. # TODO',
-          },};
+          . ' uncoded collision type occurred. # TODO (averted_existing)',
+          },
+        };
 }
 
 sub _copy_completed_to_downloaded ( $self, %arg ) {
@@ -1336,14 +1363,15 @@ sub _queue_duplicate_for_deletion ( $self, %arg ) {
 
   if ( !$stored->{ok} || !$stored->{parse_ok} ) {
     return {
-            ok      => 0,
-            problem => {
-                        which => $which,
-                        path  => $old_path,
-                        hash  => $item->{hash},
-                        error => 'duplicate metadata was not promoted; refused to
-queue/cull duplicate',
-            },};
+      ok      => 0,
+      problem => {
+        which => $which,
+        path  => $old_path,
+        hash  => $item->{hash},
+        error => 'duplicate metadata was not promoted;'
+                .'refused to queue/cull duplicate',
+      },
+    };
   }
 
   if (    defined $item->{hash}
@@ -1353,34 +1381,35 @@ queue/cull duplicate',
        && $stored->{hash} ne $item->{hash} )
   {
     return {
-            ok      => 0,
-            problem => {
-                        which         => $which,
-                        path          => $old_path,
-                        hash          => $item->{hash},
-                        existing_hash => $stored->{hash},
-                        error         => 'duplicate metadata hash mismatch; refused
-to queue/cull duplicate',
-            },};
+      ok      => 0,
+      problem => {
+        which         => $which,
+        path          => $old_path,
+        hash          => $item->{hash},
+        existing_hash => $stored->{hash},
+        error         => 'duplicate metadata hash mismatch;'
+                        .'refused to queue/cull duplicate',
+      },
+    };
   }
 
   return {
           ok    => 1,
           entry => {
-                    kind        => $kind,
-                    which       => $which,
-                    source_path => $old_path,
-                    hash        => $stored->{hash} // $item->{hash} // '',
-                    basename    => $self->_torrent_metadata_base(
-                      {
-                        %{$item},
-                        hash         => $stored->{hash} // $item->{hash},
-                        torrent_name => $stored->{torrent_name}
-                          // $item->{torrent_name},
-                        path => $old_path,
-                      }
-                    ),
-          },};
+            kind        => $kind,
+            which       => $which,
+            source_path => $old_path,
+            hash        => $stored->{hash} // $item->{hash} // '',
+            basename    => $self->_torrent_metadata_base(
+              {
+                %{$item},
+                hash          => $stored->{hash} // $item->{hash},
+                torrent_name  => $stored->{torrent_name} // $item->{torrent_name},
+                path          => $old_path,
+              }
+            ),
+          },
+        };
 }
 
 sub _rename_keeper ( $self, %arg ) {
@@ -1425,7 +1454,7 @@ if ( -e $new_path ) {
       ? 'same_hash'
       : 'other_hash';
 
-  my $collision_averted_base = $self->_collision_averted_base(
+  my $collision_averted_base = $self->_collision_avert_tracker(
     $keeper,
     $desired_base,
   );
@@ -2069,30 +2098,30 @@ sub _torrent_write_target ( $self, %arg ) {
   );
 }
 
-sub _tracker_tag ( $self, $torrent ) {
-  my $announce = $torrent->{announce} // '';
-
-  my ( $host ) = $announce =~ m{\A[a-z][a-z0-9+.-]*://([^/:?#]+)}i;
-  $host //= '';
-  $host =~ s/\Awww\.//i;
-
-  my @part = grep { length } split /\./, $host;
-  return '' if @part < 2;
-
-  my @candidate = reverse @part[ 0 .. $#part - 1 ];
-
-  for my $tag (@candidate) {
-    next if $tag =~ /\A(?:tracker|announce|udp|http|https|bt)\z/i;
-
-    $tag =~ s/[^A-Za-z0-9_-]+/_/g;
-    $tag =~ s/\A_+//;
-    $tag =~ s/_+\z//;
-
-    return $tag if length $tag;
-  }
-
-  return '';
-}
+# sub _tracker_tag ( $self, $torrent ) {
+#   my $announce = $torrent->{announce} // '';
+#
+#   my ( $host ) = $announce =~ m{\A[a-z][a-z0-9+.-]*://([^/:?#]+)}i;
+#   $host //= '';
+#   $host =~ s/\Awww\.//i;
+#
+#   my @part = grep { length } split /\./, $host;
+#   return '' if @part < 2;
+#
+#   my @candidate = reverse @part[ 0 .. $#part - 1 ];
+#
+#   for my $tag (@candidate) {
+#     next if $tag =~ /\A(?:tracker|announce|udp|http|https|bt)\z/i;
+#
+#     $tag =~ s/[^A-Za-z0-9_-]+/_/g;
+#     $tag =~ s/\A_+//;
+#     $tag =~ s/_+\z//;
+#
+#     return $tag if length $tag;
+#   }
+#
+#   return '';
+# }
 
 sub _unique_path ( $self, $dir, $filename ) {
   my $path = File::Spec->catfile( $dir, $filename );
