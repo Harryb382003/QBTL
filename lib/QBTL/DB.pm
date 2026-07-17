@@ -1094,7 +1094,11 @@ sub best_local_torrent_file_for_hash ( $self, $dbh, $hash ) {
       WHERE infohash = ?
         AND COALESCE(parse_ok, 0) = 1
       ORDER BY
-        CASE WHEN path LIKE '%/BT_backup/%' THEN 0 ELSE 1 END,
+        CASE WHEN path LIKE '%/BT_backup/%' THEN 1 ELSE 0 END,
+        CASE
+          WHEN announce IS NOT NULL AND announce <> '' THEN 0
+          ELSE 1
+        END,
         parsed_on DESC,
         seen_on DESC,
         path ASC
@@ -1102,6 +1106,30 @@ sub best_local_torrent_file_for_hash ( $self, $dbh, $hash ) {
     },
     undef,
     $hash, );
+}
+
+sub torrent_copy_candidates_for_hash ( $self, $dbh, $hash ) {
+  return [] if !defined $hash || $hash eq '';
+
+  return $dbh->selectall_arrayref(
+    q{
+      SELECT *
+      FROM local_torrent_files
+      WHERE infohash = ?
+        AND COALESCE(parse_ok, 0) = 1
+      ORDER BY
+        CASE WHEN path LIKE '%/BT_backup/%' THEN 1 ELSE 0 END,
+        CASE
+          WHEN announce IS NOT NULL AND announce <> '' THEN 0
+          ELSE 1
+        END,
+        parsed_on DESC,
+        seen_on DESC,
+        path ASC
+    },
+    {Slice => {}},
+    $hash,
+  );
 }
 
 sub qbt_info_by_hash ( $self, $dbh, $hash ) {
@@ -1129,6 +1157,55 @@ sub current_qbt_hashes ( $self, $dbh ) {
     {Slice => {}}, );
 
   return [ map { $_->{hash} } @{$rows} ];
+}
+
+sub preferred_torrent_tracker ( $self, $dbh, $hash ) {
+  return undef if !defined $hash || $hash eq '';
+
+  my %column = $self->qbt_info_column_map($dbh);
+
+  if ( $column{tracker} ) {
+    my ($tracker) = $dbh->selectrow_array(
+      q{
+        SELECT tracker
+        FROM qbt_info
+        WHERE hash = ?
+          AND tracker IS NOT NULL
+          AND tracker <> ''
+        ORDER BY current_qbt DESC
+        LIMIT 1
+      },
+      undef,
+      $hash,
+    );
+
+    return $tracker if defined $tracker && length $tracker;
+  }
+
+  my ($tracker) = $dbh->selectrow_array(
+    q{
+      SELECT tracker_url
+      FROM torrent_trackers
+      WHERE hash = ?
+        AND tracker_url IS NOT NULL
+        AND tracker_url <> ''
+      ORDER BY
+        CASE source
+          WHEN 'qbt' THEN 0
+          WHEN 'export_dir_fin' THEN 1
+          WHEN 'export_dir' THEN 2
+          ELSE 3
+        END,
+        COALESCE(tier, 0),
+        COALESCE(position, 0),
+        id
+      LIMIT 1
+    },
+    undef,
+    $hash,
+  );
+
+  return $tracker;
 }
 
 sub current_qbt_name_map ( $self, $dbh ) {

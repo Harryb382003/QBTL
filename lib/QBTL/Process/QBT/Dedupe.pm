@@ -556,6 +556,105 @@ write',
   };
 }
 
+sub _hydrate_copy_keeper ( $self, %arg ) {
+  my $db     = $arg{db};
+  my $dbh    = $arg{dbh};
+  my $hash   = $arg{hash} // '';
+  my $keeper = $arg{keeper};
+  my $name   = $arg{name};
+
+  return {ok => 0, problem => 'copy keeper hydration requires keeper'}
+      if ref $keeper ne 'HASH';
+
+  $hash = $keeper->{hash} // '' if !length $hash;
+
+  return {ok => 0, problem => 'copy keeper hydration requires hash'}
+      if !length $hash;
+
+  my @candidate = ( $keeper, @{ $db->torrent_copy_candidates_for_hash(
+    $dbh,
+    $hash,
+  ) // [] } );
+
+  my %path_seen;
+  my @validated;
+
+  for my $candidate (@candidate) {
+    next if ref $candidate ne 'HASH';
+
+    my $path = $candidate->{path};
+    next if !defined $path || $path eq '' || $path_seen{$path}++ || !-f $path;
+
+    my $verified = $self->_store_torrent_file(
+      $db,
+      $dbh,
+      $path,
+      $arg{backend} // 'copy_keeper',
+      force_parse => 1,
+    );
+
+    next if !$verified->{parse_ok};
+    next if ( $verified->{hash} // '' ) ne $hash;
+    next if !defined $verified->{announce} || !length $verified->{announce};
+
+    $verified->{torrent_name} //= $name;
+    $verified->{copy_source_last_resort} =
+        $path =~ m{(?:\A|/)BT_backup(?:/|\z)} ? 1 : 0;
+
+    push @validated, $verified;
+  }
+
+  return {
+          ok      => 0,
+          problem => 'no validated physical copy keeper contains tracker metadata',
+          keeper  => $keeper,
+         }
+      if !@validated;
+
+  @validated = sort {
+         ( $a->{copy_source_last_resort} // 0 )
+      <=> ( $b->{copy_source_last_resort} // 0 )
+      || ( $a->{path} // '' ) cmp ( $b->{path} // '' )
+  } @validated;
+
+  return {ok => 1, keeper => $validated[0]};
+}
+
+sub _hydrate_bucket_keepers ( $self, %arg ) {
+  my $db     = $arg{db};
+  my $dbh    = $arg{dbh};
+  my $bucket = $arg{bucket};
+  my $name   = $arg{qbt_name_by_hash} // {};
+
+  my @problem;
+
+  for my $hash ( sort keys %{ $bucket->{keeper_by_hash} // {} } ) {
+    my $hydrated = $self->_hydrate_copy_keeper(
+      db      => $db,
+      dbh     => $dbh,
+      hash    => $hash,
+      keeper  => $bucket->{keeper_by_hash}{$hash},
+      name    => $name->{$hash},
+      backend => $bucket->{which} // 'copy_keeper',
+    );
+
+    if ( !$hydrated->{ok} ) {
+      push @problem,
+          {
+           which => $bucket->{which},
+           path  => $bucket->{keeper_by_hash}{$hash}{path},
+           hash  => $hash,
+           error => $hydrated->{problem},
+          };
+      next;
+    }
+
+    $bucket->{keeper_by_hash}{$hash} = $hydrated->{keeper};
+  }
+
+  return {ok => @problem ? 0 : 1, problems => \@problem};
+}
+
 sub _copy_target_for_torrent ( $self, %arg ) {
   my $db      = $arg{db};
   my $dbh     = $arg{dbh};
@@ -579,21 +678,6 @@ sub _copy_target_for_torrent ( $self, %arg ) {
             already_present => 1,
             existing        => $existing,};
   }
-
-  warn join(
-  ' | ',
-  'copy target hash=' . ( $torrent->{hash} // '(none)' ),
-  "\n\tsource path=" . ( $torrent->{path} // '(none)' ),
-  "\n\ttarget_path=" . ( $target // '(none)' ),
-  "\n\t\tannounce=" . ( $torrent->{announce} // '(none)' ),
-  "\n\t\t\tsource=" . (
-       $torrent->{source}
-    // $torrent->{which}
-    // $torrent->{discovered_by}
-    // '(none)'
-  ),
-  'parse_ok=' . ( $torrent->{parse_ok} // '(none)' ),
-) . "\n";
 
 my $averted_base = $self->_collision_avert_tracker(
   $torrent->{announce},
@@ -690,17 +774,27 @@ sub _copy_completed_to_downloaded ( $self, %arg ) {
       next;
     }
 
-    my $verified = $keeper;
+    my $hydrated = $self->_hydrate_copy_keeper(
+      db      => $db,
+      dbh     => $dbh,
+      hash    => $expected_hash,
+      keeper  => $keeper,
+      name    => $qbt_name_by_hash->{$expected_hash},
+      backend => 'export_dir_fin',
+    );
 
-    if (
-      !defined $verified->{hash}
-      || !length $verified->{hash}
-      || $verified->{hash} ne $expected_hash
-    ) {
-      $verified = $self->_store_torrent_file(
-        $db, $dbh, $source, 'export_dir_fin'
-      );
+    if ( !$hydrated->{ok} ) {
+      push @problem,
+          {
+           which => 'export_dir_fin',
+           path  => $source,
+           hash  => $expected_hash,
+           error => $hydrated->{problem},
+          };
+      next;
     }
+
+    my $verified = $hydrated->{keeper};
 
     my $actual_hash =
         defined $verified->{hash} && length $verified->{hash}
@@ -1579,12 +1673,37 @@ sub _restore_current_qbt_from_bt_backup ( $self, %arg ) {
   my $base = $self->_safe_basename( $name // $hash );
   $base = $hash if !length $base;
 
-  my $torrent = {
-                 path         => $source,
-                 hash         => $hash,
-                 torrent_name => $name,
-                 announce     => undef,
-                 parse_ok     => 1,};
+  my $stored = $self->_store_torrent_file(
+    $db,
+    $dbh,
+    $source,
+    'bt_backup_copy_source',
+  );
+
+  my $hydrated = $self->_hydrate_copy_keeper(
+    db      => $db,
+    dbh     => $dbh,
+    hash    => $hash,
+    keeper  => $stored,
+    name    => $name,
+    backend => 'bt_backup_copy_source',
+  );
+
+  return {
+          ok       => 0,
+          restored => 0,
+          problem  => {
+                       which => 'export_dir',
+                       path  => $source,
+                       hash  => $hash,
+                       name  => $name,
+                       error => $hydrated->{problem},
+                      },
+         }
+      if !$hydrated->{ok};
+
+  my $torrent = $hydrated->{keeper};
+  $source = $torrent->{path};
 
   my $target_result = $self->_copy_target_for_torrent(
                                                        db      => $db,
@@ -1680,7 +1799,10 @@ record DB identity',
                        which => 'export_dir',
                        hash  => $hash,
                        name  => $name,
-                       error => 'restored from BT_backup',
+                       error => $torrent->{copy_source_last_resort}
+                           ? 'LAST RESORT: restored from BT_backup copy source'
+                           : 'restored from validated non-BT_backup copy source',
+                       source_path => $source,
                        path  => $target,
           },};
 }
@@ -1722,6 +1844,25 @@ sub run ( $self, %arg ) {
       }
 
       my %bucket_by_which = map { $_->{which} => $_ } @bucket;
+
+      my $infill = $self->{metadata_process}->infill_known_exports(
+        db      => $db,
+        dbh     => $dbh,
+        buckets => \@bucket,
+      );
+
+      push @problem, @{ $infill->{problems} // [] };
+
+      for my $bucket (@bucket) {
+        my $hydrated = $self->_hydrate_bucket_keepers(
+          db               => $db,
+          dbh              => $dbh,
+          bucket           => $bucket,
+          qbt_name_by_hash => $qbt_name_by_hash,
+        );
+
+        push @problem, @{ $hydrated->{problems} // [] };
+      }
 
       my $completed_to_downloaded = $self->_copy_completed_to_downloaded(
         db                => $db,
@@ -1778,14 +1919,6 @@ sub run ( $self, %arg ) {
         completed_bucket  => $bucket_by_which{export_dir_fin},
         qbt_name_by_hash  => $qbt_name_by_hash,
       );
-
-      my $infill = $self->{metadata_process}->infill_known_exports(
-        db      => $db,
-        dbh     => $dbh,
-        buckets => \@bucket,
-      );
-
-      push @problem, @{ $infill->{problems} // [] };
 
       my $completed_copied = $completed_to_downloaded->{copied} // 0;
       my $bt_restored      = scalar @{ $current_missing->{restored} // [] };
@@ -1974,6 +2107,14 @@ sub _store_torrent_file ( $self, $db, $dbh, $path, $backend, %arg ) {
 
   my $parse = $self->parser->parse_file( $path );
 
+  my $effective_announce = $parse->{announce};
+  if ( ( !defined $effective_announce || !length $effective_announce )
+       && ref $parse->{trackers} eq 'ARRAY'
+       && ref $parse->{trackers}[0] eq 'HASH' )
+  {
+    $effective_announce = $parse->{trackers}[0]{tracker_url};
+  }
+
   my $parse_result =
       $db->update_local_torrent_parse(
                             $dbh,
@@ -1982,7 +2123,7 @@ sub _store_torrent_file ( $self, $db, $dbh, $path, $backend, %arg ) {
                              infohash           => $parse->{infohash},
                              torrent_name       => $parse->{torrent_name},
                              comment            => $parse->{comment},
-                             announce           => $parse->{announce},
+                             announce           => $effective_announce,
                              created_by         => $parse->{created_by},
                              creation_date      => $parse->{creation_date},
                              payload_kind       => $parse->{payload_kind},
@@ -2016,7 +2157,7 @@ sub _store_torrent_file ( $self, $db, $dbh, $path, $backend, %arg ) {
           path         => $path,
           hash         => $parse->{infohash} ? $parse->{infohash} : undef,
           torrent_name => $parse->{torrent_name},
-          announce     => $parse->{announce},
+          announce     => $effective_announce,
           parse_ok     => $parse->{ok} ? 1 : 0,
           problem      => $parse->{problem},};
 }
