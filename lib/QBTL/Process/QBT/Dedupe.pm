@@ -52,7 +52,17 @@ sub _apply_tracker_prefix_collision_plan ( $self, %arg ) {
 
     for my $plan (@collision) {
       my $keeper       = $plan->{keeper};
-      my $prefixed_base = $self->_collision_avert_tracker( $keeper, $base );
+#       warn join(
+#         ' | ',
+#         'hash=' . ( $plan->{hash} // '(none)' ),
+#         'path=' . ( $keeper->{path} // '(none)' ),
+#         'announce=' . ( $keeper->{announce} // '(none)' ),
+#       ) . "\n";
+
+my $prefixed_base = $self->_collision_avert_tracker(
+  $keeper->{announce},
+  $base,
+);
 
       if ( !length $prefixed_base || $prefixed_seen{$prefixed_base}++ ) {
         $unresolved = 1;
@@ -276,8 +286,8 @@ sub _choose_keeper ( $self, %arg ) {
   return $keeper;
 }
 
-sub _collision_avert_tracker ( $self, $torrent, $base ) {
-  my $announce = $torrent->{announce} // '';
+sub _collision_avert_tracker ( $self, $announce, $base ) {
+  $announce //= '';
 
   my ($host) = $announce =~ m{\A[a-z][a-z0-9+.-]*://([^/:?#]+)}i;
   $host //= '';
@@ -570,7 +580,27 @@ sub _copy_target_for_torrent ( $self, %arg ) {
             existing        => $existing,};
   }
 
-  my $averted_base = $self->_collision_avert_tracker( $torrent, $base );
+  warn join(
+  ' | ',
+  'copy target hash=' . ( $torrent->{hash} // '(none)' ),
+  "\n\tsource path=" . ( $torrent->{path} // '(none)' ),
+  "\n\ttarget_path=" . ( $target // '(none)' ),
+  "\n\t\tannounce=" . ( $torrent->{announce} // '(none)' ),
+  "\n\t\t\tsource=" . (
+       $torrent->{source}
+    // $torrent->{which}
+    // $torrent->{discovered_by}
+    // '(none)'
+  ),
+  'parse_ok=' . ( $torrent->{parse_ok} // '(none)' ),
+) . "\n";
+
+my $averted_base = $self->_collision_avert_tracker(
+  $torrent->{announce},
+  $base,
+);
+
+
 
   if ( !length $averted_base ) {
     return {
@@ -581,9 +611,10 @@ sub _copy_target_for_torrent ( $self, %arg ) {
                         hash          => $hash,
                         name          => $torrent->{torrent_name},
                         existing_hash => $existing->{hash},
+                        collision_kind => 'tracker_prepend_no_data',
                         error         =>
-                        " Unable to avoid collision via tracker prepend."
-                        . " tracker parser returned no data."
+                        'Unable to avoid collision via tracker prepend. '
+                        . 'Tracker parser returned no data.'
                       },
           };
   }
@@ -1455,9 +1486,10 @@ if ( -e $new_path ) {
       : 'other_hash';
 
   my $collision_averted_base = $self->_collision_avert_tracker(
-    $keeper,
+    $keeper->{announce},
     $desired_base,
   );
+
   my $old_base = $self->_torrent_basename($old_path);
   my $collision_already_averted =
          $classification eq 'other_hash'

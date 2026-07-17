@@ -218,7 +218,10 @@ sub init ( $self, $result ) {
 
     say {$out} '';
     say {$out} 'qBT export dedupe:';
-    $self->_qbt_export_dedupe_summary( $export, indent => '  ' );
+    $self->_render_qbt_export_dedupe(
+    $result->{export_dedupe},
+    indent => '  ',
+  );
     $self->_print_qbt_export_dedupe_problems(
                                              $export,
                                              header       => 'Problems:',
@@ -834,6 +837,19 @@ sub _qbt_export_dedupe_problem_lines ( $self, $result ) {
   for my $problem ( @{ $result->{problems} // [] } ) {
     next if ref $problem ne 'HASH';
 
+
+
+
+warn 'collision_kind=['
+    . ( $problem->{collision_kind} // '(none)' )
+    . '] error=['
+    . ( $problem->{error} // '(none)' )
+    . "]\n";
+
+
+
+#     next if ( $problem->{collision_kind} // '' ) eq 'tracker_prepend_no_data';
+
     my $which = defined $problem->{which} && length $problem->{which}
         ? $problem->{which}
         : undef;
@@ -1134,12 +1150,57 @@ sub qbt_refresh ( $self, $result ) {
   return 0;
 }
 
+
+sub _print_qbt_export_dedupe_tracker_prepend_failures ( $self, $result ) {
+  my @row =
+      grep {
+             ref $_ eq 'HASH'
+          && ( $_->{collision_kind} // '' ) eq 'tracker_prepend_no_data'
+      } @{ $result->{problems} // [] };
+
+  return 0 if !@row;
+
+  my $out = $self->{out};
+
+  say {$out} '';
+  say {$out} 'Unable to avoid collision via tracker prepend.';
+  say {$out} 'Tracker parser returned no data.';
+  say {$out} '';
+  say {$out} sprintf(
+                      '  %-40s  %-40s  %-40s  %s',
+                      'Hash',
+                      'Existing hash',
+                      'Torrent name',
+                      'Path',
+                    );
+  say {$out} sprintf(
+                      '  %-40s  %-40s  %-40s  %s',
+                      '-' x 40,
+                      '-' x 40,
+                      '-' x 40,
+                      '-' x 40,
+                    );
+
+  for my $problem (@row) {
+    say {$out} sprintf(
+                        '  %-40s  %-40s  %-40s  %s',
+                        $problem->{hash}          // '',
+                        $problem->{existing_hash} // '',
+                        $problem->{name}          // '',
+                        $problem->{path}          // '',
+                      );
+  }
+
+  return scalar @row;
+}
+
 sub qbt_export_dedupe ( $self, $result ) {
   my $out = $self->{out};
 
   if ( !$result->{ok} ) {
     say {$out} 'qBT export dedupe completed with problems.';
-  } else {
+  }
+  else {
     say {$out} 'qBT export dedupe complete.';
   }
 
@@ -1150,50 +1211,70 @@ sub qbt_export_dedupe ( $self, $result ) {
   say {$out} '  torrent pool existing add candidates:    '
       . ( $result->{torrent_pool_existing_add_candidates} // 0 );
 
-  $self->_qbt_export_dedupe_summary( $result, indent => '  ' );
+  $self->_render_qbt_export_dedupe(
+    $result,
+    indent          => '  ',
+    include_buckets => 1,
+  );
 
-  for my $bucket ( @{ $result->{buckets} // [] } ) {
-    say {$out} '';
-    say {$out} ( $bucket->{which} // '' ) . ':';
-    say {$out} '  directory:         ' . ( $bucket->{directory}        // '' );
-    say {$out} '  torrent files:     ' . ( $bucket->{scanned}          // 0 );
-    say {$out} '  stored:            ' . ( $bucket->{stored}           // 0 );
-    say {$out} '  parsed:            ' . ( $bucket->{parsed}           // 0 );
-    say {$out} '  parse problems:    ' . ( $bucket->{parse_problems}   // 0 );
-    say {$out} '  hashes:            ' . ( $bucket->{hashes}           // 0 );
-    say {$out} '  duplicate groups:  ' . ( $bucket->{duplicate_groups} // 0 );
-    say {$out} '  kept:              ' . ( $bucket->{kept}             // 0 );
-    say {$out} '  renamed:           ' . ( $bucket->{renamed}          // 0 );
-    say {$out} '  rename candidates: ' . ( $bucket->{rename_candidates} // 0 );
-    say {$out} '  rename not needed: ' . ( $bucket->{rename_not_needed} // 0 );
-    say {$out} '  rename target exists: '
-        . ( $bucket->{rename_target_exists} // 0 );
-    say {$out} '  rename target same hash: '
-        . ( $bucket->{rename_target_same_hash} // 0 );
-    say {$out} '  rename target other hash: '
-        . ( $bucket->{rename_target_other_hash} // 0 );
-    say {$out} '  rename target already averted: '
-        . ( $bucket->{rename_target_already_averted} // 0 );
-    say {$out} '  rename target unknown: '
-        . ( $bucket->{rename_target_unknown} // 0 );
-    say {$out} '  rename tracker-prefix groups: '
-        . ( $bucket->{rename_tracker_prefix_groups} // 0 );
-    say {$out} '  rename tracker-prefixed: '
-        . ( $bucket->{rename_tracker_prefixed} // 0 );
-    say {$out} '  rename tracker-prefix unresolved: '
-        . ( $bucket->{rename_tracker_prefix_unresolved} // 0 );
-    say {$out} '  rename already named: '
-        . ( $bucket->{rename_already_named} // 0 );
-    say {$out} '  moved:            ' . ( $bucket->{moved}            // 0 );
-  }
-
-  $self->_print_qbt_export_dedupe_rename_collision_samples($result);
-
-  if ( $self->_print_qbt_export_dedupe_problems( $result ) ) {
+  if ( $self->_print_qbt_export_dedupe_problems($result) ) {
     return 1;
   }
 
   return 0;
+}
+
+sub _render_qbt_export_dedupe ( $self, $result, %arg ) {
+  my $out             = $self->{out};
+  my $indent          = $arg{indent} // '';
+  my $include_buckets = $arg{include_buckets} // 0;
+
+  $self->_qbt_export_dedupe_summary(
+    $result,
+    indent => $indent,
+  );
+
+  if ($include_buckets) {
+    for my $bucket ( @{ $result->{buckets} // [] } ) {
+      say {$out} '';
+      say {$out} ( $bucket->{which} // '' ) . ':';
+      say {$out} '  directory:         ' . ( $bucket->{directory}        // '' );
+      say {$out} '  torrent files:     ' . ( $bucket->{scanned}          // 0 );
+      say {$out} '  stored:            ' . ( $bucket->{stored}           // 0 );
+      say {$out} '  parsed:            ' . ( $bucket->{parsed}           // 0 );
+      say {$out} '  parse problems:    ' . ( $bucket->{parse_problems}   // 0 );
+      say {$out} '  hashes:            ' . ( $bucket->{hashes}           // 0 );
+      say {$out} '  duplicate groups:  ' . ( $bucket->{duplicate_groups} // 0 );
+      say {$out} '  kept:              ' . ( $bucket->{kept}             // 0 );
+      say {$out} '  renamed:           ' . ( $bucket->{renamed}          // 0 );
+      say {$out} '  rename candidates: ' . ( $bucket->{rename_candidates} // 0 );
+      say {$out} '  rename not needed: ' . ( $bucket->{rename_not_needed} // 0 );
+      say {$out} '  rename target exists: '
+          . ( $bucket->{rename_target_exists} // 0 );
+      say {$out} '  rename target same hash: '
+          . ( $bucket->{rename_target_same_hash} // 0 );
+      say {$out} '  rename target other hash: '
+          . ( $bucket->{rename_target_other_hash} // 0 );
+      say {$out} '  rename target already averted: '
+          . ( $bucket->{rename_target_already_averted} // 0 );
+      say {$out} '  rename target unknown: '
+          . ( $bucket->{rename_target_unknown} // 0 );
+      say {$out} '  rename tracker-prefix groups: '
+          . ( $bucket->{rename_tracker_prefix_groups} // 0 );
+      say {$out} '  rename tracker-prefixed: '
+          . ( $bucket->{rename_tracker_prefixed} // 0 );
+      say {$out} '  rename tracker-prefix unresolved: '
+          . ( $bucket->{rename_tracker_prefix_unresolved} // 0 );
+      say {$out} '  rename already named: '
+          . ( $bucket->{rename_already_named} // 0 );
+      say {$out} '  moved:            ' . ( $bucket->{moved} // 0 );
+    }
+  }
+
+  $self->_print_qbt_export_dedupe_rename_collision_samples($result);
+  $self->_print_qbt_export_dedupe_tracker_prepend_failures($result);
+
+  return;
 }
 
 sub qbt_request ( $self, $result ) {
