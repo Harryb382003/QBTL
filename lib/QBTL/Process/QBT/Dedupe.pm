@@ -188,11 +188,13 @@ sub _audit_current_qbt_completed ( $self, %arg ) {
   my $completed_bucket  = $arg{completed_bucket};
   my $qbt_name_by_hash  = $arg{qbt_name_by_hash} // {};
   my $current_completed = $db->current_qbt_completed_hash_map($dbh);
+
   my @missing;
   my $downloaded_available = 0;
   my $downloaded_missing   = 0;
 
   for my $hash ( sort keys %{$current_completed} ) {
+
     next if exists $completed_bucket->{keeper_by_hash}{$hash};
 
     my $has_downloaded =
@@ -918,6 +920,7 @@ sub _copy_target_for_torrent ( $self, %arg ) {
   my $dir     = $arg{dir};
   my $torrent = $arg{torrent};
   my $base    = $arg{base};
+  my $which   = $arg{which} // 'export_dir';
 
   my $hash = $torrent->{hash};
   my $target = File::Spec->catfile( $dir, $base . '.torrent' );
@@ -926,7 +929,7 @@ sub _copy_target_for_torrent ( $self, %arg ) {
     return {ok => 1, target => $target, already_present => 0};
   }
 
-  my $existing = $self->_store_torrent_file( $db, $dbh, $target, 'export_dir' );
+  my $existing = $self->_store_torrent_file( $db, $dbh, $target, $which );
 
   if ( $existing->{parse_ok} && ( $existing->{hash} // '' ) eq $hash ) {
     return {
@@ -947,7 +950,7 @@ my $averted_base = $self->_collision_avert_tracker(
     return {
             ok      => 0,
             problem => {
-                        which         => 'export_dir',
+                        which         => $which,
                         path          => $target,
                         hash          => $hash,
                         name          => $torrent->{torrent_name},
@@ -967,7 +970,7 @@ my $averted_base = $self->_collision_avert_tracker(
   }
 
   my $averted_existing =
-      $self->_store_torrent_file( $db, $dbh, $averted_target, 'export_dir' );
+      $self->_store_torrent_file( $db, $dbh, $averted_target, $which );
 
   if ( $averted_existing->{parse_ok} && ( $averted_existing->{hash} // '' ) eq
 $hash ) {
@@ -981,7 +984,7 @@ $hash ) {
   return {
           ok      => 0,
           problem => {
-                      which         => 'export_dir',
+                      which         => $which,
                       path          => $averted_target,
                       hash          => $hash,
                       name          => $torrent->{torrent_name},
@@ -990,6 +993,188 @@ $hash ) {
           . ' uncoded collision type occurred. # TODO (averted_existing)',
           },
         };
+}
+
+sub _copy_downloaded_to_completed ( $self, %arg ) {
+  my $db                = $arg{db};
+  my $dbh               = $arg{dbh};
+  my $downloaded_bucket = $arg{downloaded_bucket};
+  my $completed_bucket  = $arg{completed_bucket};
+  my $qbt_name_by_hash  = $arg{qbt_name_by_hash} // {};
+  my $current_completed = $arg{current_completed} // {};
+
+  my @problem;
+  my @copied;
+
+  my $completed_dir = $completed_bucket->{directory};
+
+  return {
+          ok       => 1,
+          copied   => 0,
+          rows     => \@copied,
+          problems => \@problem,
+         }
+      if !defined $completed_dir || $completed_dir eq '' || !-d $completed_dir;
+
+  for my $expected_hash ( sort keys %{$current_completed} ) {
+    next if exists $completed_bucket->{keeper_by_hash}{$expected_hash};
+
+    my $keeper = $downloaded_bucket->{keeper_by_hash}{$expected_hash};
+    next if !$keeper;
+
+    my $source = $keeper->{path};
+
+    if ( !defined $source || !-f $source ) {
+      push @problem,
+          {
+           which => 'export_dir_fin',
+           path  => $source,
+           hash  => $expected_hash,
+           error => 'downloaded keeper missing; cannot copy to completed',
+          };
+      next;
+    }
+
+    my $hydrated = $self->_hydrate_copy_keeper(
+      db      => $db,
+      dbh     => $dbh,
+      hash    => $expected_hash,
+      keeper  => $keeper,
+      name    => $qbt_name_by_hash->{$expected_hash},
+      backend => 'export_dir',
+    );
+
+    if ( !$hydrated->{ok} ) {
+      push @problem,
+          {
+           which => 'export_dir_fin',
+           path  => $source,
+           hash  => $expected_hash,
+           error => $hydrated->{problem},
+          };
+      next;
+    }
+
+    my $verified = $hydrated->{keeper};
+    $source = $verified->{path};
+
+    my $actual_hash =
+        defined $verified->{hash} && length $verified->{hash}
+        ? $verified->{hash}
+        : '(none)';
+
+    if ( !$verified->{parse_ok} || $actual_hash ne $expected_hash ) {
+      push @problem,
+          {
+           which         => 'export_dir_fin',
+           path          => $source,
+           hash          => $expected_hash,
+           expected_hash => $expected_hash,
+           actual_hash   => $actual_hash,
+           parse_ok      => $verified->{parse_ok} ? 1 : 0,
+           parse_problem => $verified->{problem} // '(none)',
+           action        => 'copy to Completed_torrents skipped',
+           error         => 'Downloaded_torrents source hash mismatch',
+          };
+      next;
+    }
+
+    my $hash = $verified->{hash};
+    my $base = $self->_safe_basename(
+      $qbt_name_by_hash->{$hash}
+          // $verified->{torrent_name}
+          // $self->_torrent_basename($source)
+          // $hash
+    );
+    $base = $hash if !length $base;
+
+    my $target_result = $self->_copy_target_for_torrent(
+      db      => $db,
+      dbh     => $dbh,
+      dir     => $completed_dir,
+      torrent => $verified,
+      base    => $base,
+      which   => 'export_dir_fin',
+    );
+
+    if ( !$target_result->{ok} ) {
+      push @problem, $target_result->{problem};
+      next;
+    }
+
+    my $stored;
+    my $target = $target_result->{target};
+
+    if ( $target_result->{already_present} ) {
+      $stored = $target_result->{existing};
+    }
+    else {
+      my $written = $self->_write_canonical_torrent(
+        db       => $db,
+        dbh      => $dbh,
+        source   => $source,
+        target   => $target,
+        hash     => $hash,
+        announce => $verified->{announce},
+        trackers => $verified->{trackers},
+        comment  => $verified->{comment},
+        backend  => 'export_dir_fin',
+      );
+
+      if ( !$written->{ok} ) {
+        push @problem,
+            {
+             which  => 'export_dir_fin',
+             path   => $source,
+             hash   => $hash,
+             target => $target,
+             error  => $written->{problem},
+            };
+        next;
+      }
+
+      $stored = $written->{stored};
+    }
+
+    if ( !$stored->{parse_ok} || !$stored->{hash} || $stored->{hash} ne $hash ) {
+      push @problem,
+          {
+           which         => 'export_dir_fin',
+           path          => $target,
+           source_path   => $source,
+           hash          => $hash,
+           expected_hash => $hash,
+           actual_hash   => $stored->{hash} // '(none)',
+           parse_problem => $stored->{problem} // '(none)',
+           error         => 'copied downloaded torrent verification failed',
+          };
+      next;
+    }
+
+    $db->update_qbt_export_dir_file_state(
+      $dbh,
+      which  => 'export_dir_fin',
+      hash   => $hash,
+      name   => $stored->{torrent_name},
+      exists => 1,
+    );
+
+    $completed_bucket->{keeper_by_hash}{$hash} = $stored;
+
+    push @copied,
+        {
+         hash     => $hash,
+         old_path => $source,
+         new_path => $target,
+        };
+  }
+
+  return {
+          ok       => @problem ? 0 : 1,
+          copied   => scalar @copied,
+          rows     => \@copied,
+          problems => \@problem,
+         };
 }
 
 sub _copy_completed_to_downloaded ( $self, %arg ) {
@@ -2155,6 +2340,8 @@ sub run ( $self, %arg ) {
 
       push @problem, @{ $infill->{problems} // [] };
 
+      my $current_completed = $db->current_qbt_completed_hash_map( $dbh );
+
       my $completed_to_downloaded = $self->_copy_completed_to_downloaded(
         db                => $db,
         dbh               => $dbh,
@@ -2164,7 +2351,6 @@ sub run ( $self, %arg ) {
       );
       push @problem, @{ $completed_to_downloaded->{problems} // [] };
 
-      my $current_completed = $db->current_qbt_completed_hash_map( $dbh );
       my $stale_completed = $self->_move_stale_completed(
         db                => $db,
         dbh               => $dbh,
@@ -2182,6 +2368,16 @@ sub run ( $self, %arg ) {
         qbt_name_by_hash  => $qbt_name_by_hash,
       );
       push @problem, @{ $current_missing->{problems} // [] };
+
+      my $downloaded_to_completed = $self->_copy_downloaded_to_completed(
+        db                => $db,
+        dbh               => $dbh,
+        downloaded_bucket => $bucket_by_which{export_dir},
+        completed_bucket  => $bucket_by_which{export_dir_fin},
+        qbt_name_by_hash  => $qbt_name_by_hash,
+        current_completed => $current_completed,
+      );
+      push @problem, @{ $downloaded_to_completed->{problems} // [] };
 
       my @delete_queue;
       my %delete_source_seen;
@@ -2221,6 +2417,7 @@ sub run ( $self, %arg ) {
       );
 
       my $completed_copied = $completed_to_downloaded->{copied} // 0;
+      my $downloaded_copied = $downloaded_to_completed->{copied} // 0;
       my $bt_restored      = scalar @{ $current_missing->{restored} // [] };
 
       if ( $bucket_by_which{export_dir} ) {
@@ -2230,6 +2427,8 @@ sub run ( $self, %arg ) {
       }
 
       if ( $bucket_by_which{export_dir_fin} ) {
+        $bucket_by_which{export_dir_fin}{stored} += $downloaded_copied;
+        $bucket_by_which{export_dir_fin}{parsed} += $downloaded_copied;
         $self->_finalize_bucket_counts( $bucket_by_which{export_dir_fin} );
       }
 
@@ -2312,6 +2511,7 @@ sub run ( $self, %arg ) {
         rename_already_named           => $rename_already_named,
         rename_target_collision_samples => \@rename_target_collision_sample,
         copied_completed_to_downloaded => $completed_copied,
+        copied_downloaded_to_completed => $downloaded_copied,
         moved_stale_completed => $delete_commit->{moved_stale_completed} // 0,
         current_qbt_missing_downloaded => $current_missing->{count} // 0,
         current_qbt_missing_completed  => $completed_missing->{count} // 0,
