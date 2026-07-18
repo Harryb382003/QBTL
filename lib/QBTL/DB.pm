@@ -19,6 +19,30 @@ sub new ( $class, %arg ) {
       }, $class;
 }
 
+sub best_local_torrent_file_for_hash ( $self, $dbh, $hash ) {
+  return undef if !defined $hash || $hash eq '';
+
+  return $dbh->selectrow_hashref(
+    q{
+      SELECT *
+      FROM local_torrent_files
+      WHERE infohash = ?
+        AND COALESCE(parse_ok, 0) = 1
+      ORDER BY
+        CASE WHEN path LIKE '%/BT_backup/%' THEN 1 ELSE 0 END,
+        CASE
+          WHEN announce IS NOT NULL AND announce <> '' THEN 0
+          ELSE 1
+        END,
+        parsed_on DESC,
+        seen_on DESC,
+        path ASC
+      LIMIT 1
+    },
+    undef,
+    $hash, );
+}
+
 sub clear_current_qbt ( $self, $dbh ) {
   $dbh->do( q{UPDATE qbt_info SET current_qbt = 0} );
 
@@ -93,92 +117,160 @@ sub connect ( $self ) {
           dbh => $dbh,};
 }
 
+sub _classified_local_torrent_rows ( $self, $dbh, %arg ) {
+  my $root = $arg{root} // die 'root is required';
+
+  my $deletion_dir    = File::Spec->catdir( $root, 'queued_for_deletion' );
+  my $restoration_dir = File::Spec->catdir( $root, 'queued_for_restoration' );
+
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        path,
+        infohash,
+        torrent_name
+      FROM local_torrent_files
+      WHERE parse_ok = 1
+        AND infohash IS NOT NULL
+        AND infohash != ''
+    },
+    {Slice => {}}, );
+
+  my @deletion;
+  my @restoration;
+  my @loose;
+  my %loose_hash;
+
+  for my $row ( @{$rows} ) {
+    if ( $self->_path_is_under( $row->{path}, $deletion_dir ) ) {
+      push @deletion, $row;
+      next;
+    }
+
+    if ( $self->_path_is_under( $row->{path}, $restoration_dir ) ) {
+      push @restoration, $row;
+      next;
+    }
+
+    push @loose, $row;
+    $loose_hash{$row->{infohash}} = 1;
+  }
+
+  return {
+          deletion    => \@deletion,
+          restoration => \@restoration,
+          loose       => \@loose,
+          loose_hash  => \%loose_hash,};
+}
+
+sub current_qbt_completed_hash_map ( $self, $dbh ) {
+  my %column = $self->qbt_info_column_map( $dbh );
+  my @condition;
+
+  push @condition, q{CAST(progress AS REAL) >= 1}
+      if $column{progress};
+
+  push @condition, q{CAST(amount_left AS INTEGER) = 0}
+      if $column{amount_left};
+
+  push @condition, q{CAST(completion_on AS INTEGER) > 0}
+      if $column{completion_on};
+
+  return {} if !@condition;
+
+  my $where = join ' OR ', map { '(' . $_ . ')' } @condition;
+
+  my $rows = $dbh->selectall_arrayref(
+    qq{
+      SELECT hash
+      FROM qbt_info
+      WHERE current_qbt = 1
+        AND ($where)
+      ORDER BY hash ASC
+    },
+    {Slice => {}}, );
+
+  my %completed = map { $_->{hash} => 1 } grep { defined $_->{hash} } @{$rows};
+
+  return \%completed;
+}
+
+sub current_qbt_hashes ( $self, $dbh ) {
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT hash
+      FROM qbt_info
+      WHERE current_qbt = 1
+      ORDER BY hash ASC
+    },
+    {Slice => {}}, );
+
+  return [ map { $_->{hash} } @{$rows} ];
+}
+
+sub current_qbt_name_map ( $self, $dbh ) {
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT hash, name
+      FROM qbt_info
+      WHERE current_qbt = 1
+      ORDER BY hash ASC
+    },
+    {Slice => {}}, );
+
+  my %name_by_hash;
+
+  for my $row ( @{$rows} ) {
+    next if !defined $row->{hash} || $row->{hash} eq '';
+
+    $name_by_hash{$row->{hash}} = $row->{name};
+  }
+
+  return \%name_by_hash;
+}
+
+sub current_qbt_name_map ( $self, $dbh ) {
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT hash, name
+      FROM qbt_info
+      WHERE current_qbt = 1
+      ORDER BY hash ASC
+    },
+    {Slice => {}}, );
+
+  my %name;
+
+  for my $row ( @{$rows} ) {
+    next if !defined $row->{hash} || $row->{hash} eq '';
+    $name{$row->{hash}} = $row->{name};
+  }
+
+  return \%name;
+}
+
 sub db_path ( $self ) {
   return $self->{db_path};
 }
 
-sub hash_keys ( $self, $dbh ) {
-  my $rows = $dbh->selectall_arrayref(
+sub delete_local_torrent_file_path ( $self, $dbh, $path ) {
+  my $stored_path = $path;
+  my $existing    = $self->local_torrent_file_by_path( $dbh, $path );
+  $stored_path = $existing->{path} if $existing && defined $existing->{path};
+
+  my $rows = $dbh->do(
     q{
-      SELECT
-        "key",
-        COUNT(DISTINCT hash) AS hashes,
-        COUNT(DISTINCT value) AS values_seen,
-        SUM(seen_count) AS seen
-      FROM hash_values
-      GROUP BY "key"
-      ORDER BY hashes DESC, "key" ASC
-    },
-    {Slice => {}}, );
-
-  return {
-          ok   => 1,
-          rows => $rows,};
-}
-
-sub hash_key_detail ( $self, $dbh, %arg ) {
-  my $key   = $arg{key};
-  my $limit = $arg{limit} // 25;
-
-  if ( !defined $key || $key eq '' ) {
-    return {
-            ok     => 0,
-            status => 'invalid_key',
-            error  => 'key is required',};
-  }
-
-  my $summary = $dbh->selectrow_hashref(
-    q{
-      SELECT
-        "key",
-        COUNT(DISTINCT hash) AS hashes,
-        COUNT(DISTINCT value) AS values_seen,
-        SUM(seen_count) AS seen
-      FROM hash_values
-      WHERE "key" = ?
-      GROUP BY "key"
+      DELETE FROM local_torrent_files
+      WHERE path = ?
     },
     undef,
-    $key, );
-
-  my $rows = $dbh->selectall_arrayref(
-    q{
-      SELECT
-        hash,
-        "key",
-        value,
-        value_type,
-        seen_count,
-        first_seen_on,
-        last_seen_on
-      FROM hash_values
-      WHERE "key" = ?
-      ORDER BY seen_count DESC, hash ASC
-      LIMIT ?
-    },
-    {Slice => {}},
-    $key,
-    $limit, );
+    $stored_path, );
 
   return {
           ok      => 1,
-          key     => $key,
-          summary => $summary,
-          rows    => $rows,};
-}
-
-sub qbt_preference_value ( $self, $dbh, $key ) {
-  my ( $value ) = $dbh->selectrow_array(
-    q{
-      SELECT value
-      FROM qbt_preferences
-      WHERE "key" = ?
-      LIMIT 1
-    },
-    undef,
-    $key, );
-
-  return $value;
+          path    => $path,
+          db_path => $stored_path,
+          deleted => $rows + 0};
 }
 
 sub ensure_qbt_info_hash ( $self, $dbh, %arg ) {
@@ -255,154 +347,74 @@ sub ensure_qbt_info_hash ( $self, $dbh, %arg ) {
   return {ok => 1, hash => $hash, created => 1};
 }
 
-sub reset_qbt_export_dir_file_state ( $self, $dbh, %arg ) {
-  my $which = $arg{which} // die 'export dir state requires which';
-
-  my %column = (
-                 export_dir     => 'qbt_export_dir_file',
-                 export_dir_fin => 'qbt_export_dir_fin_file', );
-
-  my $column = $column{$which} // die "unknown qBT export dir state: $which";
-
-  $dbh->do(
-    qq{
-      UPDATE qbt_info
-      SET $column = 0,
-          qbt_export_dirs_checked_on = CURRENT_TIMESTAMP
-    }
-  );
-
-  return {ok => 1, which => $which};
-}
-
-sub update_qbt_export_dir_file_state ( $self, $dbh, %arg ) {
-  my $hash  = $arg{hash}  // '';
-  my $which = $arg{which} // die 'export dir state requires which';
-
-  my %column = (
-                 export_dir     => 'qbt_export_dir_file',
-                 export_dir_fin => 'qbt_export_dir_fin_file', );
-
-  my $column = $column{$which} // die "unknown qBT export dir state: $which";
-
-  my $ensure =
-      $self->ensure_qbt_info_hash(
-                                   $dbh,
-                                   hash          => $hash,
-                                   name          => $arg{name},
-                                   discovered_by => 'qbt_export_dedupe', );
-
-  return $ensure if !$ensure->{ok};
-
-  $dbh->do(
-    qq{
-      UPDATE qbt_info
-      SET $column = ?,
-          qbt_export_dirs_checked_on = CURRENT_TIMESTAMP
-      WHERE hash = ?
+sub hash_keys ( $self, $dbh ) {
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT
+        "key",
+        COUNT(DISTINCT hash) AS hashes,
+        COUNT(DISTINCT value) AS values_seen,
+        SUM(seen_count) AS seen
+      FROM hash_values
+      GROUP BY "key"
+      ORDER BY hashes DESC, "key" ASC
     },
-    undef,
-    $arg{exists} ? 1 : 0,
-    $hash, );
+    {Slice => {}}, );
 
   return {
-          ok     => 1,
-          hash   => $hash,
-          which  => $which,
-          exists => $arg{exists} ? 1 : 0};
+          ok   => 1,
+          rows => $rows,};
 }
 
-sub update_local_torrent_file_path ( $self, $dbh, %arg ) {
-  my $old = $arg{old_path} // die 'old_path is required';
-  my $new = $arg{new_path} // die 'new_path is required';
+sub hash_key_detail ( $self, $dbh, %arg ) {
+  my $key   = $arg{key};
+  my $limit = $arg{limit} // 25;
 
-  return {ok => 1, old_path => $old, new_path => $new, changed => 0}
-      if $old eq $new;
-
-  my $old_row = $self->local_torrent_file_by_path( $dbh, $old );
-  my $new_row = $self->local_torrent_file_by_path( $dbh, $new );
-
-  my $stored_old =
-      $old_row && defined $old_row->{path} ? $old_row->{path} : $old;
-
-  if ( $new_row ) {
-    my $stored_new = $new_row->{path};
-
-    if ( defined $stored_new && $stored_new ne $stored_old ) {
-      my $old_hash = $old_row->{infohash};
-      my $new_hash = $new_row->{infohash};
-
-      if (    defined $old_hash
-           && defined $new_hash
-           && $old_hash ne ''
-           && $new_hash ne ''
-           && $old_hash ne $new_hash )
-      {
-        return {
-                ok       => 0,
-                old_path => $old,
-                db_path  => $stored_old,
-                new_path => $new,
-                target   => $stored_new,
-                problem  => 'target path already exists with different infohash'
-        };
-      }
-
-      my $deleted = $dbh->do(
-        q{
-          DELETE FROM local_torrent_files
-          WHERE path = ?
-        },
-        undef,
-        $stored_old, );
-
-      return {
-              ok       => 1,
-              old_path => $old,
-              db_path  => $stored_old,
-              new_path => $new,
-              target   => $stored_new,
-              changed  => $deleted ? 1 : 0,
-              merged   => 1};
-    }
+  if ( !defined $key || $key eq '' ) {
+    return {
+            ok     => 0,
+            status => 'invalid_key',
+            error  => 'key is required',};
   }
 
-  my $rows = $dbh->do(
+  my $summary = $dbh->selectrow_hashref(
     q{
-      UPDATE local_torrent_files
-      SET path = ?
-      WHERE path = ?
+      SELECT
+        "key",
+        COUNT(DISTINCT hash) AS hashes,
+        COUNT(DISTINCT value) AS values_seen,
+        SUM(seen_count) AS seen
+      FROM hash_values
+      WHERE "key" = ?
+      GROUP BY "key"
     },
     undef,
-    $new,
-    $stored_old, );
+    $key, );
 
-  return {
-          ok       => 1,
-          old_path => $old,
-          db_path  => $stored_old,
-          new_path => $new,
-          changed  => $rows ? 1 : 0};
-}
-
-sub delete_local_torrent_file_path ( $self, $dbh, $path ) {
-  my $stored_path = $path;
-  my $existing    = $self->local_torrent_file_by_path( $dbh, $path );
-  $stored_path = $existing->{path} if $existing && defined $existing->{path};
-
-  my $rows = $dbh->do(
+  my $rows = $dbh->selectall_arrayref(
     q{
-      DELETE FROM local_torrent_files
-      WHERE path = ?
+      SELECT
+        hash,
+        "key",
+        value,
+        value_type,
+        seen_count,
+        first_seen_on,
+        last_seen_on
+      FROM hash_values
+      WHERE "key" = ?
+      ORDER BY seen_count DESC, hash ASC
+      LIMIT ?
     },
-    undef,
-    $stored_path, );
+    {Slice => {}},
+    $key,
+    $limit, );
 
   return {
           ok      => 1,
-          path    => $path,
-          db_path => $stored_path,
-          deleted => $rows + 0};
+          key     => $key,
+          summary => $summary,
+          rows    => $rows,};
 }
 
 sub key_accessors ( $self, $dbh ) {
@@ -511,6 +523,22 @@ sub local_fastresume_file_count ( $self, $dbh ) {
   );
 }
 
+sub local_fastresume_file_exists ( $self, $dbh, $path ) {
+  return 0 if !defined $path || $path eq '';
+
+  my ( $exists ) = $dbh->selectrow_array(
+    q{
+      SELECT 1
+      FROM local_fastresume_files
+      WHERE path = ?
+      LIMIT 1
+    },
+    undef,
+    $path, );
+
+  return $exists ? 1 : 0;
+}
+
 sub local_fastresume_summary ( $self, $dbh ) {
   return $dbh->selectrow_hashref(
     q{
@@ -540,6 +568,66 @@ sub local_torrent_file_count ( $self, $dbh ) {
       $dbh->selectrow_array( q{SELECT COUNT(*) FROM local_torrent_files} );
 
   return $count // 0;
+}
+
+sub local_torrent_file_exists ( $self, $dbh, $path ) {
+  return 0 if !defined $path || $path eq '';
+
+  my ( $exists ) = $dbh->selectrow_array(
+    q{
+      SELECT 1
+      FROM local_torrent_files
+      WHERE path = ?
+      LIMIT 1
+    },
+    undef,
+    $path, );
+
+  return $exists ? 1 : 0;
+}
+
+sub local_torrent_file_by_path ( $self, $dbh, $path ) {
+  return undef if !defined $path || $path eq '';
+
+  my $row = $dbh->selectrow_hashref(
+    q{
+      SELECT *
+      FROM local_torrent_files
+      WHERE path = ?
+      LIMIT 1
+    },
+    undef,
+    $path, );
+
+  return $row if $row;
+
+  return undef if $path =~ /\A[\x00-\x7f]*\z/;
+
+  my $dir = dirname( $path );
+
+  my $rows = $dbh->selectall_arrayref(
+    q{
+      SELECT *
+      FROM local_torrent_files
+      WHERE path LIKE ?
+    },
+    {Slice => {}},
+    $dir . '/%', );
+
+  my $wanted_nfc = NFC( $path );
+  my $wanted_nfd = NFD( $path );
+
+  for my $candidate ( @{$rows} ) {
+    my $candidate_path = $candidate->{path} // next;
+
+    my $candidate_nfc = NFC( $candidate_path );
+    return $candidate if $candidate_nfc eq $wanted_nfc;
+
+    my $candidate_nfd = NFD( $candidate_path );
+    return $candidate if $candidate_nfd eq $wanted_nfd;
+  }
+
+  return undef;
 }
 
 sub local_torrent_summary ( $self, $dbh ) {
@@ -694,6 +782,21 @@ sub migration_files ( $self ) {
   return @files;
 }
 
+sub _path_is_under_any ( $self, $path, $dirs ) {
+  for my $dir ( @{$dirs} ) {
+    return 1 if $self->_path_is_under( $path, $dir );
+  }
+
+  return 0;
+}
+
+sub _path_is_under ( $self, $path, $dir ) {
+  return 0 if !defined $path || !defined $dir || $dir eq '';
+
+  return 1 if $path eq $dir;
+  return index( $path, "$dir/" ) == 0 ? 1 : 0;
+}
+
 sub promote_hash_key ( $self, $dbh, %arg ) {
   my $key = $arg{key};
 
@@ -829,21 +932,6 @@ sub promote_hash_key ( $self, $dbh, %arg ) {
           backfilled    => $backfilled,};
 }
 
-sub _path_is_under_any ( $self, $path, $dirs ) {
-  for my $dir ( @{$dirs} ) {
-    return 1 if $self->_path_is_under( $path, $dir );
-  }
-
-  return 0;
-}
-
-sub _path_is_under ( $self, $path, $dir ) {
-  return 0 if !defined $path || !defined $dir || $dir eq '';
-
-  return 1 if $path eq $dir;
-  return index( $path, "$dir/" ) == 0 ? 1 : 0;
-}
-
 sub promoted_hash_keys ( $self, $dbh ) {
   my $rows = $dbh->selectall_arrayref(
     q{
@@ -969,6 +1057,20 @@ sub qbt_mismatch_count ( $self, $dbh ) {
   return $self->qbt_mismatch_rows( $dbh )->{count};
 }
 
+sub qbt_info_by_hash ( $self, $dbh, $hash ) {
+  my $row = $dbh->selectrow_hashref(
+    q{
+      SELECT *
+      FROM qbt_info
+      WHERE hash = ?
+      LIMIT 1
+    },
+    undef,
+    $hash, );
+
+  return $row;
+}
+
 sub qbt_info_columns ( $self, $dbh ) {
   my $columns = $dbh->selectall_arrayref( q{PRAGMA table_info(qbt_info)},
                                           {Slice => {}}, );
@@ -1008,104 +1110,38 @@ sub qbt_info_by_hash ( $self, $dbh, $hash ) {
     $hash, );
 }
 
-sub local_torrent_file_exists ( $self, $dbh, $path ) {
-  return 0 if !defined $path || $path eq '';
-
-  my ( $exists ) = $dbh->selectrow_array(
+sub qbt_preference_value ( $self, $dbh, $key ) {
+  my ( $value ) = $dbh->selectrow_array(
     q{
-      SELECT 1
-      FROM local_torrent_files
-      WHERE path = ?
+      SELECT value
+      FROM qbt_preferences
+      WHERE "key" = ?
       LIMIT 1
     },
     undef,
-    $path, );
+    $key, );
 
-  return $exists ? 1 : 0;
+  return $value;
 }
 
-sub local_fastresume_file_exists ( $self, $dbh, $path ) {
-  return 0 if !defined $path || $path eq '';
+sub reset_qbt_export_dir_file_state ( $self, $dbh, %arg ) {
+  my $which = $arg{which} // die 'export dir state requires which';
 
-  my ( $exists ) = $dbh->selectrow_array(
-    q{
-      SELECT 1
-      FROM local_fastresume_files
-      WHERE path = ?
-      LIMIT 1
-    },
-    undef,
-    $path, );
+  my %column = (
+                 export_dir     => 'qbt_export_dir_file',
+                 export_dir_fin => 'qbt_export_dir_fin_file', );
 
-  return $exists ? 1 : 0;
-}
+  my $column = $column{$which} // die "unknown qBT export dir state: $which";
 
-sub local_torrent_file_by_path ( $self, $dbh, $path ) {
-  return undef if !defined $path || $path eq '';
+  $dbh->do(
+    qq{
+      UPDATE qbt_info
+      SET $column = 0,
+          qbt_export_dirs_checked_on = CURRENT_TIMESTAMP
+    }
+  );
 
-  my $row = $dbh->selectrow_hashref(
-    q{
-      SELECT *
-      FROM local_torrent_files
-      WHERE path = ?
-      LIMIT 1
-    },
-    undef,
-    $path, );
-
-  return $row if $row;
-
-  return undef if $path =~ /\A[\x00-\x7f]*\z/;
-
-  my $dir = dirname( $path );
-
-  my $rows = $dbh->selectall_arrayref(
-    q{
-      SELECT *
-      FROM local_torrent_files
-      WHERE path LIKE ?
-    },
-    {Slice => {}},
-    $dir . '/%', );
-
-  my $wanted_nfc = NFC( $path );
-  my $wanted_nfd = NFD( $path );
-
-  for my $candidate ( @{$rows} ) {
-    my $candidate_path = $candidate->{path} // next;
-
-    my $candidate_nfc = NFC( $candidate_path );
-    return $candidate if $candidate_nfc eq $wanted_nfc;
-
-    my $candidate_nfd = NFD( $candidate_path );
-    return $candidate if $candidate_nfd eq $wanted_nfd;
-  }
-
-  return undef;
-}
-
-sub best_local_torrent_file_for_hash ( $self, $dbh, $hash ) {
-  return undef if !defined $hash || $hash eq '';
-
-  return $dbh->selectrow_hashref(
-    q{
-      SELECT *
-      FROM local_torrent_files
-      WHERE infohash = ?
-        AND COALESCE(parse_ok, 0) = 1
-      ORDER BY
-        CASE WHEN path LIKE '%/BT_backup/%' THEN 1 ELSE 0 END,
-        CASE
-          WHEN announce IS NOT NULL AND announce <> '' THEN 0
-          ELSE 1
-        END,
-        parsed_on DESC,
-        seen_on DESC,
-        path ASC
-      LIMIT 1
-    },
-    undef,
-    $hash, );
+  return {ok => 1, which => $which};
 }
 
 sub torrent_copy_candidates_for_hash ( $self, $dbh, $hash ) {
@@ -1128,44 +1164,16 @@ sub torrent_copy_candidates_for_hash ( $self, $dbh, $hash ) {
         path ASC
     },
     {Slice => {}},
-    $hash,
-  );
-}
-
-sub qbt_info_by_hash ( $self, $dbh, $hash ) {
-  my $row = $dbh->selectrow_hashref(
-    q{
-      SELECT *
-      FROM qbt_info
-      WHERE hash = ?
-      LIMIT 1
-    },
-    undef,
     $hash, );
-
-  return $row;
-}
-
-sub current_qbt_hashes ( $self, $dbh ) {
-  my $rows = $dbh->selectall_arrayref(
-    q{
-      SELECT hash
-      FROM qbt_info
-      WHERE current_qbt = 1
-      ORDER BY hash ASC
-    },
-    {Slice => {}}, );
-
-  return [ map { $_->{hash} } @{$rows} ];
 }
 
 sub preferred_torrent_tracker ( $self, $dbh, $hash ) {
   return undef if !defined $hash || $hash eq '';
 
-  my %column = $self->qbt_info_column_map($dbh);
+  my %column = $self->qbt_info_column_map( $dbh );
 
   if ( $column{tracker} ) {
-    my ($tracker) = $dbh->selectrow_array(
+    my ( $tracker ) = $dbh->selectrow_array(
       q{
         SELECT tracker
         FROM qbt_info
@@ -1176,13 +1184,12 @@ sub preferred_torrent_tracker ( $self, $dbh, $hash ) {
         LIMIT 1
       },
       undef,
-      $hash,
-    );
+      $hash, );
 
     return $tracker if defined $tracker && length $tracker;
   }
 
-  my ($tracker) = $dbh->selectrow_array(
+  my ( $tracker ) = $dbh->selectrow_array(
     q{
       SELECT tracker_url
       FROM torrent_trackers
@@ -1202,83 +1209,33 @@ sub preferred_torrent_tracker ( $self, $dbh, $hash ) {
       LIMIT 1
     },
     undef,
-    $hash,
-  );
+    $hash, );
 
   return $tracker;
 }
 
-sub current_qbt_name_map ( $self, $dbh ) {
+sub torrent_trackers_for_hash ( $self, $dbh, $hash ) {
+  return [] if !defined $hash || $hash eq '';
+
   my $rows = $dbh->selectall_arrayref(
     q{
-      SELECT hash, name
-      FROM qbt_info
-      WHERE current_qbt = 1
-      ORDER BY hash ASC
+      SELECT tracker_url, tier, position
+      FROM torrent_trackers
+      WHERE hash = ?
+        AND tracker_url IS NOT NULL
+        AND tracker_url <> ''
+      ORDER BY
+        COALESCE(tier, 0),
+        COALESCE(position, 0),
+        id
     },
-    {Slice => {}}, );
+    {Slice => {}},
+    $hash, );
 
-  my %name_by_hash;
-
-  for my $row ( @{$rows} ) {
-    next if !defined $row->{hash} || $row->{hash} eq '';
-
-    $name_by_hash{$row->{hash}} = $row->{name};
-  }
-
-  return \%name_by_hash;
-}
-
-sub current_qbt_name_map ( $self, $dbh ) {
-  my $rows = $dbh->selectall_arrayref(
-    q{
-      SELECT hash, name
-      FROM qbt_info
-      WHERE current_qbt = 1
-      ORDER BY hash ASC
-    },
-    {Slice => {}}, );
-
-  my %name;
-
-  for my $row ( @{$rows} ) {
-    next if !defined $row->{hash} || $row->{hash} eq '';
-    $name{$row->{hash}} = $row->{name};
-  }
-
-  return \%name;
-}
-
-sub current_qbt_completed_hash_map ( $self, $dbh ) {
-  my %column = $self->qbt_info_column_map( $dbh );
-  my @condition;
-
-  push @condition, q{CAST(progress AS REAL) >= 1}
-      if $column{progress};
-
-  push @condition, q{CAST(amount_left AS INTEGER) = 0}
-      if $column{amount_left};
-
-  push @condition, q{CAST(completion_on AS INTEGER) > 0}
-      if $column{completion_on};
-
-  return {} if !@condition;
-
-  my $where = join ' OR ', map { '(' . $_ . ')' } @condition;
-
-  my $rows = $dbh->selectall_arrayref(
-    qq{
-      SELECT hash
-      FROM qbt_info
-      WHERE current_qbt = 1
-        AND ($where)
-      ORDER BY hash ASC
-    },
-    {Slice => {}}, );
-
-  my %completed = map { $_->{hash} => 1 } grep { defined $_->{hash} } @{$rows};
-
-  return \%completed;
+  my %seen;
+  return [
+           map  { $_->{tracker_url} }
+           grep { !$seen{$_->{tracker_url}}++ } @{$rows} ];
 }
 
 sub update_qbt_torrent_file_state ( $self, $dbh, %arg ) {
@@ -2399,52 +2356,6 @@ sub qbt_payload_files ( $self, $dbh, $hash ) {
           count => scalar @{$rows},};
 }
 
-sub _classified_local_torrent_rows ( $self, $dbh, %arg ) {
-  my $root = $arg{root} // die 'root is required';
-
-  my $deletion_dir    = File::Spec->catdir( $root, 'queued_for_deletion' );
-  my $restoration_dir = File::Spec->catdir( $root, 'queued_for_restoration' );
-
-  my $rows = $dbh->selectall_arrayref(
-    q{
-      SELECT
-        path,
-        infohash,
-        torrent_name
-      FROM local_torrent_files
-      WHERE parse_ok = 1
-        AND infohash IS NOT NULL
-        AND infohash != ''
-    },
-    {Slice => {}}, );
-
-  my @deletion;
-  my @restoration;
-  my @loose;
-  my %loose_hash;
-
-  for my $row ( @{$rows} ) {
-    if ( $self->_path_is_under( $row->{path}, $deletion_dir ) ) {
-      push @deletion, $row;
-      next;
-    }
-
-    if ( $self->_path_is_under( $row->{path}, $restoration_dir ) ) {
-      push @restoration, $row;
-      next;
-    }
-
-    push @loose, $row;
-    $loose_hash{$row->{infohash}} = 1;
-  }
-
-  return {
-          deletion    => \@deletion,
-          restoration => \@restoration,
-          loose       => \@loose,
-          loose_hash  => \%loose_hash,};
-}
-
 sub replace_qbt_api_values ( $self, $dbh, %arg ) {
   my $hash     = $arg{hash}     // die 'qBT API values require hash';
   my $endpoint = $arg{endpoint} // die 'qBT API values require endpoint';
@@ -2795,6 +2706,116 @@ sub update_qbt_last ( $self, $dbh, %arg ) {
           hash     => $hash,
           qbt_last => $value,
           updated  => $sth->rows,};
+}
+
+sub update_qbt_export_dir_file_state ( $self, $dbh, %arg ) {
+  my $hash  = $arg{hash}  // '';
+  my $which = $arg{which} // die 'export dir state requires which';
+
+  my %column = (
+                 export_dir     => 'qbt_export_dir_file',
+                 export_dir_fin => 'qbt_export_dir_fin_file', );
+
+  my $column = $column{$which} // die "unknown qBT export dir state: $which";
+
+  my $ensure =
+      $self->ensure_qbt_info_hash(
+                                   $dbh,
+                                   hash          => $hash,
+                                   name          => $arg{name},
+                                   discovered_by => 'qbt_export_dedupe', );
+
+  return $ensure if !$ensure->{ok};
+
+  $dbh->do(
+    qq{
+      UPDATE qbt_info
+      SET $column = ?,
+          qbt_export_dirs_checked_on = CURRENT_TIMESTAMP
+      WHERE hash = ?
+    },
+    undef,
+    $arg{exists} ? 1 : 0,
+    $hash, );
+
+  return {
+          ok     => 1,
+          hash   => $hash,
+          which  => $which,
+          exists => $arg{exists} ? 1 : 0};
+}
+
+sub update_local_torrent_file_path ( $self, $dbh, %arg ) {
+  my $old = $arg{old_path} // die 'old_path is required';
+  my $new = $arg{new_path} // die 'new_path is required';
+
+  return {ok => 1, old_path => $old, new_path => $new, changed => 0}
+      if $old eq $new;
+
+  my $old_row = $self->local_torrent_file_by_path( $dbh, $old );
+  my $new_row = $self->local_torrent_file_by_path( $dbh, $new );
+
+  my $stored_old =
+      $old_row && defined $old_row->{path} ? $old_row->{path} : $old;
+
+  if ( $new_row ) {
+    my $stored_new = $new_row->{path};
+
+    if ( defined $stored_new && $stored_new ne $stored_old ) {
+      my $old_hash = $old_row->{infohash};
+      my $new_hash = $new_row->{infohash};
+
+      if (    defined $old_hash
+           && defined $new_hash
+           && $old_hash ne ''
+           && $new_hash ne ''
+           && $old_hash ne $new_hash )
+      {
+        return {
+                ok       => 0,
+                old_path => $old,
+                db_path  => $stored_old,
+                new_path => $new,
+                target   => $stored_new,
+                problem  => 'target path already exists with different infohash'
+        };
+      }
+
+      my $deleted = $dbh->do(
+        q{
+          DELETE FROM local_torrent_files
+          WHERE path = ?
+        },
+        undef,
+        $stored_old, );
+
+      return {
+              ok       => 1,
+              old_path => $old,
+              db_path  => $stored_old,
+              new_path => $new,
+              target   => $stored_new,
+              changed  => $deleted ? 1 : 0,
+              merged   => 1};
+    }
+  }
+
+  my $rows = $dbh->do(
+    q{
+      UPDATE local_torrent_files
+      SET path = ?
+      WHERE path = ?
+    },
+    undef,
+    $new,
+    $stored_old, );
+
+  return {
+          ok       => 1,
+          old_path => $old,
+          db_path  => $stored_old,
+          new_path => $new,
+          changed  => $rows ? 1 : 0};
 }
 
 sub upsert_qbt_info ( $self, $dbh, $row ) {

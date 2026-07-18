@@ -8,6 +8,9 @@ use File::Basename qw( basename dirname );
 use File::Copy     qw( copy move );
 use File::Path     qw( make_path );
 use File::Spec;
+use File::Temp     qw( tempfile );
+use Digest::SHA    qw( sha1_hex );
+use Bencode        qw( bdecode bencode );
 use Encode qw( decode encode FB_CROAK );
 use Encode qw( decode FB_DEFAULT );
 
@@ -590,12 +593,15 @@ sub _hydrate_copy_keeper ( $self, %arg ) {
       $dbh,
       $path,
       $arg{backend} // 'copy_keeper',
-      force_parse => 1,
     );
 
     next if !$verified->{parse_ok};
     next if ( $verified->{hash} // '' ) ne $hash;
-    next if !defined $verified->{announce} || !length $verified->{announce};
+    $verified->{announce} //= $db->preferred_torrent_tracker( $dbh, $hash );
+    $verified->{trackers} = $db->torrent_trackers_for_hash( $dbh, $hash );
+
+    my $qbt_info = $db->qbt_info_by_hash( $dbh, $hash ) // {};
+    $verified->{comment} //= $qbt_info->{comment};
 
     $verified->{torrent_name} //= $name;
     $verified->{copy_source_last_resort} =
@@ -606,7 +612,7 @@ sub _hydrate_copy_keeper ( $self, %arg ) {
 
   return {
           ok      => 0,
-          problem => 'no validated physical copy keeper contains tracker metadata',
+          problem => 'no validated physical copy keeper exists',
           keeper  => $keeper,
          }
       if !@validated;
@@ -620,39 +626,290 @@ sub _hydrate_copy_keeper ( $self, %arg ) {
   return {ok => 1, keeper => $validated[0]};
 }
 
-sub _hydrate_bucket_keepers ( $self, %arg ) {
+sub _same_infohash ( $left, $right ) {
+  return 0 if !defined $left || !defined $right;
+  return 0 if $left !~ m{\A[0-9A-Fa-f]{40}\z};
+  return 0 if $right !~ m{\A[0-9A-Fa-f]{40}\z};
+
+  return $left =~ m{\A\Q$right\E\z}i ? 1 : 0;
+}
+
+sub _bencode_string ( $value ) {
+  return undef if !defined $value || ref $value;
+
+  my $octets = encode( 'UTF-8', $value, FB_CROAK );
+  return length($octets) . ':' . $octets;
+}
+
+sub _bencode_octets ( $value ) {
+  if ( !ref $value ) {
+    return bencode($value) if !utf8::is_utf8($value);
+
+    my $octets = encode( 'UTF-8', $value, FB_CROAK );
+    return bencode($octets);
+  }
+
+  if ( ref $value eq 'ARRAY' ) {
+    my $encoded = 'l';
+
+    for my $item ( @{$value} ) {
+      my $encoded_item = _bencode_octets($item);
+      return undef if !defined $encoded_item;
+      $encoded .= $encoded_item;
+    }
+
+    return $encoded . 'e';
+  }
+
+  if ( ref $value eq 'HASH' ) {
+    my $encoded = 'd';
+
+    for my $key ( sort keys %{$value} ) {
+      my $encoded_key = _bencode_string($key);
+      return undef if !defined $encoded_key;
+
+      my $encoded_value = _bencode_octets( $value->{$key} );
+      return undef if !defined $encoded_value;
+
+      $encoded .= $encoded_key . $encoded_value;
+    }
+
+    return $encoded . 'e';
+  }
+
+  return undef;
+}
+
+sub _bencode_with_raw_info ( $torrent, $raw_info ) {
+  return undef if ref $torrent ne 'HASH';
+  return undef if !defined $raw_info || $raw_info eq '';
+  return undef if !exists $torrent->{info};
+
+  my $encoded = 'd';
+
+  for my $key ( sort keys %{$torrent} ) {
+    my $encoded_key = _bencode_string($key);
+    return undef if !defined $encoded_key;
+
+    my $encoded_value = $key eq 'info'
+        ? $raw_info
+        : _bencode_octets( $torrent->{$key} );
+    return undef if !defined $encoded_value;
+
+    $encoded .= $encoded_key . $encoded_value;
+  }
+
+  return $encoded . 'e';
+}
+
+sub _write_canonical_torrent ( $self, %arg ) {
+  my $db       = $arg{db};
+  my $dbh      = $arg{dbh};
+  my $source   = $arg{source};
+  my $target   = $arg{target};
+  my $hash     = $arg{hash};
+  my $announce = $arg{announce};
+  my $trackers = $arg{trackers} // [];
+  my $comment  = $arg{comment};
+
+  return {ok => 0, problem => 'canonical torrent source is not readable'}
+      if !defined $source || !-f $source;
+
+  my $raw = do {
+    open my $fh, '<:raw', $source
+        or return {ok => 0, problem => "open canonical source failed: $!"};
+    local $/;
+    <$fh>;
+  };
+
+  my $torrent = eval { bdecode($raw) };
+  return {ok => 0, problem => "bdecode canonical source failed: $@"}
+      if $@ || ref $torrent ne 'HASH' || ref $torrent->{info} ne 'HASH';
+
+  my $raw_info = $self->parser->raw_info_from_bytes($raw);
+  return {ok => 0, problem => 'canonical source raw info dictionary was not found'}
+      if !defined $raw_info;
+
+  my $reconstructed = 0;
+
+  my @tracker = grep { defined $_ && length $_ } @{$trackers};
+  unshift @tracker, $announce
+      if defined $announce && length $announce;
+
+  my %tracker_seen;
+  @tracker = grep { !$tracker_seen{$_}++ } @tracker;
+
+  if ( @tracker && ( !defined $torrent->{announce} || !length $torrent->{announce} ) ) {
+    $torrent->{announce} = $tracker[0];
+    $reconstructed = 1;
+  }
+
+  if ( @tracker && ref $torrent->{'announce-list'} ne 'ARRAY' ) {
+    $torrent->{'announce-list'} = [ map { [$_] } @tracker ];
+    $reconstructed = 1;
+  }
+
+  if ( defined $comment && length $comment
+       && ( !defined $torrent->{comment} || !length $torrent->{comment} ) ) {
+    $torrent->{comment} = $comment;
+    $reconstructed = 1;
+  }
+
+  if ( !$reconstructed ) {
+    return {ok => 0, problem => "copy canonical torrent failed: $!"}
+        if !copy( $source, $target );
+  }
+  else {
+    my ( $fh, $temporary ) = tempfile(
+      '.qbtl-reconstruct-XXXXXX',
+      DIR    => dirname($target),
+      UNLINK => 0,
+    );
+    binmode $fh, ':raw';
+
+    my $encoded = eval { _bencode_with_raw_info( $torrent, $raw_info ) };
+    if ( $@ || !defined $encoded ) {
+      close $fh;
+      unlink $temporary;
+      return {ok => 0, problem => "bencode reconstructed torrent failed: $@"};
+    }
+
+    my $encoded_bytes = length($encoded);
+    my $written_bytes = 0;
+
+    while ( $written_bytes < $encoded_bytes ) {
+      my $written = syswrite(
+        $fh,
+        $encoded,
+        $encoded_bytes - $written_bytes,
+        $written_bytes,
+      );
+
+      if ( !defined $written ) {
+        my $problem = $!;
+        close $fh;
+        unlink $temporary;
+        return {
+          ok      => 0,
+          problem => "write reconstructed torrent failed after $written_bytes of $encoded_bytes bytes: $problem",
+        };
+      }
+
+      if ( $written == 0 ) {
+        close $fh;
+        unlink $temporary;
+        return {
+          ok      => 0,
+          problem => "write reconstructed torrent stopped after $written_bytes of $encoded_bytes bytes",
+        };
+      }
+
+      $written_bytes += $written;
+    }
+
+    if ( !close $fh ) {
+      my $problem = $!;
+      unlink $temporary;
+      return {ok => 0, problem => "close reconstructed torrent failed: $problem"};
+    }
+
+    my $parsed = $self->parser->parse_file($temporary);
+    if ( !$parsed->{ok} || !_same_infohash( $parsed->{infohash}, $hash ) ) {
+      my $expected_hash   = defined $hash ? $hash : '(undefined)';
+      my $parsed_hash     = defined $parsed->{infohash}
+          ? $parsed->{infohash}
+          : '(undefined)';
+      my $source_raw_hash = sha1_hex($raw_info);
+      my $parser_problem  = $parsed->{problem} // '(none)';
+      my $encoded_bytes   = length($encoded);
+      my $written_bytes   = -s $temporary;
+      my $raw_info_bytes  = length($raw_info);
+      my $raw_info_ok     = eval {
+        my $decoded_info = bdecode($raw_info);
+        ref $decoded_info eq 'HASH';
+      };
+      my $raw_info_problem = $raw_info_ok ? '(none)' : ( $@ || 'not a dictionary' );
+      $raw_info_problem =~ s/\s+\z//;
+
+      my $tail_offset = $encoded_bytes > 64 ? $encoded_bytes - 64 : 0;
+      my $encoded_tail = unpack( 'H*', substr( $encoded, $tail_offset ) );
+
+      return {
+        ok => 0,
+        problem => join(
+          "\n",
+          'reconstructed torrent failed post-write infohash validation',
+          "expected hash: $expected_hash",
+          "source raw-info hash: $source_raw_hash",
+          "parsed hash: $parsed_hash",
+          "parser problem: $parser_problem",
+          "raw info bytes: $raw_info_bytes",
+          "raw info standalone decode: " . ( $raw_info_ok ? 'ok' : 'failed' ),
+          "raw info standalone problem: $raw_info_problem",
+          "assembled bytes: $encoded_bytes",
+          "written bytes: $written_bytes",
+          "assembled tail hex: $encoded_tail",
+          "source: $source",
+          "temporary retained: $temporary",
+          "target: $target",
+        ) . "\n",
+      };
+    }
+
+    if ( !rename( $temporary, $target ) ) {
+      unlink $temporary;
+      return {ok => 0, problem => "install reconstructed torrent failed: $!"};
+    }
+  }
+
+  my $stored = $self->_store_torrent_file(
+    $db, $dbh, $target, $arg{backend} // 'canonical_copy', force_parse => 1,
+  );
+
+  if ( !$stored->{parse_ok} || !_same_infohash( $stored->{hash}, $hash ) ) {
+    return {ok => 0, problem => 'written canonical torrent failed final validation'};
+  }
+
+  return {
+    ok            => 1,
+    stored        => $stored,
+    reconstructed => $reconstructed,
+  };
+}
+
+sub _queue_reconstructed_duplicates ( $self, %arg ) {
   my $db     = $arg{db};
   my $dbh    = $arg{dbh};
-  my $bucket = $arg{bucket};
-  my $name   = $arg{qbt_name_by_hash} // {};
+  my $hash   = $arg{hash};
+  my $target = $arg{target};
+  my $which  = $arg{which};
 
+  my @entry;
   my @problem;
 
-  for my $hash ( sort keys %{ $bucket->{keeper_by_hash} // {} } ) {
-    my $hydrated = $self->_hydrate_copy_keeper(
-      db      => $db,
-      dbh     => $dbh,
-      hash    => $hash,
-      keeper  => $bucket->{keeper_by_hash}{$hash},
-      name    => $name->{$hash},
-      backend => $bucket->{which} // 'copy_keeper',
+  for my $candidate ( @{ $db->torrent_copy_candidates_for_hash( $dbh, $hash ) // [] } ) {
+    my $path = $candidate->{path} // next;
+    next if $path eq $target;
+    next if $path =~ m{(?:\A|/)BT_backup(?:/|\z)};
+    next if !-f $path;
+
+    my $queued = $self->_queue_duplicate_for_deletion(
+      db    => $db,
+      dbh   => $dbh,
+      item  => { %{$candidate}, hash => $hash },
+      which => $which,
+      kind  => 'reconstructed_canonical_replacement',
     );
 
-    if ( !$hydrated->{ok} ) {
-      push @problem,
-          {
-           which => $bucket->{which},
-           path  => $bucket->{keeper_by_hash}{$hash}{path},
-           hash  => $hash,
-           error => $hydrated->{problem},
-          };
+    if ( !$queued->{ok} ) {
+      push @problem, $queued->{problem};
       next;
     }
 
-    $bucket->{keeper_by_hash}{$hash} = $hydrated->{keeper};
+    push @entry, $queued->{entry};
   }
 
-  return {ok => @problem ? 0 : 1, problems => \@problem};
+  return {ok => @problem ? 0 : 1, entries => \@entry, problems => \@problem};
 }
 
 sub _copy_target_for_torrent ( $self, %arg ) {
@@ -795,6 +1052,7 @@ sub _copy_completed_to_downloaded ( $self, %arg ) {
     }
 
     my $verified = $hydrated->{keeper};
+    $source = $verified->{path};
 
     my $actual_hash =
         defined $verified->{hash} && length $verified->{hash}
@@ -848,22 +1106,45 @@ sub _copy_completed_to_downloaded ( $self, %arg ) {
 
     my $target = $target_result->{target};
 
-    if ( !copy( $source, $target ) ) {
-      push @problem,
-          {
-           which => 'export_dir',
-           path  => $source,
-           hash  => $hash,
-           error => "copy completed to downloaded failed: $!",
-          };
+    my $written = $self->_write_canonical_torrent(
+      db       => $db,
+      dbh      => $dbh,
+      source   => $source,
+      target   => $target,
+      hash     => $hash,
+      announce => $verified->{announce},
+      trackers => $verified->{trackers},
+      comment  => $verified->{comment},
+      backend  => 'export_dir',
+    );
+
+    if ( !$written->{ok} ) {
+      push @problem, {
+        which => 'export_dir', path => $source, hash => $hash,
+        target => $target, error => $written->{problem},
+      };
       next;
+    }
+
+    if ( $written->{reconstructed} ) {
+      my $queued = $self->_queue_reconstructed_duplicates(
+        db     => $db,
+        dbh    => $dbh,
+        hash   => $hash,
+        target => $target,
+        which  => 'export_dir',
+      );
+      push @problem, @{ $queued->{problems} // [] };
+      push @{ $downloaded_bucket->{delete_queue} }, @{ $queued->{entries} // [] };
     }
 
     push @copied_pending_db,
         {
-         hash     => $hash,
-         old_path => $source,
-         new_path => $target,
+         hash          => $hash,
+         old_path      => $source,
+         new_path      => $target,
+         stored        => $written->{stored},
+         reconstructed => $written->{reconstructed},
         };
   }
 
@@ -880,7 +1161,7 @@ sub _copy_completed_to_downloaded ( $self, %arg ) {
       my $source = $copy->{old_path};
       my $target = $copy->{new_path};
 
-      my $stored = $self->_store_torrent_file( $db, $dbh, $target, 'export_dir' );
+      my $stored = $copy->{stored} // $self->_store_torrent_file( $db, $dbh, $target, 'export_dir' );
 
       if ( !$stored->{parse_ok} || !$stored->{hash} || $stored->{hash} ne $hash ) {
         my $actual_target_hash =
@@ -1195,9 +1476,6 @@ for my $plan (@planned) {
       hash  => $hash,
       name  => $keeper->{torrent_name},
     };
-
-$result->{keeper_by_hash}{$hash} = $keeper;
-$result->{kept}++;
 
   $result->{keeper_by_hash}{$hash} = $keeper;
   $result->{kept}++;
@@ -1735,17 +2013,41 @@ sub _restore_current_qbt_from_bt_backup ( $self, %arg ) {
 
   my $target = $target_result->{target};
 
-  if ( !copy( $source, $target ) ) {
-    return {
-            ok       => 0,
-            restored => 0,
-            problem  => {
-                         which => 'export_dir',
-                         path  => $source,
-                         hash  => $hash,
-                         name  => $name,
-                         error => "restore from BT_backup failed: $!",
-            },};
+  my $written = $self->_write_canonical_torrent(
+    db       => $db,
+    dbh      => $dbh,
+    source   => $source,
+    target   => $target,
+    hash     => $hash,
+    announce => $torrent->{announce},
+    trackers => $torrent->{trackers},
+    comment  => $torrent->{comment},
+    backend  => 'qbt_bt_backup_restore',
+  );
+
+  return {
+    ok => 0, restored => 0,
+    problem => { which => 'export_dir', path => $source, hash => $hash,
+      name => $name, target => $target, error => $written->{problem} },
+  } if !$written->{ok};
+
+  if ( $written->{reconstructed} ) {
+    my $queued = $self->_queue_reconstructed_duplicates(
+      db     => $db,
+      dbh    => $dbh,
+      hash   => $hash,
+      target => $target,
+      which  => 'export_dir',
+    );
+
+    if ( !$queued->{ok} ) {
+      return {
+        ok => 0, restored => 0,
+        problem => $queued->{problems}[0],
+      };
+    }
+
+    push @{ $downloaded_bucket->{delete_queue} }, @{ $queued->{entries} // [] };
   }
 
   my @stat = stat $target;
@@ -1853,17 +2155,6 @@ sub run ( $self, %arg ) {
 
       push @problem, @{ $infill->{problems} // [] };
 
-      for my $bucket (@bucket) {
-        my $hydrated = $self->_hydrate_bucket_keepers(
-          db               => $db,
-          dbh              => $dbh,
-          bucket           => $bucket,
-          qbt_name_by_hash => $qbt_name_by_hash,
-        );
-
-        push @problem, @{ $hydrated->{problems} // [] };
-      }
-
       my $completed_to_downloaded = $self->_copy_completed_to_downloaded(
         db                => $db,
         dbh               => $dbh,
@@ -1883,11 +2174,29 @@ sub run ( $self, %arg ) {
       );
       push @problem, @{ $stale_completed->{problems} // [] };
 
+      my $current_missing = $self->_audit_current_qbt_downloaded(
+        db                => $db,
+        dbh               => $dbh,
+        downloaded_bucket => $bucket_by_which{export_dir},
+        completed_bucket  => $bucket_by_which{export_dir_fin},
+        qbt_name_by_hash  => $qbt_name_by_hash,
+      );
+      push @problem, @{ $current_missing->{problems} // [] };
+
       my @delete_queue;
+      my %delete_source_seen;
       for my $bucket (@bucket) {
-        push @delete_queue, @{ $bucket->{delete_queue} // [] };
+        for my $entry ( @{ $bucket->{delete_queue} // [] } ) {
+          my $source = $entry->{source_path} // '';
+          next if length $source && $delete_source_seen{$source}++;
+          push @delete_queue, $entry;
+        }
       }
-      push @delete_queue, @{ $stale_completed->{delete_queue} // [] };
+      for my $entry ( @{ $stale_completed->{delete_queue} // [] } ) {
+        my $source = $entry->{source_path} // '';
+        next if length $source && $delete_source_seen{$source}++;
+        push @delete_queue, $entry;
+      }
 
       my $delete_commit = $self->_commit_delete_queue(
         db        => $db,
@@ -1902,15 +2211,6 @@ sub run ( $self, %arg ) {
         my $which = $bucket->{which} // '';
         $bucket->{moved} += $moved_by_which->{$which} // 0;
       }
-
-      my $current_missing = $self->_audit_current_qbt_downloaded(
-        db                => $db,
-        dbh               => $dbh,
-        downloaded_bucket => $bucket_by_which{export_dir},
-        completed_bucket  => $bucket_by_which{export_dir_fin},
-        qbt_name_by_hash  => $qbt_name_by_hash,
-      );
-      push @problem, @{ $current_missing->{problems} // [] };
 
       my $completed_missing = $self->_audit_current_qbt_completed(
         db                => $db,
@@ -2091,6 +2391,7 @@ sub _store_torrent_file ( $self, $db, $dbh, $path, $backend, %arg ) {
             hash         => $existing->{infohash},
             torrent_name => $existing->{torrent_name},
             announce     => $existing->{announce},
+            comment      => $existing->{comment},
             parse_ok     => 1,
             problem      => undef,};
   }
@@ -2158,6 +2459,7 @@ sub _store_torrent_file ( $self, $db, $dbh, $path, $backend, %arg ) {
           hash         => $parse->{infohash} ? $parse->{infohash} : undef,
           torrent_name => $parse->{torrent_name},
           announce     => $effective_announce,
+          comment      => $parse->{comment},
           parse_ok     => $parse->{ok} ? 1 : 0,
           problem      => $parse->{problem},};
 }

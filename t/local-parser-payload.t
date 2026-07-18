@@ -4,6 +4,7 @@ use feature qw( signatures );
 
 use Test::More;
 use File::Spec;
+use Digest::SHA    ();
 use File::Temp qw( tempdir );
 use Bencode qw( bencode );
 
@@ -76,5 +77,20 @@ is( $multi_key{'info.files.0.path'},   'Disc 1/clip-one.mkv', 'multi-file first 
 is( $multi_key{'info.files.0.length'}, 100,                   'multi-file first length observed' );
 is( $multi_key{'info.files.1.path'},   'Disc 2/clip-two.mkv', 'multi-file second path observed' );
 is( $multi_key{'info.files.1.length'}, 200,                   'multi-file second length observed' );
+
+my $raw_info_path = File::Spec->catfile( $dir, 'raw-info.torrent' );
+my $raw_info = 'd6:lengthi1e4:name4:teste';
+my $raw_torrent = 'd4:info' . $raw_info . 'e';
+open my $raw_info_fh, '>:raw', $raw_info_path or die $!;
+print {$raw_info_fh} $raw_torrent;
+close $raw_info_fh;
+
+my $raw_info_result = $parser->parse_file($raw_info_path);
+ok( $raw_info_result->{ok}, 'raw-info torrent parsed' );
+is(
+  $raw_info_result->{infohash},
+  Digest::SHA::sha1_hex($raw_info),
+  'torrent infohash uses exact raw bencoded info bytes',
+);
 
 done_testing;

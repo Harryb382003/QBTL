@@ -12,6 +12,84 @@ sub new ( $class, %arg ) {
   return bless \%arg, $class;
 }
 
+sub _bencoded_value_end ( $raw, $start ) {
+  return undef if !defined $raw || !defined $start || $start >= length $raw;
+
+  my $type = substr( $raw, $start, 1 );
+
+  if ( $type =~ /[0-9]/ ) {
+    my $colon = index( $raw, ':', $start );
+    return undef if $colon < 0;
+
+    my $length_text = substr( $raw, $start, $colon - $start );
+    return undef if $length_text !~ /\A(?:0|[1-9][0-9]*)\z/;
+
+    my $end = $colon + 1 + $length_text;
+    return undef if $end > length $raw;
+    return $end;
+  }
+
+  if ( $type eq 'i' ) {
+    my $end = index( $raw, 'e', $start + 1 );
+    return undef if $end < 0;
+    return $end + 1;
+  }
+
+  if ( $type eq 'l' || $type eq 'd' ) {
+    my $position = $start + 1;
+
+    while ( $position < length $raw && substr( $raw, $position, 1 ) ne 'e' ) {
+      my $next = _bencoded_value_end( $raw, $position );
+      return undef if !defined $next;
+      $position = $next;
+
+      if ( $type eq 'd' ) {
+        $next = _bencoded_value_end( $raw, $position );
+        return undef if !defined $next;
+        $position = $next;
+      }
+    }
+
+    return undef if $position >= length $raw;
+    return $position + 1;
+  }
+
+  return undef;
+}
+
+sub _raw_top_level_value ( $raw, $wanted_key ) {
+  return undef if !defined $raw || substr( $raw, 0, 1 ) ne 'd';
+
+  my $position = 1;
+
+  while ( $position < length $raw && substr( $raw, $position, 1 ) ne 'e' ) {
+    my $colon = index( $raw, ':', $position );
+    return undef if $colon < 0;
+
+    my $length_text = substr( $raw, $position, $colon - $position );
+    return undef if $length_text !~ /\A(?:0|[1-9][0-9]*)\z/;
+
+    my $key_start = $colon + 1;
+    my $key_end   = $key_start + $length_text;
+    return undef if $key_end > length $raw;
+
+    my $key       = substr( $raw, $key_start, $length_text );
+    my $value_end = _bencoded_value_end( $raw, $key_end );
+    return undef if !defined $value_end;
+
+    return substr( $raw, $key_end, $value_end - $key_end )
+        if $key eq $wanted_key;
+
+    $position = $value_end;
+  }
+
+  return undef;
+}
+
+sub raw_info_from_bytes ( $self, $raw ) {
+  return _raw_top_level_value( $raw, 'info' );
+}
+
 sub _integer_value ( $value ) {
   return undef if !defined $value;
   return undef if ref $value;
@@ -348,18 +426,25 @@ sub parse_file ( $self, $path ) {
   };
 
   my $data;
-  my $decoded = eval {
+  my $decode_error;
+
+  {
     local $SIG{__WARN__} = sub {
       my $warning = shift;
       warn $warning if $warning !~ m{/Bencode\.pm line \d+};
     };
-    $data = eval { bdecode( $raw ) };
-  };
 
-  if ( $@ ) {
+    $data = eval { bdecode( $raw ) };
+    $decode_error = $@;
+  }
+
+  if ( $decode_error || ref $data ne 'HASH' ) {
+    my $problem = $decode_error || 'decoded value is not a dictionary';
+    $problem =~ s/\s+\z//;
+
     return {
             ok      => 0,
-            problem => "bdecode failed for $path: $@",};
+            problem => "bdecode failed for $path: $problem",};
   }
 
   my $infohash;
@@ -394,7 +479,15 @@ infohash.fastresume',};
             problem   => 'missing info dictionary',};
   }
 
-  $infohash = sha1_hex( bencode( $data->{info} ) );
+  my $raw_info = _raw_top_level_value( $raw, 'info' );
+  if ( !defined $raw_info ) {
+    return {
+            ok        => 0,
+            file_type => $file_type,
+            problem   => 'raw info dictionary was not found',};
+  }
+
+  $infohash = sha1_hex($raw_info);
   my $observed_keys = _observed_top_level_keys( $data );
   push @{$observed_keys}, @{_observed_info_keys( $data->{info} )};
 

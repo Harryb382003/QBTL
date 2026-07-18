@@ -795,7 +795,7 @@ sub _qbt_export_dedupe_problem_lines ( $self, $result ) {
 
   if ($missing_export_todo_count) {
     push @line,
-        '  export_dir: there were '
+        '  export_dir: there are '
         . $missing_export_todo_count
         . ' current qBT torrents missing from Downloaded_torrents.'
         . ' # TODO no repair code written.';
@@ -803,7 +803,7 @@ sub _qbt_export_dedupe_problem_lines ( $self, $result ) {
 
   if ($missing_completed_todo_count) {
     push @line,
-        '  export_dir_fin: there were '
+        '  export_dir_fin: there are '
         . $missing_completed_todo_count
         . ' completed qBT torrents missing from Completed_torrents.';
 
@@ -828,7 +828,7 @@ sub _qbt_export_dedupe_problem_lines ( $self, $result ) {
 
   if ($different_hash_collision_count) {
     push @line,
-        '  export dirs: there were '
+        '  export dirs: there are '
         . $different_hash_collision_count
         . ' different-hash filename collisions.'
         . ' # TODO no "<name> avert collision" code written.';
@@ -886,18 +886,20 @@ Completed_torrents\. # TODO no repair code written\.?\z/;
         && !defined $problem->{parse_ok}
         && !defined $problem->{parse_problem};
 
-    my $subject = defined $path
-        ? $path : defined $hash
-        ? $hash : defined $name
-        ? $name : '(none)';
-    if ( defined $name && defined $hash && length $name && $name ne $hash ) {
-      $subject .= qq{ "$name"};
-    }
-
     push @line, '  '
       . ( $which // '(unknown)' )
-      . ": $subject: "
+      . ': '
       . ( $error // '(no error text)' );
+
+    if ( defined $path ) {
+      push @line, "    $path";
+    }
+    elsif ( defined $hash ) {
+      push @line, "    $hash";
+    }
+    elsif ( defined $name ) {
+      push @line, "    $name";
+    }
 
     if ( defined $problem->{action} && length $problem->{action} ) {
       push @line, "    action: $problem->{action}";

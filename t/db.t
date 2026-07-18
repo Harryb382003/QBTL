@@ -91,6 +91,22 @@ like( $migration_files[17],
       qr/018_qbt_hash_as_name\.sql\z/,
       'qbt_hash_as_name migration discovered' );
 
+like( $migration_files[18],
+      qr/019_qbt_torrent_file_state\.sql\z/,
+      'qbt_torrent_file_state migration discovered' );
+
+like( $migration_files[19],
+      qr/020_qbt_export_dir_state\.sql\z/,
+      'qbt_export_dir_state migration discovered' );
+
+like( $migration_files[20],
+      qr/021_torrent_infill\.sql\z/,
+      'torrent_infill migration discovered' );
+
+like( $migration_files[21],
+      qr/022_torrent_infill_omitted_keys\.sql\z/,
+      'torrent_infill_omitted_keys migration discovered' );
+
 my @problems = $db->verify_path;
 
 is_deeply( \@problems, [], 'valid temp DB directory has no path problems' );
@@ -110,7 +126,8 @@ is( $migration->{migration_count}, 22, 'twenty-two migrations ran' );
 my ( $version ) = $result->{dbh}
     ->selectrow_array( 'SELECT version FROM schema_version WHERE id = 1' );
 
-is( $version, 20, 'schema version stored' );
+is( $version, 20,
+    'schema version remains at latest versioned migration' );
 
 my ( $hash_as_name_table ) = $result->{dbh}->selectrow_array(
   q{
@@ -153,24 +170,38 @@ is( $han_count, 1, 'hash as name inventory count stored' );
 my $hash = '7ba7c0f31cd3ae7186c8d08353cfa87291b825e4';
 
 my $hv = $db->upsert_hash_value(
-                                 $result->{dbh},
-                                 hash       => $hash,
-                                 key        => 'qbt-savepath',
-                                 value      => '/Volumes/A/Movies',
-                                 value_type => 'text', );
+    $result->{dbh},
+    hash   => $hash,
+    values => [
+        {
+         key        => 'qbt-savepath',
+         value      => '/Volumes/A/Movies',
+         value_type => 'text',
+        },
+    ],
+);
 
 ok( $hv->{ok}, 'hash value upsert result ok' );
 
 my $hv_again = $db->upsert_hash_value(
-                                       $result->{dbh},
-                                       hash       => $hash,
-                                       key        => 'qbt-savepath',
-                                       value      => '/Volumes/A/Movies',
-                                       value_type => 'text', );
+    $result->{dbh},
+    hash   => $hash,
+    values => [
+        {
+         key        => 'qbt-savepath',
+         value      => '/Volumes/A/Movies',
+         value_type => 'text',
+        },
+    ],
+);
 
 ok( $hv_again->{ok}, 'hash value repeat upsert result ok' );
 
-my $promote = $db->promote_hash_key( $result->{dbh}, key => 'qbt-savepath', );
+my $promote = $db->promote_hash_key(
+    $result->{dbh},
+    key    => 'qbt-savepath',
+    column => 'qbt_savepath',
+);
 
 ok( $promote->{ok}, 'hash key promotion result ok' );
 is( $promote->{status}, 'promoted', 'hash key promotion status stored' );
@@ -189,8 +220,11 @@ my ( $promoted_value ) = $result->{dbh}->selectrow_array(
 
 is( $promoted_value, '/Volumes/A/Movies', 'promoted value backfilled' );
 
-my $promote_again =
-    $db->promote_hash_key( $result->{dbh}, key => 'qbt-savepath', );
+my $promote_again = $db->promote_hash_key(
+    $result->{dbh},
+    key    => 'qbt-savepath',
+    column => 'qbt_savepath',
+);
 
 ok( $promote_again->{ok}, 'repeat hash key promotion result ok' );
 is( $promote_again->{status},
@@ -258,6 +292,89 @@ ok( $manual_rows->{ok}, 'manual values for hash result ok' );
 is( $manual_rows->{rows}[0]{key}, 'preferred_path', 'manual value key stored' );
 is( $manual_rows->{rows}[0]{value},
     '/Volumes/B/Movies', 'manual value value stored' );
+
+
+my $copy_hash = '2222222222222222222222222222222222222222';
+my $copy_normal_path = File::Spec->catfile( $dir, 'normal-copy.torrent' );
+my $copy_backup_path = File::Spec->catfile(
+    $dir,
+    'BT_backup',
+    $copy_hash . '.torrent',
+);
+
+for my $copy_row (
+    {
+     path         => $copy_backup_path,
+     infohash     => $copy_hash,
+     torrent_name => 'backup copy',
+     announce     => 'https://backup.example.invalid/announce',
+     parse_ok     => 1,
+    },
+    {
+     path         => $copy_normal_path,
+     infohash     => $copy_hash,
+     torrent_name => 'normal copy',
+     announce     => undef,
+     parse_ok     => 1,
+    },
+) {
+  $result->{dbh}->do(
+    q{
+      INSERT INTO local_torrent_files
+        (path, infohash, torrent_name, announce, parse_ok, seen_on)
+      VALUES
+        (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    },
+    undef,
+    @{$copy_row}{qw( path infohash torrent_name announce parse_ok )},
+  );
+}
+
+my $copy_candidates =
+    $db->torrent_copy_candidates_for_hash( $result->{dbh}, $copy_hash );
+
+is( scalar @{$copy_candidates}, 2,
+    'copy candidate lookup returns both matching torrents' );
+is( $copy_candidates->[0]{path}, $copy_normal_path,
+    'copy candidate lookup prefers non-BT_backup evidence' );
+is( $copy_candidates->[1]{path}, $copy_backup_path,
+    'copy candidate lookup retains BT_backup as last resort' );
+
+$result->{dbh}->do(
+  q{
+    INSERT INTO torrent_trackers
+      (hash, source, tracker_url, tier, position)
+    VALUES
+      (?, ?, ?, ?, ?)
+  },
+  undef,
+  $copy_hash,
+  'export_dir',
+  'https://export.example.invalid/announce',
+  0,
+  0,
+);
+
+$result->{dbh}->do(
+  q{
+    INSERT INTO torrent_trackers
+      (hash, source, tracker_url, tier, position)
+    VALUES
+      (?, ?, ?, ?, ?)
+  },
+  undef,
+  $copy_hash,
+  'qbt',
+  'https://qbt.example.invalid/announce',
+  0,
+  0,
+);
+
+is(
+  $db->preferred_torrent_tracker( $result->{dbh}, $copy_hash ),
+  'https://qbt.example.invalid/announce',
+  'preferred tracker lookup favors qBT evidence',
+);
 
 my $unset = $db->unset_manual_value(
                                      $result->{dbh},
