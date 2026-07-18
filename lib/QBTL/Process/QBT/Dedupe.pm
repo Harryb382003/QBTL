@@ -2681,22 +2681,31 @@ sub _suffix_torrent_basename ( $self, $base, $n ) {
 }
 
 sub _torrent_metadata_base ( $self, $torrent ) {
-  my $name =
-         $torrent->{torrent_name}
-      // $torrent->{metadata_name}
-      // $torrent->{name}
-      // $torrent->{desired_base};
+  my @candidate = (
+    $torrent->{torrent_name},    # parsed info.name: preferred
+    $torrent->{metadata_name},
+    $torrent->{name},
+    $torrent->{desired_base},
+    basename( $torrent->{path} // '' ),
+  );
 
-  if ( defined $name && length $name ) {
+  for my $name (@candidate) {
+    next if !defined $name || !length $name;
+
     $name = $self->_repair_mojibake_utf8($name);
-  }
-  else {
-    $name = basename( $torrent->{path} // '' );
+    $name =~ s/\.torrent\z//i;
+
+    my $base = $self->_normalize_torrent_name($name);
+
+    # Reject empty/punctuation-only results such as "-" or "--".
+    next if $base eq 'unnamed';
+    next if $base =~ /\A[-_.\s]*\z/;
+
+    return $base . '.torrent';
   }
 
-  $name =~ s/\.torrent\z//i;
-
-  return $self->_normalize_torrent_name($name) . '.torrent';
+  die 'unable to derive a sane torrent metadata basename for '
+      . ( $torrent->{path} // '<unknown path>' );
 }
 
 sub _torrent_pool_copy_target ( $self, %arg ) {
