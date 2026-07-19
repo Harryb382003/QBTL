@@ -26,7 +26,7 @@ is( $db->migration_dir,
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 22, 'twenty-two migration files discovered' );
+is( scalar @migration_files, 23, 'twenty-three migration files discovered' );
 
 like( $migration_files[0], qr/001_initial\.sql\z/,
       'initial migration discovered' );
@@ -107,6 +107,9 @@ like( $migration_files[21],
       qr/022_torrent_infill_omitted_keys\.sql\z/,
       'torrent_infill_omitted_keys migration discovered' );
 
+like( $migration_files[22], qr/023_add_queue\.sql\z/,
+      'add_queue migration discovered' );
+
 my @problems = $db->verify_path;
 
 is_deeply( \@problems, [], 'valid temp DB directory has no path problems' );
@@ -121,13 +124,35 @@ my $dbh = $result->{dbh};
 my $migration = $db->migrate( $result->{dbh} );
 
 ok( $migration->{ok}, 'migration result ok' );
-is( $migration->{migration_count}, 22, 'twenty-two migrations ran' );
+is( $migration->{migration_count}, 23, 'twenty-three migrations ran' );
 
 my ( $version ) = $result->{dbh}
     ->selectrow_array( 'SELECT version FROM schema_version WHERE id = 1' );
 
-is( $version, 20,
-    'schema version remains at latest versioned migration' );
+is( $version, 23,
+    'schema version advances through add_queue migration' );
+
+my $add_queue = $db->upsert_add_queue(
+  $dbh,
+  hash => 'queue-hash',
+  path => '/tmp/queue-hash.torrent',
+);
+ok( $add_queue->{ok}, 'add queue row stored' );
+
+my $queued_path = $dbh->selectrow_array(
+  q{SELECT path FROM add_queue WHERE hash = ?},
+  undef,
+  'queue-hash',
+);
+is( $queued_path, '/tmp/queue-hash.torrent', 'add queue path stored by hash' );
+
+$db->delete_add_queue_hash( $dbh, 'queue-hash' );
+my ($queued_count) = $dbh->selectrow_array(
+  q{SELECT COUNT(*) FROM add_queue WHERE hash = ?},
+  undef,
+  'queue-hash',
+);
+is( $queued_count, 0, 'add queue row removed when no longer needed' );
 
 my ( $hash_as_name_table ) = $result->{dbh}->selectrow_array(
   q{

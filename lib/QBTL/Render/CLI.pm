@@ -746,6 +746,34 @@ sub _qbt_export_dedupe_summary ( $self, $result, %arg ) {
       . ( $result->{rename_already_named} // 0 );
   say {$out} $indent . 'moved:                            '
 		 . ( $result->{moved} // 0 );
+  say {$out} $indent . 'global parsed hashes:              '
+      . ( $result->{global_hashes} // 0 );
+  say {$out} $indent . 'qBT-folder keeper satisfied:       '
+      . ( $result->{qbt_keeper_satisfied} // 0 );
+  say {$out} $indent . 'keepers moved to torrent pool:     '
+      . ( $result->{torrent_pool_copied_add_candidates} // 0 );
+  say {$out} $indent . 'keepers already in torrent pool:   '
+      . ( $result->{torrent_pool_existing_add_candidates} // 0 );
+  say {$out} $indent . 'keepers moved to restoration:      '
+      . ( $result->{restoration_moved} // 0 );
+  say {$out} $indent . 'keepers already in restoration:    '
+      . ( $result->{restoration_existing} // 0 );
+  say {$out} $indent . 'API add queue entries:              '
+      . ( $result->{add_queued} // 0 );
+
+  my $name_source = $result->{torrent_name_sources} // {};
+  say {$out} $indent . 'generated names from info.name:       '
+      . ( $name_source->{torrent_metadata} // 0 );
+  say {$out} $indent . 'generated names from stored metadata: '
+      . ( ( $name_source->{stored_metadata} // 0 )
+        + ( $name_source->{stored_name} // 0 )
+        + ( $name_source->{desired_base} // 0 ) );
+  say {$out} $indent . 'generated names from existing file:   '
+      . ( $name_source->{existing_filename} // 0 );
+  say {$out} $indent . 'generated names from hash fallback:   '
+      . ( $name_source->{hash_fallback} // 0 );
+  say {$out} $indent . 'generated names from unnamed fallback:'
+      . ( $name_source->{unnamed_fallback} // 0 );
   say {$out} $indent . 'copied completed -> downloaded:   '
       . ( $result->{copied_completed_to_downloaded} // 0 );
   say {$out} $indent . 'moved stale completed:            '
@@ -1208,6 +1236,7 @@ sub qbt_export_dedupe ( $self, $result ) {
 
   say {$out} '  queued for deletion:        ' . ( $result->{queue_dir} // '' );
   say {$out} '  torrent pool:               ' . ( $result->{torrent_pool} // '' );
+  say {$out} '  queued for restoration:      ' . ( $result->{restoration_dir} // '' );
   say {$out} '  torrent pool copied add candidates:      '
       . ( $result->{torrent_pool_copied_add_candidates} // 0 );
   say {$out} '  torrent pool existing add candidates:    '

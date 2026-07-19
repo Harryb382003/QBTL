@@ -133,4 +133,13 @@ sub parse_bytes ( $text ) {
   return $value[0];
 }
 
+sub timed_phase ( $label, $code ) {
+  my $started = Time::HiRes::time();
+  my $result  = $code->();
+  my $elapsed = Time::HiRes::time() - $started;
+  say STDERR sprintf '%-32s %8.3f sec', $label, $elapsed;
+
+  return $result;
+}
+
 1;

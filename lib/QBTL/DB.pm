@@ -229,25 +229,6 @@ sub current_qbt_name_map ( $self, $dbh ) {
   return \%name_by_hash;
 }
 
-sub current_qbt_name_map ( $self, $dbh ) {
-  my $rows = $dbh->selectall_arrayref(
-    q{
-      SELECT hash, name
-      FROM qbt_info
-      WHERE current_qbt = 1
-      ORDER BY hash ASC
-    },
-    {Slice => {}}, );
-
-  my %name;
-
-  for my $row ( @{$rows} ) {
-    next if !defined $row->{hash} || $row->{hash} eq '';
-    $name{$row->{hash}} = $row->{name};
-  }
-
-  return \%name;
-}
 
 sub db_path ( $self ) {
   return $self->{db_path};
@@ -1057,19 +1038,6 @@ sub qbt_mismatch_count ( $self, $dbh ) {
   return $self->qbt_mismatch_rows( $dbh )->{count};
 }
 
-sub qbt_info_by_hash ( $self, $dbh, $hash ) {
-  my $row = $dbh->selectrow_hashref(
-    q{
-      SELECT *
-      FROM qbt_info
-      WHERE hash = ?
-      LIMIT 1
-    },
-    undef,
-    $hash, );
-
-  return $row;
-}
 
 sub qbt_info_columns ( $self, $dbh ) {
   my $columns = $dbh->selectall_arrayref( q{PRAGMA table_info(qbt_info)},
@@ -1142,6 +1110,51 @@ sub reset_qbt_export_dir_file_state ( $self, $dbh, %arg ) {
   );
 
   return {ok => 1, which => $which};
+}
+
+sub parsed_local_torrent_files ( $self, $dbh ) {
+  return $dbh->selectall_arrayref(
+    q{
+      SELECT *
+      FROM local_torrent_files
+      WHERE COALESCE(parse_ok, 0) = 1
+        AND infohash IS NOT NULL
+        AND infohash <> ''
+      ORDER BY infohash ASC, path ASC
+    },
+    {Slice => {}},
+  );
+}
+
+sub upsert_add_queue ( $self, $dbh, %arg ) {
+  my $hash = $arg{hash} // die 'add queue requires hash';
+  my $path = $arg{path} // die 'add queue requires path';
+
+  $dbh->do(
+    q{
+      INSERT INTO add_queue (hash, path)
+      VALUES (?, ?)
+      ON CONFLICT(hash) DO UPDATE SET path = excluded.path
+    },
+    undef,
+    $hash,
+    $path,
+  );
+
+  return {ok => 1, hash => $hash, path => $path};
+}
+
+sub delete_add_queue_hash ( $self, $dbh, $hash ) {
+  return {ok => 1, deleted => 0}
+      if !defined $hash || $hash eq '';
+
+  my $rows = $dbh->do(
+    q{DELETE FROM add_queue WHERE hash = ?},
+    undef,
+    $hash,
+  );
+
+  return {ok => 1, deleted => $rows || 0};
 }
 
 sub torrent_copy_candidates_for_hash ( $self, $dbh, $hash ) {

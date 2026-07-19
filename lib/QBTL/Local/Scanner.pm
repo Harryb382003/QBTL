@@ -15,12 +15,6 @@ sub new ( $class, %arg ) {
   return bless \%arg, $class;
 }
 
-sub _empty_types () {
-  return {
-          torrent    => {count => 0, paths => [],},
-          fastresume => {count => 0, paths => [],},};
-}
-
 sub _command_path ( $command ) {
   for my $dir ( File::Spec->path ) {
     next if !defined $dir || $dir eq '';
@@ -37,6 +31,12 @@ sub _count_types ( $types ) {
   $count += $types->{$_}{count} // 0 for qw(torrent fastresume);
 
   return $count;
+}
+
+sub _empty_types () {
+  return {
+          torrent    => {count => 0, paths => [],},
+          fastresume => {count => 0, paths => [],},};
 }
 
 sub _find_torrents ( $self, %arg ) {
