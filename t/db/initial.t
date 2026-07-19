@@ -36,12 +36,14 @@ is( $dbh->selectrow_array( 'PRAGMA foreign_keys' ),
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 1, 'one migration discovered', );
+is( scalar @migration_files, 2, 'Two migrations discovered', );
 
 like( $migration_files[0], qr{001_initial[.]sql\z},
-      'initial migration discovered', );
+      'initial migration discovered first', );
+like( $migration_files[1], qr{002_torrents[.]sql\z},
+      'torrents migration discovered second', );
 
-is( $db->migrate( $dbh ), 1, 'one migration executed', );
+is( $db->migrate( $dbh ), 2, 'Two migrations executed', );
 
 my $table_name = $dbh->selectrow_array(
   q{
@@ -63,16 +65,49 @@ my $migration_count = $dbh->selectrow_array(
   }
 );
 
-is( $migration_count, 1, 'migration recorded exactly once', );
+is( $migration_count, 2, 'migration recorded exactly once', );
 
-my $recorded_version = $dbh->selectrow_array(
+is( $db->migrate( $dbh ), 0, 'all migrations skipped after application', );
+
+my $torrent_table = $dbh->selectrow_array(
+  q{
+  SELECT name
+  FROM sqlite_master
+  WHERE type = 'table'
+AND name = 'torrents'
+}
+);
+
+is( $torrent_table, 'torrents', 'canonical torrents table created', );
+
+my $torrent_columns = $dbh->selectall_arrayref(
+  q{
+  PRAGMA table_info(torrents)
+  },
+  {Slice => {}}, );
+
+is(
+  [ map { $_->{name} } @$torrent_columns ],
+  [
+    qw(
+        infohash
+        discovered_on
+        discovered_by
+    )
+  ],
+  'torrents table has expected columns', );
+
+my $recorded_versions = $dbh->selectcol_arrayref(
   q{
   SELECT version
   FROM schema_migrations
+  ORDER BY version
   }
 );
 
-is( $recorded_version, 1, 'initial migration version recorded', );
+is( $recorded_versions,
+    [ 1, 2 ],
+    'applied migration versions recorded in order', );
 
 $dbh->disconnect;
 
