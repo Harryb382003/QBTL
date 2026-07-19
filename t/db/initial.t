@@ -54,6 +54,26 @@ my $table_name = $dbh->selectrow_array(
 
 is( $table_name, 'schema_migrations', 'schema migrations table created', );
 
+is( $db->migrate( $dbh ), 0, 'already-applied migration skipped', );
+
+my $migration_count = $dbh->selectrow_array(
+  q{
+  SELECT COUNT(*)
+  FROM schema_migrations
+  }
+);
+
+is( $migration_count, 1, 'migration recorded exactly once', );
+
+my $recorded_version = $dbh->selectrow_array(
+  q{
+  SELECT version
+  FROM schema_migrations
+  }
+);
+
+is( $recorded_version, 1, 'initial migration version recorded', );
+
 $dbh->disconnect;
 
 done_testing;

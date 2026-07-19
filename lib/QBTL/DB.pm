@@ -44,7 +44,35 @@ sub db_path ( $self ) {
 sub migrate ( $self, $dbh ) {
   my @files = $self->migration_files;
 
-  for my $file ( @files ) {
+  $dbh->do(
+  q{
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version    INTEGER PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    )
+  }
+);
+
+  my $applied = 0;
+
+  for my $file (@files) {
+    my ($version) = $file =~ m{/(\d+)_};
+
+    die "cannot determine migration version from $file"
+        if !defined $version;
+
+    my ($already_applied) = $dbh->selectrow_array(
+      q{
+        SELECT 1
+          FROM schema_migrations
+         WHERE version = ?
+      },
+      undef,
+      0 + $version,
+    );
+
+    next if $already_applied;
+
     open my $fh, '<', $file
         or die "cannot read migration $file: $!";
 
@@ -55,8 +83,23 @@ sub migrate ( $self, $dbh ) {
     $dbh->begin_work;
 
     eval {
-      $dbh->do( $sql );
+      $dbh->do($sql);
+
+      $dbh->do(
+        q{
+          INSERT INTO schema_migrations (
+            version,
+            applied_at
+          )
+          VALUES (?, datetime('now'))
+        },
+        undef,
+        0 + $version,
+      );
+
       $dbh->commit;
+      $applied++;
+
       1;
     } or do {
       my $error = $@ || 'unknown migration error';
@@ -67,7 +110,7 @@ sub migrate ( $self, $dbh ) {
     };
   }
 
-  return scalar @files;
+  return $applied;
 }
 
 sub migration_dir ( $self ) {
