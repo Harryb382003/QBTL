@@ -109,6 +109,48 @@ is( $recorded_versions,
     [ 1, 2 ],
     'applied migration versions recorded in order', );
 
+my $first = $db->ensure_torrent( $dbh,
+                                 '0123456789abcdef0123456789abcdef01234567',
+                                 '2026-07-19 16:00:00', 'qbt', );
+
+is(
+    $first,
+    {
+     infohash      => '0123456789abcdef0123456789abcdef01234567',
+     discovered_on => '2026-07-19 16:00:00',
+     discovered_by => 'qbt',
+    },
+    'torrent identity inserted', );
+
+my $second = $db->ensure_torrent( $dbh,
+                                  '0123456789abcdef0123456789abcdef01234567',
+                                  '2026-07-20 12:00:00', 'local', );
+
+is(
+    $second,
+    {
+     infohash      => '0123456789abcdef0123456789abcdef01234567',
+     discovered_on => '2026-07-19 16:00:00',
+     discovered_by => 'qbt',
+    },
+    'later observation does not overwrite discovery evidence', );
+
+my $earlier = $db->ensure_torrent( $dbh,
+                                   '0123456789abcdef0123456789abcdef01234567',
+                                   '2025-12-01 08:30:00', 'local', );
+
+is(
+    $earlier,
+    {
+     infohash      => '0123456789abcdef0123456789abcdef01234567',
+     discovered_on => '2025-12-01 08:30:00',
+     discovered_by => 'local',
+    },
+    'earlier evidence improves discovery record', );
+
+is( $dbh->selectrow_array( 'SELECT COUNT(*) FROM torrents' ),
+    1, 'one canonical torrent row stored', );
+
 $dbh->disconnect;
 
 done_testing;

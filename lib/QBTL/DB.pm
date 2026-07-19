@@ -41,35 +41,78 @@ sub db_path ( $self ) {
   return $self->{db_path};
 }
 
+sub ensure_torrent ( $self, $dbh, $infohash, $discovered_on, $discovered_by, ) {
+  die 'infohash is required'
+      if !defined $infohash
+      || $infohash eq '';
+
+  die 'discovered_on is required'
+      if !defined $discovered_on
+      || $discovered_on eq '';
+
+  die 'discovered_by is required'
+      if !defined $discovered_by
+      || $discovered_by eq '';
+
+  $dbh->do(
+    q{
+      INSERT INTO torrents (
+        infohash,
+        discovered_on,
+        discovered_by
+      )
+      VALUES (?, ?, ?)
+      ON CONFLICT(infohash) DO UPDATE SET
+        discovered_on = excluded.discovered_on,
+        discovered_by = excluded.discovered_by
+      WHERE excluded.discovered_on < torrents.discovered_on
+    },
+    undef,
+    $infohash,
+    $discovered_on,
+    $discovered_by, );
+
+  return $dbh->selectrow_hashref(
+    q{
+      SELECT
+        infohash,
+        discovered_on,
+        discovered_by
+      FROM torrents
+      WHERE infohash = ?
+    },
+    undef,
+    $infohash, );
+}
+
 sub migrate ( $self, $dbh ) {
   my @files = $self->migration_files;
 
   $dbh->do(
-  q{
+    q{
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version    INTEGER PRIMARY KEY,
       applied_at TEXT NOT NULL
     )
   }
-);
+  );
 
   my $applied = 0;
 
-  for my $file (@files) {
-    my ($version) = $file =~ m{/(\d+)_};
+  for my $file ( @files ) {
+    my ( $version ) = $file =~ m{/(\d+)_};
 
     die "cannot determine migration version from $file"
         if !defined $version;
 
-    my ($already_applied) = $dbh->selectrow_array(
+    my ( $already_applied ) = $dbh->selectrow_array(
       q{
         SELECT 1
           FROM schema_migrations
          WHERE version = ?
       },
       undef,
-      0 + $version,
-    );
+      0 + $version, );
 
     next if $already_applied;
 
@@ -83,7 +126,7 @@ sub migrate ( $self, $dbh ) {
     $dbh->begin_work;
 
     eval {
-      $dbh->do($sql);
+      $dbh->do( $sql );
 
       $dbh->do(
         q{
@@ -94,8 +137,7 @@ sub migrate ( $self, $dbh ) {
           VALUES (?, datetime('now'))
         },
         undef,
-        0 + $version,
-      );
+        0 + $version, );
 
       $dbh->commit;
       $applied++;
