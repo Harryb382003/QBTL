@@ -348,6 +348,12 @@ sub torrents_set_location ($self, $hashes, $location) {
     );
 }
 
+
+###
+### known qBT torrent mutation calls, not yet implemented
+###
+
+
 sub rss_refresh_item ( $self, $item_path ) {
     return $self->request(
         'rss_refresh_item',
@@ -357,9 +363,6 @@ sub rss_refresh_item ( $self, $item_path ) {
     );
 }
 
-###
-### known qBT torrent mutation calls, not yet implemented
-###
 
 sub torrents_delete (
     $self,

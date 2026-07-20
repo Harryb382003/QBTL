@@ -5,9 +5,11 @@ use common::sense;
 use feature qw( signatures );
 
 use DBI;
-use JSON::PP ();
+use JSON::PP       ();
 use File::Basename qw( dirname );
 use File::Spec;
+
+use QBTL::DB ();
 
 #--------------------------------------------------------------------------
 # Construction / connection
@@ -154,62 +156,12 @@ sub verify_path ( $self ) {
 }
 
 #--------------------------------------------------------------------------
-# Retained producer output helpers
+# Produce
 #--------------------------------------------------------------------------
 
 sub _canonical_json ( $self, $value ) {
   return JSON::PP->new->canonical->encode( $value );
 }
-
-sub _in_transaction ( $self, $dbh, $code ) {
-  die 'transaction callback must be a code reference'
-      if ref( $code ) ne 'CODE';
-
-  my $started = $dbh->{AutoCommit} ? 1 : 0;
-  $dbh->begin_work if $started;
-
-  my $result = eval { $code->() };
-
-  if ( $@ ) {
-    my $error = $@;
-    eval { $dbh->rollback } if $started;
-    die $error;
-  }
-
-  $dbh->commit if $started;
-  return $result;
-}
-
-sub _replace_retained_payload ( $self, $dbh, %arg ) {
-  for my $required ( qw( table infohash fetched_on payload ) ) {
-    die "$required is required"
-        if !defined $arg{$required} || $arg{$required} eq '';
-  }
-
-  my $table = $arg{table};
-  die "invalid retained payload table: $table"
-      if $table !~ /\AAPI_[A-Za-z0-9_]+\z/;
-
-  $dbh->do(
-    qq{
-      INSERT INTO $table (infohash, fetched_on, payload_json)
-      VALUES (?, ?, ?)
-      ON CONFLICT(infohash) DO UPDATE SET
-        fetched_on = excluded.fetched_on,
-        payload_json = excluded.payload_json
-    },
-    undef,
-    $arg{infohash},
-    $arg{fetched_on},
-    $self->_canonical_json( $arg{payload} ),
-  );
-
-  return 1;
-}
-
-#--------------------------------------------------------------------------
-# Torrent identity
-#--------------------------------------------------------------------------
 
 sub ensure_torrent ( $self, $dbh, $infohash, $discovered_on, $discovered_by, ) {
   die 'infohash is required'
@@ -255,11 +207,162 @@ sub ensure_torrent ( $self, $dbh, $infohash, $discovered_on, $discovered_by, ) {
     $infohash, );
 }
 
+sub _in_transaction ( $self, $dbh, $code ) {
+  die 'transaction callback must be a code reference'
+      if ref( $code ) ne 'CODE';
+
+  my $started = $dbh->{AutoCommit} ? 1 : 0;
+  $dbh->begin_work if $started;
+
+  my $result = eval { $code->() };
+
+  if ( $@ ) {
+    my $error = $@;
+    eval { $dbh->rollback } if $started;
+    die $error;
+  }
+
+  $dbh->commit if $started;
+  return $result;
+}
+
+sub _replace_retained_payload ( $self, $dbh, %arg ) {
+  for my $required ( qw( table infohash fetched_on payload ) ) {
+    die "$required is required"
+        if !defined $arg{$required} || $arg{$required} eq '';
+  }
+
+  my $table = $arg{table};
+  die "invalid retained payload table: $table"
+      if $table !~ /\AAPI_[A-Za-z0-9_]+\z/;
+
+  $dbh->do(
+    qq{
+      INSERT INTO $table (infohash, fetched_on, payload_json)
+      VALUES (?, ?, ?)
+      ON CONFLICT(infohash) DO UPDATE SET
+        fetched_on = excluded.fetched_on,
+        payload_json = excluded.payload_json
+    },
+    undef,
+    $arg{infohash},
+    $arg{fetched_on},
+    $self->_canonical_json( $arg{payload} ), );
+
+  return 1;
+}
+
+sub P_API_tracker ( $class ) {
+  return {
+    producer      => 'API_torrents_trackers',
+    payload_table => 'API_torrents_trackers',
+    index_table   => 'API_torrents_trackers_index',
+    index_columns => [
+      qw(
+          tracker_index url status tier num_peers num_seeds
+          num_leeches num_downloaded msg
+      )
+    ],
+    validate => sub ( $rows ) {
+      if ( ref( $rows ) ne 'ARRAY' ) {
+        die 'trackers must be an array reference';
+      }
+      for my $tracker_index ( 0 .. $#{$rows} ) {
+        my $row = $rows->[$tracker_index];
+        if ( ref( $row ) ne 'HASH' ) {
+          die "tracker row $tracker_index must be a hash reference";
+        }
+        if ( !defined $row->{url} || $row->{url} eq '' ) {
+          die "tracker row $tracker_index requires url";
+        }
+      }
+      return $rows;
+    },
+    index_rows => sub ( $rows ) {
+      return [
+        map {
+          my $tracker_index = $_;
+          my $row           = $rows->[$tracker_index];
+          +{
+            tracker_index  => $tracker_index,
+            url            => $row->{url},
+            status         => $row->{status},
+            tier           => $row->{tier},
+            num_peers      => $row->{num_peers},
+            num_seeds      => $row->{num_seeds},
+            num_leeches    => $row->{num_leeches},
+            num_downloaded => $row->{num_downloaded},
+            msg            => $row->{msg},};
+        } 0 .. $#{$rows} ];
+    },};
+}
+
 #--------------------------------------------------------------------------
-# API::torrents_info retained output
+# Store
 #--------------------------------------------------------------------------
 
-sub store_API_torrents_info ( $self, $dbh, $rows, $fetched_on = time ) {
+sub _S_producer ( $self, $dbh, %arg ) {
+  my $descriptor = $arg{descriptor};
+  my $infohash   = $arg{infohash};
+  my $payload    = $arg{payload};
+  my $fetched_on = $arg{fetched_on};
+
+  die 'producer descriptor is required'
+      if ref( $descriptor ) ne 'HASH';
+
+  die 'infohash is required'
+      if !defined $infohash || $infohash eq '';
+
+  die 'fetched_on is required'
+      if !defined $fetched_on || $fetched_on eq '';
+
+  my $prepared = $descriptor->{validate}->( $payload );
+  my $rows     = $descriptor->{index_rows}->( $prepared );
+  my @columns  = $descriptor->{index_columns}->@*;
+
+  my $column_sql = join ', ', qw( infohash fetched_on ), @columns;
+  my $value_sql  = join ', ', ( '?' ) x ( 2 + @columns );
+  my $insert_sql = sprintf 'INSERT INTO %s (%s) VALUES (%s)',
+      $descriptor->{index_table}, $column_sql, $value_sql;
+
+  $self->_in_transaction(
+    $dbh,
+    sub {
+      $self->ensure_torrent( $dbh, $infohash, $fetched_on,
+                             $descriptor->{producer}, );
+
+      $self->_replace_retained_payload(
+                                        $dbh,
+                                        table => $descriptor->{payload_table},
+                                        infohash   => $infohash,
+                                        fetched_on => $fetched_on,
+                                        payload    => $prepared, );
+
+      $dbh->do(
+            'DELETE FROM ' . $descriptor->{index_table} . ' WHERE infohash = ?',
+            undef, $infohash, );
+
+      for my $row ( $rows->@* ) {
+        $dbh->do( $insert_sql, undef, $infohash,
+                  $fetched_on, @{$row}{@columns}, );
+      }
+
+      return 1;
+    }, );
+
+  return {
+          ok       => 1,
+          infohash => $infohash,
+          seen     => scalar(
+                          ref( $prepared ) eq 'ARRAY'
+                          ? $prepared->@*
+                          : 1
+          ),
+          stored     => scalar $rows->@*,
+          fetched_on => 0 + $fetched_on,};
+}
+
+sub S_API_torrents_info ( $self, $dbh, $rows, $fetched_on = time ) {
   die 'rows must be an array reference'
       if ref( $rows ) ne 'ARRAY';
 
@@ -277,17 +380,16 @@ sub store_API_torrents_info ( $self, $dbh, $rows, $fetched_on = time ) {
     die 'API::torrents_info row requires hash'
         if !defined $infohash || $infohash eq '';
 
-    push @prepared, { infohash => $infohash, row => $row };
+    push @prepared, {infohash => $infohash, row => $row};
   }
 
   my %existing;
   if ( @prepared ) {
-    my $placeholders = join q{,}, ('?') x @prepared;
+    my $placeholders = join q{,}, ( '?' ) x @prepared;
     my $known = $dbh->selectcol_arrayref(
-      "SELECT infohash FROM API_torrents_info WHERE infohash IN ($placeholders)",
+"SELECT infohash FROM API_torrents_info WHERE infohash IN ($placeholders)",
       undef,
-      map { $_->{infohash} } @prepared,
-    );
+      map { $_->{infohash} } @prepared, );
     %existing = map { $_ => 1 } @{$known};
   }
 
@@ -298,20 +400,15 @@ sub store_API_torrents_info ( $self, $dbh, $rows, $fetched_on = time ) {
         my $row      = $item->{row};
         my $infohash = $item->{infohash};
 
-        $self->ensure_torrent(
-          $dbh,
-          $infohash,
-          $fetched_on,
-          'API_torrents_info',
-        );
+        $self->ensure_torrent( $dbh, $infohash, $fetched_on,
+                               'API_torrents_info', );
 
         $self->_replace_retained_payload(
-          $dbh,
-          table      => 'API_torrents_info',
-          infohash   => $infohash,
-          fetched_on => $fetched_on,
-          payload    => $row,
-        );
+                                          $dbh,
+                                          table      => 'API_torrents_info',
+                                          infohash   => $infohash,
+                                          fetched_on => $fetched_on,
+                                          payload    => $row, );
 
         $dbh->do(
           q{
@@ -344,20 +441,20 @@ sub store_API_torrents_info ( $self, $dbh, $rows, $fetched_on = time ) {
           undef,
           $infohash,
           $fetched_on,
-          @{$row}{qw(
-              name state progress save_path content_path category tags tracker
-              amount_left size total_size added_on completion_on last_activity
-              ratio is_private
-          )},
-        );
+          @{$row}{
+            qw(
+                name state progress save_path content_path category tags tracker
+                amount_left size total_size added_on completion_on last_activity
+                ratio is_private
+            )
+          }, );
       }
 
       return 1;
-    },
-  );
+    }, );
 
-  my $stored = scalar @prepared;
-  my $existing_count = scalar grep { $existing{ $_->{infohash} } } @prepared;
+  my $stored         = scalar @prepared;
+  my $existing_count = scalar grep { $existing{$_->{infohash}} } @prepared;
 
   return {
           ok         => 1,
@@ -365,15 +462,10 @@ sub store_API_torrents_info ( $self, $dbh, $rows, $fetched_on = time ) {
           stored     => $stored,
           new        => $stored - $existing_count,
           existing   => $existing_count,
-          fetched_on => 0 + $fetched_on,
-         };
+          fetched_on => 0 + $fetched_on,};
 }
 
-#--------------------------------------------------------------------------
-# API::torrents_files retained output
-#--------------------------------------------------------------------------
-
-sub store_API_torrents_files ( $self, $dbh, $infohash, $rows, $fetched_on = time ) {
+sub S_API_torrents_files ( $self, $dbh, $infohash, $rows, $fetched_on = time ) {
   die 'infohash is required'
       if !defined $infohash || $infohash eq '';
 
@@ -394,11 +486,11 @@ sub store_API_torrents_files ( $self, $dbh, $infohash, $rows, $fetched_on = time
         if !defined $row->{index};
 
     die "duplicate API::torrents_files index: $row->{index}"
-        if $seen_index{ $row->{index} }++;
+        if $seen_index{$row->{index}}++;
 
     my ( $piece_start, $piece_end );
     if ( ref( $row->{piece_range} ) eq 'ARRAY' ) {
-      ( $piece_start, $piece_end ) = @{ $row->{piece_range} };
+      ( $piece_start, $piece_end ) = @{$row->{piece_range}};
     }
 
     push @prepared,
@@ -406,33 +498,24 @@ sub store_API_torrents_files ( $self, $dbh, $infohash, $rows, $fetched_on = time
          row         => $row,
          file_index  => 0 + $row->{index},
          piece_start => $piece_start,
-         piece_end   => $piece_end,
-        };
+         piece_end   => $piece_end,};
   }
 
   $self->_in_transaction(
     $dbh,
     sub {
-      $self->ensure_torrent(
-        $dbh,
-        $infohash,
-        $fetched_on,
-        'API_torrents_files',
-      );
+      $self->ensure_torrent( $dbh, $infohash, $fetched_on,
+                             'API_torrents_files', );
 
       $self->_replace_retained_payload(
-        $dbh,
-        table      => 'API_torrents_files',
-        infohash   => $infohash,
-        fetched_on => $fetched_on,
-        payload    => $rows,
-      );
+                                        $dbh,
+                                        table      => 'API_torrents_files',
+                                        infohash   => $infohash,
+                                        fetched_on => $fetched_on,
+                                        payload    => $rows, );
 
-      $dbh->do(
-        q{DELETE FROM API_torrents_files_index WHERE infohash = ?},
-        undef,
-        $infohash,
-      );
+      $dbh->do( q{DELETE FROM API_torrents_files_index WHERE infohash = ?},
+                undef, $infohash, );
 
       for my $item ( @prepared ) {
         my $row = $item->{row};
@@ -452,29 +535,23 @@ sub store_API_torrents_files ( $self, $dbh, $infohash, $rows, $fetched_on = time
           @{$row}{qw( name size progress priority is_seed )},
           $item->{piece_start},
           $item->{piece_end},
-          $row->{availability},
-        );
+          $row->{availability}, );
       }
 
       return 1;
-    },
-  );
+    }, );
 
   return {
           ok         => 1,
           infohash   => $infohash,
           seen       => scalar @{$rows},
           stored     => scalar @prepared,
-          fetched_on => 0 + $fetched_on,
-         };
+          fetched_on => 0 + $fetched_on,};
 }
 
-
-#--------------------------------------------------------------------------
-# API::torrents_properties retained output
-#--------------------------------------------------------------------------
-
-sub store_API_torrents_properties ( $self, $dbh, $infohash, $properties, $fetched_on = time ) {
+sub S_API_torrents_properties ( $self, $dbh, $infohash, $properties,
+                                $fetched_on = time )
+{
   die 'infohash is required'
       if !defined $infohash || $infohash eq '';
 
@@ -487,20 +564,15 @@ sub store_API_torrents_properties ( $self, $dbh, $infohash, $properties, $fetche
   $self->_in_transaction(
     $dbh,
     sub {
-      $self->ensure_torrent(
-        $dbh,
-        $infohash,
-        $fetched_on,
-        'API_torrents_properties',
-      );
+      $self->ensure_torrent( $dbh, $infohash, $fetched_on,
+                             'API_torrents_properties', );
 
       $self->_replace_retained_payload(
-        $dbh,
-        table      => 'API_torrents_properties',
-        infohash   => $infohash,
-        fetched_on => $fetched_on,
-        payload    => $properties,
-      );
+                                        $dbh,
+                                        table      => 'API_torrents_properties',
+                                        infohash   => $infohash,
+                                        fetched_on => $fetched_on,
+                                        payload    => $properties, );
 
       $dbh->do(
         q{
@@ -515,109 +587,27 @@ sub store_API_torrents_properties ( $self, $dbh, $infohash, $properties, $fetche
         undef,
         $infohash,
         $fetched_on,
-        $properties->{comment},
-      );
+        $properties->{comment}, );
 
       return 1;
-    },
-  );
+    }, );
 
   return {
           ok         => 1,
           infohash   => $infohash,
-          fetched_on => 0 + $fetched_on,
-         };
+          fetched_on => 0 + $fetched_on,};
 }
 
-
-#--------------------------------------------------------------------------
-# API::torrents_trackers retained output
-#--------------------------------------------------------------------------
-
-sub store_API_torrents_trackers ( $self, $dbh, $infohash, $rows, $fetched_on = time ) {
-  die 'infohash is required'
-      if !defined $infohash || $infohash eq '';
-
-  die 'trackers must be an array reference'
-      if ref( $rows ) ne 'ARRAY';
-
-  die 'fetched_on is required'
-      if !defined $fetched_on || $fetched_on eq '';
-
-  my @prepared;
-
-  for my $tracker_index ( 0 .. $#{$rows} ) {
-    my $row = $rows->[$tracker_index];
-
-    die "tracker row $tracker_index must be a hash reference"
-        if ref( $row ) ne 'HASH';
-
-    die "tracker row $tracker_index requires url"
-        if !defined $row->{url} || $row->{url} eq '';
-
-    push @prepared, {
-                     tracker_index => $tracker_index,
-                     row           => $row,
-                    };
-  }
-
-  $self->_in_transaction(
-    $dbh,
-    sub {
-      $self->ensure_torrent(
-        $dbh,
-        $infohash,
-        $fetched_on,
-        'API_torrents_trackers',
-      );
-
-      $self->_replace_retained_payload(
-        $dbh,
-        table      => 'API_torrents_trackers',
-        infohash   => $infohash,
-        fetched_on => $fetched_on,
-        payload    => $rows,
-      );
-
-      $dbh->do(
-        q{DELETE FROM API_torrents_trackers_index WHERE infohash = ?},
-        undef,
-        $infohash,
-      );
-
-      for my $item ( @prepared ) {
-        my $row = $item->{row};
-
-        $dbh->do(
-          q{
-            INSERT INTO API_torrents_trackers_index (
-              infohash, tracker_index, fetched_on, url, status, tier,
-              num_peers, num_seeds, num_leeches, num_downloaded, msg
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          },
-          undef,
-          $infohash,
-          $item->{tracker_index},
-          $fetched_on,
-          @{$row}{qw(
-            url status tier num_peers num_seeds num_leeches
-            num_downloaded msg
-          )},
-        );
-      }
-
-      return 1;
-    },
-  );
-
-  return {
-          ok         => 1,
-          infohash   => $infohash,
-          seen       => scalar @{$rows},
-          stored     => scalar @prepared,
-          fetched_on => 0 + $fetched_on,
-         };
+sub S_API_torrents_trackers ( $self, $dbh, $infohash, $rows,
+                              $fetched_on = time )
+{
+  return
+      $self->_S_producer(
+                          $dbh,
+                          descriptor => QBTL::DB->P_API_tracker,
+                          infohash   => $infohash,
+                          payload    => $rows,
+                          fetched_on => $fetched_on, );
 }
 
 1;
