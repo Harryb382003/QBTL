@@ -8,6 +8,10 @@ use DBI;
 use File::Basename qw( dirname );
 use File::Spec;
 
+#--------------------------------------------------------------------------
+# Construction / connection
+#--------------------------------------------------------------------------
+
 sub new ( $class, %arg ) {
   die 'db_path is required'
       if !defined $arg{db_path} || $arg{db_path} eq '';
@@ -41,49 +45,9 @@ sub db_path ( $self ) {
   return $self->{db_path};
 }
 
-sub ensure_torrent ( $self, $dbh, $infohash, $discovered_on, $discovered_by, ) {
-  die 'infohash is required'
-      if !defined $infohash
-      || $infohash eq '';
-
-  die 'discovered_on is required'
-      if !defined $discovered_on
-      || $discovered_on eq '';
-
-  die 'discovered_by is required'
-      if !defined $discovered_by
-      || $discovered_by eq '';
-
-  $dbh->do(
-    q{
-      INSERT INTO torrents (
-        infohash,
-        discovered_on,
-        discovered_by
-      )
-      VALUES (?, ?, ?)
-      ON CONFLICT(infohash) DO UPDATE SET
-        discovered_on = excluded.discovered_on,
-        discovered_by = excluded.discovered_by
-      WHERE excluded.discovered_on < torrents.discovered_on
-    },
-    undef,
-    $infohash,
-    $discovered_on,
-    $discovered_by, );
-
-  return $dbh->selectrow_hashref(
-    q{
-      SELECT
-        infohash,
-        discovered_on,
-        discovered_by
-      FROM torrents
-      WHERE infohash = ?
-    },
-    undef,
-    $infohash, );
-}
+#--------------------------------------------------------------------------
+# Migration support
+#--------------------------------------------------------------------------
 
 sub migrate ( $self, $dbh ) {
   my @files = $self->migration_files;
@@ -188,4 +152,51 @@ sub verify_path ( $self ) {
   return 1;
 }
 
+#--------------------------------------------------------------------------
+# Torrent identity
+#--------------------------------------------------------------------------
+
+sub ensure_torrent ( $self, $dbh, $infohash, $discovered_on, $discovered_by, ) {
+  die 'infohash is required'
+      if !defined $infohash
+      || $infohash eq '';
+
+  die 'discovered_on is required'
+      if !defined $discovered_on
+      || $discovered_on eq '';
+
+  die 'discovered_by is required'
+      if !defined $discovered_by
+      || $discovered_by eq '';
+
+  $dbh->do(
+    q{
+      INSERT INTO torrents (
+        infohash,
+        discovered_on,
+        discovered_by
+      )
+      VALUES (?, ?, ?)
+      ON CONFLICT(infohash) DO UPDATE SET
+        discovered_on = excluded.discovered_on,
+        discovered_by = excluded.discovered_by
+      WHERE excluded.discovered_on < torrents.discovered_on
+    },
+    undef,
+    $infohash,
+    $discovered_on,
+    $discovered_by, );
+
+  return $dbh->selectrow_hashref(
+    q{
+      SELECT
+        infohash,
+        discovered_on,
+        discovered_by
+      FROM torrents
+      WHERE infohash = ?
+    },
+    undef,
+    $infohash, );
+}
 1;

@@ -348,4 +348,177 @@ sub rss_refresh_item ( $self, $item_path ) {
     );
 }
 
+###
+### known qBT torrent mutation calls, not yet implemented
+###
+
+sub torrents_delete (
+    $self,
+    $hashes,
+    $delete_files,
+) { ... }
+
+sub torrents_reannounce (
+    $self,
+    $hashes,
+) { ... }
+
+sub torrents_add_trackers (
+    $self,
+    $hash,
+    $urls,
+) { ... }
+
+sub torrents_edit_tracker (
+    $self,
+    $hash,
+    $original_url,
+    $new_url,
+) { ... }
+
+sub torrents_remove_trackers (
+    $self,
+    $hash,
+    $urls,
+) { ... }
+
+sub torrents_add_peers (
+    $self,
+    $hashes,
+    $peers,
+) { ... }
+
+sub torrents_increase_priority (
+    $self,
+    $hashes,
+) { ... }
+
+sub torrents_decrease_priority (
+    $self,
+    $hashes,
+) { ... }
+
+sub torrents_top_priority (
+    $self,
+    $hashes,
+) { ... }
+
+sub torrents_bottom_priority (
+    $self,
+    $hashes,
+) { ... }
+
+sub torrents_set_file_priority (
+    $self,
+    $hash,
+    $file_ids,
+    $priority,
+) { ... }
+
+sub torrents_set_download_limit (
+    $self,
+    $hashes,
+    $limit,
+) { ... }
+
+sub torrents_set_upload_limit (
+    $self,
+    $hashes,
+    $limit,
+) { ... }
+
+sub torrents_set_share_limits (
+    $self,
+    $hashes,
+    $ratio_limit,
+    $seeding_time_limit,
+    $inactive_seeding_time_limit,
+) { ... }
+
+sub torrents_rename (
+    $self,
+    $hash,
+    $name,
+) { ... }
+
+sub torrents_rename_file (
+    $self,
+    $hash,
+    $old_path,
+    $new_path,
+) { ... }
+
+sub torrents_set_category (
+    $self,
+    $hashes,
+    $category,
+) { ... }
+
+sub torrents_create_category (
+    $self,
+    $category,
+    $save_path,
+) { ... }
+
+sub torrents_edit_category (
+    $self,
+    $category,
+    $save_path,
+) { ... }
+
+sub torrents_remove_categories (
+    $self,
+    $categories,
+) { ... }
+
+sub torrents_add_tags (
+    $self,
+    $hashes,
+    $tags,
+) { ... }
+
+sub torrents_remove_tags (
+    $self,
+    $hashes,
+    $tags,
+) { ... }
+
+sub torrents_create_tags (
+    $self,
+    $tags,
+) { ... }
+
+sub torrents_delete_tags (
+    $self,
+    $tags,
+) { ... }
+
+sub torrents_set_auto_management (
+    $self,
+    $hashes,
+    $enable,
+) { ... }
+
+sub torrents_toggle_sequential_download (
+    $self,
+    $hashes,
+) { ... }
+
+sub torrents_toggle_first_last_piece_priority (
+    $self,
+    $hashes,
+) { ... }
+
+sub torrents_set_force_start (
+    $self,
+    $hashes,
+    $value,
+) { ... }
+
+sub torrents_set_super_seeding (
+    $self,
+    $hashes,
+    $value,
+) { ... }
+
 1;
