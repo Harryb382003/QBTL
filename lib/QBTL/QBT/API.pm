@@ -270,6 +270,15 @@ sub torrents_properties ($self, $hash) {
     );
 }
 
+sub torrents_trackers ($self, $hash) {
+    return $self->request(
+        'torrents_trackers',
+        params => {
+            hash => $hash,
+        },
+    );
+}
+
 sub log_main ($self, %params) {
     return $self->request(
         'log_main',

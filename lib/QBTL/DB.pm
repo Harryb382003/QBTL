@@ -529,4 +529,95 @@ sub store_API_torrents_properties ( $self, $dbh, $infohash, $properties, $fetche
          };
 }
 
+
+#--------------------------------------------------------------------------
+# API::torrents_trackers retained output
+#--------------------------------------------------------------------------
+
+sub store_API_torrents_trackers ( $self, $dbh, $infohash, $rows, $fetched_on = time ) {
+  die 'infohash is required'
+      if !defined $infohash || $infohash eq '';
+
+  die 'trackers must be an array reference'
+      if ref( $rows ) ne 'ARRAY';
+
+  die 'fetched_on is required'
+      if !defined $fetched_on || $fetched_on eq '';
+
+  my @prepared;
+
+  for my $tracker_index ( 0 .. $#{$rows} ) {
+    my $row = $rows->[$tracker_index];
+
+    die "tracker row $tracker_index must be a hash reference"
+        if ref( $row ) ne 'HASH';
+
+    die "tracker row $tracker_index requires url"
+        if !defined $row->{url} || $row->{url} eq '';
+
+    push @prepared, {
+                     tracker_index => $tracker_index,
+                     row           => $row,
+                    };
+  }
+
+  $self->_in_transaction(
+    $dbh,
+    sub {
+      $self->ensure_torrent(
+        $dbh,
+        $infohash,
+        $fetched_on,
+        'API_torrents_trackers',
+      );
+
+      $self->_replace_retained_payload(
+        $dbh,
+        table      => 'API_torrents_trackers',
+        infohash   => $infohash,
+        fetched_on => $fetched_on,
+        payload    => $rows,
+      );
+
+      $dbh->do(
+        q{DELETE FROM API_torrents_trackers_index WHERE infohash = ?},
+        undef,
+        $infohash,
+      );
+
+      for my $item ( @prepared ) {
+        my $row = $item->{row};
+
+        $dbh->do(
+          q{
+            INSERT INTO API_torrents_trackers_index (
+              infohash, tracker_index, fetched_on, url, status, tier,
+              num_peers, num_seeds, num_leeches, num_downloaded, msg
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          },
+          undef,
+          $infohash,
+          $item->{tracker_index},
+          $fetched_on,
+          @{$row}{qw(
+            url status tier num_peers num_seeds num_leeches
+            num_downloaded msg
+          )},
+        );
+      }
+
+      return 1;
+    },
+  );
+
+  return {
+          ok         => 1,
+          infohash   => $infohash,
+          seen       => scalar @{$rows},
+          stored     => scalar @prepared,
+          fetched_on => 0 + $fetched_on,
+         };
+}
+
 1;

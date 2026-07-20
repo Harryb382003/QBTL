@@ -36,7 +36,7 @@ is( $dbh->selectrow_array( 'PRAGMA foreign_keys' ),
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 8, 'Eight migrations discovered', );
+is( scalar @migration_files, 10, 'Ten migrations discovered', );
 
 like( $migration_files[0], qr{001_initial[.]sql\z},
       'initial migration discovered first', );
@@ -54,12 +54,20 @@ like( $migration_files[4],
 like( $migration_files[5],
       qr{006_API_torrents_files_index[.]sql\z},
       'API torrents_files index migration discovered sixth', );
-like( $migration_files[6], qr{007_API_torrents_properties[.]sql\z},
+like( $migration_files[6],
+      qr{007_API_torrents_properties[.]sql\z},
       'API torrents_properties migration discovered seventh', );
-like( $migration_files[7], qr{008_API_torrents_properties_index[.]sql\z},
+like( $migration_files[7],
+      qr{008_API_torrents_properties_index[.]sql\z},
       'API torrents_properties index migration discovered eighth', );
+like( $migration_files[8],
+      qr{009_API_torrents_trackers[.]sql\z},
+      'API torrents_trackers migration discovered ninth', );
+like( $migration_files[9],
+      qr{010_API_torrents_trackers_index[.]sql\z},
+      'API torrents_trackers index migration discovered tenth', );
 
-is( $db->migrate( $dbh ), 8, 'Eight migrations executed', );
+is( $db->migrate( $dbh ), 10, 'Ten migrations executed', );
 
 my $table_name = $dbh->selectrow_array(
   q{
@@ -79,7 +87,7 @@ my $migration_count = $dbh->selectrow_array(
   }
 );
 
-is( $migration_count, 8, 'migrations recorded exactly once', );
+is( $migration_count, 10, 'migrations recorded exactly once', );
 
 is( $db->migrate( $dbh ), 0, 'all migrations skipped after application', );
 
@@ -141,7 +149,7 @@ my $recorded_versions = $dbh->selectcol_arrayref(
 );
 
 is( $recorded_versions,
-    [ 1, 2, 3, 4, 5, 6, 7, 8 ],
+    [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ],
     'applied migration versions recorded in order', );
 
 $dbh->disconnect;

@@ -218,6 +218,68 @@ sub properties ( $self, $hash ) {
           count      => scalar keys %{$properties},};
 }
 
+
+sub trackers ( $self, $hash, $is_private ) {
+  die 'hash is required' if !defined $hash || $hash eq '';
+  die 'is_private is required' if !defined $is_private;
+
+  if ( $is_private ) {
+    return {
+            ok         => 1,
+            action     => 'qbt_torrents_trackers',
+            hash       => $hash,
+            is_private => 1,
+            skipped    => 1,
+            reason     => 'private torrent uses torrents_info tracker',
+            rows       => [],
+            count      => 0,
+           };
+  }
+
+  my $request = $self->{api}->torrents_trackers( $hash );
+  my $result  = $self->{api}->execute_request( $request );
+  my $login;
+  my $retried = 0;
+
+  if ( !$result->{ok} && ( $result->{code} // 0 ) =~ /\A(?:401|403)\z/ ) {
+    $login = $self->login;
+
+    if ( !$login->{ok} ) {
+      return {
+              ok         => 0,
+              action     => 'qbt_torrents_trackers',
+              hash       => $hash,
+              is_private => 0,
+              request    => $request,
+              result     => $result,
+              rows       => [],
+              count      => 0,
+              login      => $login,
+             };
+    }
+
+    $result  = $self->{api}->execute_request( $request );
+    $retried = 1;
+  }
+
+  my $rows = $self->_decode_info_rows( $result );
+  my $response = {
+                  ok         => $result->{ok} ? 1 : 0,
+                  action     => 'qbt_torrents_trackers',
+                  hash       => $hash,
+                  is_private => 0,
+                  request    => $request,
+                  result     => $result,
+                  rows       => $rows,
+                  count      => scalar @{$rows},
+                 };
+
+  $response->{login}   = $login if $login;
+  $response->{retried} = 1      if $retried;
+
+  return $response;
+}
+
 sub log_main ( $self, %params ) {
   my $request = $self->{api}->log_main( %params );
   my $result  = $self->{api}->execute_request( $request );
