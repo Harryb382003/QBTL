@@ -131,6 +131,51 @@ sub info ( $self, %params ) {
           count   => scalar @{$rows},};
 }
 
+sub files ( $self, $hash ) {
+  die 'hash is required' if !defined $hash || $hash eq '';
+
+  my $request = $self->{api}->torrents_files( $hash );
+  my $result  = $self->{api}->execute_request( $request );
+  my $login;
+  my $retried = 0;
+
+  if ( !$result->{ok} && ( $result->{code} // 0 ) =~ /\A(?:401|403)\z/ ) {
+    $login = $self->login;
+
+    if ( !$login->{ok} ) {
+      return {
+              ok      => 0,
+              action  => 'qbt_torrents_files',
+              hash    => $hash,
+              request => $request,
+              result  => $result,
+              rows    => [],
+              count   => 0,
+              login   => $login,
+             };
+    }
+
+    $result  = $self->{api}->execute_request( $request );
+    $retried = 1;
+  }
+
+  my $rows = $self->_decode_info_rows( $result );
+  my $response = {
+                  ok      => $result->{ok} ? 1 : 0,
+                  action  => 'qbt_torrents_files',
+                  hash    => $hash,
+                  request => $request,
+                  result  => $result,
+                  rows    => $rows,
+                  count   => scalar @{$rows},
+                 };
+
+  $response->{login} = $login if $login;
+  $response->{retried} = 1 if $retried;
+
+  return $response;
+}
+
 sub properties ( $self, $hash ) {
   my $request = $self->{api}->torrents_properties( $hash );
   my $result  = $self->{api}->execute_request( $request );
@@ -317,39 +362,79 @@ sub refresh_preferences ( $self, %arg ) {
 }
 
 sub refresh_info_rows ( $self, %arg ) {
-  my $db               = $arg{db}               // die 'db is required';
-  my $dbh              = $arg{dbh}              // die 'dbh is required';
-  my $rows             = $arg{rows}             // die 'rows is required';
-  my $fetch_properties = $arg{fetch_properties} // 0;
+  my $db         = $arg{db}         // die 'db is required';
+  my $dbh        = $arg{dbh}        // die 'dbh is required';
+  my $rows       = $arg{rows}       // die 'rows is required';
+  my $fetched_on = $arg{fetched_on} // time;
 
-  my $store = $self->store_info_rows(
-                                      dbh  => $dbh,
-                                      db   => $db,
-                                      rows => $rows, );
+  my $store = eval {
+    $db->store_API_torrents_info(
+                                  $dbh,
+                                  $rows,
+                                  $fetched_on,
+    );
+  };
 
-  my $api_values =
-      $self->store_api_values_for_info_rows(
-                                          dbh              => $dbh,
-                                          db               => $db,
-                                          rows             => $rows,
-                                          fetch_properties => $fetch_properties,
-      );
-
-  my @problems =
-      ( @{$store->{problems} // []}, @{$api_values->{problems} // []}, );
+  if ( !$store || !$store->{ok} ) {
+    return {
+            ok       => 0,
+            action   => 'qbt_refresh',
+            seen     => scalar @{$rows},
+            stored   => 0,
+            new      => 0,
+            existing => 0,
+            problems => [
+                         {
+                          error => $@ || 'API_torrents_info store failed',
+                         }
+            ],
+           };
+  }
 
   return {
-          ok                  => @problems ? 0 : 1,
-          action              => 'qbt_refresh',
-          seen                => $store->{seen},
-          stored              => $store->{stored},
-          new                 => $store->{new},
-          existing            => $store->{existing},
-          removed             => $store->{removed},
-          qbt_api_info_keys   => $api_values->{info_keys_stored},
-          qbt_properties_seen => $api_values->{properties_seen},
-          qbt_properties_keys => $api_values->{properties_keys_stored},
-          problems            => \@problems,};
+          %{$store},
+          action   => 'qbt_refresh',
+          removed  => 0,
+          problems => [],
+         };
+}
+
+sub refresh_files_rows ( $self, %arg ) {
+  my $db         = $arg{db}         // die 'db is required';
+  my $dbh        = $arg{dbh}        // die 'dbh is required';
+  my $hash       = $arg{hash}       // die 'hash is required';
+  my $rows       = $arg{rows}       // die 'rows is required';
+  my $fetched_on = $arg{fetched_on} // time;
+
+  my $store = eval {
+    $db->store_API_torrents_files(
+      $dbh,
+      $hash,
+      $rows,
+      $fetched_on,
+    );
+  };
+
+  if ( !$store || !$store->{ok} ) {
+    return {
+            ok       => 0,
+            action   => 'qbt_torrents_files_refresh',
+            hash     => $hash,
+            seen     => scalar @{$rows},
+            stored   => 0,
+            problems => [
+                         {
+                          error => $@ || 'API_torrents_files store failed',
+                         }
+            ],
+           };
+  }
+
+  return {
+          %{$store},
+          action   => 'qbt_torrents_files_refresh',
+          problems => [],
+         };
 }
 
 sub store_api_values_for_info_rows ( $self, %arg ) {
@@ -896,47 +981,12 @@ sub status ( $self, %arg ) {
 }
 
 sub store_info_rows ( $self, %arg ) {
-  my $db   = $arg{db}   // die 'db is required';
-  my $dbh  = $arg{dbh}  // die 'dbh is required';
-  my $rows = $arg{rows} // die 'rows is required';
+  my $db         = $arg{db}         // die 'db is required';
+  my $dbh        = $arg{dbh}        // die 'dbh is required';
+  my $rows       = $arg{rows}       // die 'rows is required';
+  my $fetched_on = $arg{fetched_on} // time;
 
-  my $seen     = 0;
-  my $stored   = 0;
-  my $new      = 0;
-  my $existing = 0;
-  my @problems = ();
-
-  for my $row ( @{$rows} ) {
-    $seen++;
-
-    my $result = eval { $db->upsert_qbt_info( $dbh, $row ); };
-    my $exists = $db->qbt_info_exists( $dbh, $row->{hash} );
-
-    if ( $exists ) {
-      $existing++;
-    } else {
-      $new++;
-    }
-
-    if ( !$result || !$result->{ok} ) {
-      push @problems,
-          {
-           hash  => $row->{hash},
-           error => $@ || 'qbt_info upsert failed',};
-      next;
-    }
-
-    $stored++;
-  }
-  my $removed = $db->removed_qbt_count( $dbh );
-  return {
-          ok       => @problems ? 0 : 1,
-          seen     => $seen,
-          stored   => $stored,
-          new      => $new,
-          existing => $existing,
-          removed  => $removed,
-          problems => \@problems,};
+  return $db->store_API_torrents_info( $dbh, $rows, $fetched_on );
 }
 
 sub torrents_info_request ( $self, %params ) {

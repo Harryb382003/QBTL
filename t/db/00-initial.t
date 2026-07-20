@@ -36,14 +36,26 @@ is( $dbh->selectrow_array( 'PRAGMA foreign_keys' ),
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 2, 'Two migrations discovered', );
+is( scalar @migration_files, 6, 'Six migrations discovered', );
 
 like( $migration_files[0], qr{001_initial[.]sql\z},
       'initial migration discovered first', );
 like( $migration_files[1], qr{002_torrents[.]sql\z},
       'torrents migration discovered second', );
+like( $migration_files[2],
+      qr{003_API_torrents_info[.]sql\z},
+      'API torrents_info migration discovered third', );
+like( $migration_files[3],
+      qr{004_API_torrents_info_index[.]sql\z},
+      'API torrents_info migration discovered third', );
+like( $migration_files[4],
+      qr{005_API_torrents_files[.]sql\z},
+      'API torrents_files migration discovered fifth', );
+like( $migration_files[5],
+      qr{006_API_torrents_files_index[.]sql\z},
+      'API torrents_files index migration discovered sixth', );
 
-is( $db->migrate( $dbh ), 2, 'Two migrations executed', );
+is( $db->migrate( $dbh ), 6, 'Six migrations executed', );
 
 my $table_name = $dbh->selectrow_array(
   q{
@@ -63,7 +75,7 @@ my $migration_count = $dbh->selectrow_array(
   }
 );
 
-is( $migration_count, 2, 'migration recorded exactly once', );
+is( $migration_count, 6, 'migrations recorded exactly once', );
 
 is( $db->migrate( $dbh ), 0, 'all migrations skipped after application', );
 
@@ -78,9 +90,30 @@ AND name = 'torrents'
 
 is( $torrent_table, 'torrents', 'canonical torrents table created', );
 
+for my $name (
+               qw(
+               API_torrents_info
+               API_torrents_info_index
+               API_torrents_files
+               API_torrents_files_index
+               ) )
+{
+  my ( $table_count ) = $dbh->selectrow_array(
+    q{
+      SELECT COUNT(*)
+      FROM sqlite_master
+      WHERE type = 'table'
+  AND name = ?
+    },
+    undef,
+    $name, );
+
+  is( $table_count, 1, "$name table created", );
+}
+
 my $torrent_columns = $dbh->selectall_arrayref(
   q{
-  PRAGMA table_info(torrents)
+    PRAGMA table_info(torrents)
   },
   {Slice => {}}, );
 
@@ -104,7 +137,7 @@ my $recorded_versions = $dbh->selectcol_arrayref(
 );
 
 is( $recorded_versions,
-    [ 1, 2 ],
+    [ 1, 2, 3, 4, 5, 6 ],
     'applied migration versions recorded in order', );
 
 $dbh->disconnect;
