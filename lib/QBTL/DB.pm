@@ -469,4 +469,64 @@ sub store_API_torrents_files ( $self, $dbh, $infohash, $rows, $fetched_on = time
          };
 }
 
+
+#--------------------------------------------------------------------------
+# API::torrents_properties retained output
+#--------------------------------------------------------------------------
+
+sub store_API_torrents_properties ( $self, $dbh, $infohash, $properties, $fetched_on = time ) {
+  die 'infohash is required'
+      if !defined $infohash || $infohash eq '';
+
+  die 'properties must be a hash reference'
+      if ref( $properties ) ne 'HASH';
+
+  die 'fetched_on is required'
+      if !defined $fetched_on || $fetched_on eq '';
+
+  $self->_in_transaction(
+    $dbh,
+    sub {
+      $self->ensure_torrent(
+        $dbh,
+        $infohash,
+        $fetched_on,
+        'API_torrents_properties',
+      );
+
+      $self->_replace_retained_payload(
+        $dbh,
+        table      => 'API_torrents_properties',
+        infohash   => $infohash,
+        fetched_on => $fetched_on,
+        payload    => $properties,
+      );
+
+      $dbh->do(
+        q{
+          INSERT INTO API_torrents_properties_index (
+            infohash, fetched_on, comment
+          )
+          VALUES (?, ?, ?)
+          ON CONFLICT(infohash) DO UPDATE SET
+            fetched_on = excluded.fetched_on,
+            comment    = excluded.comment
+        },
+        undef,
+        $infohash,
+        $fetched_on,
+        $properties->{comment},
+      );
+
+      return 1;
+    },
+  );
+
+  return {
+          ok         => 1,
+          infohash   => $infohash,
+          fetched_on => 0 + $fetched_on,
+         };
+}
+
 1;
