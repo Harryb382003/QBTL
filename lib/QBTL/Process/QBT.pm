@@ -19,6 +19,68 @@ sub api ( $self ) {
   return $self->{api};
 }
 
+sub refresh_API_torrents ( $self, %arg ) {
+  my $method = $arg{method};
+
+  my $reject = sub ( $error, %extra ) {
+    warn "$error\n";
+
+    return {
+            ok                 => 0,
+            rejected           => 1,
+            preserved_existing => 1,
+            action             => 'qbt_API_refresh_rejected',
+            method             => $method,
+            %extra,
+            problems => [ {error => $error,} ],};
+  };
+
+  return $reject->( 'API torrents refresh method is required' )
+      if !defined $method || $method eq '';
+
+  return $reject->( "unsupported API torrents method: $method" )
+      unless $method =~ /\A(?:info|files|properties|trackers)\z/;
+
+  my $db = $arg{db};
+  return $reject->( 'db is required' ) if !defined $db;
+
+  my $dbh = $arg{dbh};
+  return $reject->( 'dbh is required' ) if !defined $dbh;
+
+  my $payload = exists $arg{payload} ? $arg{payload} : $arg{rows};
+  return $reject->( "API_torrents_${method} payload is required" )
+      if !defined $payload;
+
+  my $hash = $arg{hash};
+  return $reject->( "hash is required for API_torrents_$method" )
+      if $method ne 'info' && ( !defined $hash || $hash eq '' );
+
+  my $fetched_on   = $arg{fetched_on} // time;
+  my $store_method = "S_API_torrents_$method";
+
+  my $store = eval {
+    return $method eq 'info'
+        ? $db->$store_method( $dbh, $payload, $fetched_on, )
+        : $db->$store_method( $dbh, $hash, $payload, $fetched_on, );
+  };
+
+  if ( !$store || !$store->{ok} ) {
+    my $error = $@ || "API_torrents_${method} store failed";
+    return $reject->( $error, hash => $hash, );
+  }
+
+  my $action =
+      $method eq 'info'
+      ? 'qbt_refresh'
+      : "qbt_torrents_${method}_refresh";
+
+  return {
+          %{$store},
+          action => $action,
+          $method eq 'info' ? ( removed => $store->{removed} // 0 ) : (),
+          problems => [],};
+}
+
 sub _decode_preferences ( $self, $result ) {
   return {} if !$result->{ok};
 
@@ -363,112 +425,6 @@ sub preferences ( $self ) {
   }
 
   return $response;
-}
-
-sub refresh_preferences ( $self, %arg ) {
-  my $db          = $arg{db}          // die 'db is required';
-  my $dbh         = $arg{dbh}         // die 'dbh is required';
-  my $preferences = $arg{preferences} // die 'preferences is required';
-
-  my $seen     = 0;
-  my $stored   = 0;
-  my @rows     = ();
-  my @problems = ();
-
-  for my $key ( sort keys %{$preferences} ) {
-    $seen++;
-
-    my ( $value, $value_type ) =
-        $self->_preference_value( $preferences->{$key}, );
-
-    push @rows,
-        {
-         key        => $key,
-         value      => $value,
-         value_type => $value_type,};
-
-    my $result = eval {
-      $db->upsert_qbt_preference(
-                                  $dbh,
-                                  {
-                                   key        => $key,
-                                   value      => $value,
-                                   value_type => $value_type,
-                                  } );
-    };
-
-    if ( !$result || !$result->{ok} ) {
-      push @problems,
-          {
-           key   => $key,
-           error => $@ || 'qbt_preferences upsert failed',};
-      next;
-    }
-
-    $stored++;
-  }
-
-  return {
-          ok       => @problems ? 0 : 1,
-          action   => 'qbt_preferences_refresh',
-          seen     => $seen,
-          stored   => $stored,
-          rows     => \@rows,
-          problems => \@problems,};
-}
-
-sub refresh_info_rows ( $self, %arg ) {
-  my $db         = $arg{db}         // die 'db is required';
-  my $dbh        = $arg{dbh}        // die 'dbh is required';
-  my $rows       = $arg{rows}       // die 'rows is required';
-  my $fetched_on = $arg{fetched_on} // time;
-
-  my $store = eval { $db->S_API_torrents_info( $dbh, $rows, $fetched_on, ); };
-
-  if ( !$store || !$store->{ok} ) {
-    return {
-            ok       => 0,
-            action   => 'qbt_refresh',
-            seen     => scalar @{$rows},
-            stored   => 0,
-            new      => 0,
-            existing => 0,
-            problems => [ {error => $@ || 'API_torrents_info store failed',} ],
-    };
-  }
-
-  return {
-          %{$store},
-          action   => 'qbt_refresh',
-          removed  => 0,
-          problems => [],};
-}
-
-sub refresh_files_rows ( $self, %arg ) {
-  my $db         = $arg{db}         // die 'db is required';
-  my $dbh        = $arg{dbh}        // die 'dbh is required';
-  my $hash       = $arg{hash}       // die 'hash is required';
-  my $rows       = $arg{rows}       // die 'rows is required';
-  my $fetched_on = $arg{fetched_on} // time;
-
-  my $store =
-      eval { $db->S_API_torrents_files( $dbh, $hash, $rows, $fetched_on, ); };
-
-  if ( !$store || !$store->{ok} ) {
-    return {
-            ok       => 0,
-            action   => 'qbt_torrents_files_refresh',
-            hash     => $hash,
-            seen     => scalar @{$rows},
-            stored   => 0,
-            problems => [ {error => $@ || 'API_torrents_files store failed',} ],
-    };
-  }
-
-  return {
-          %{$store},
-          action   => 'qbt_torrents_files_refresh',
-          problems => [],};
 }
 
 sub store_api_values_for_info_rows ( $self, %arg ) {
@@ -1012,24 +968,6 @@ sub status ( $self, %arg ) {
           summary    => $status->{summary},
           states     => $status->{states},
           categories => $status->{categories},};
-}
-
-sub store_info_rows ( $self, %arg ) {
-  my $db         = $arg{db}         // die 'db is required';
-  my $dbh        = $arg{dbh}        // die 'dbh is required';
-  my $rows       = $arg{rows}       // die 'rows is required';
-  my $fetched_on = $arg{fetched_on} // time;
-
-  return $db->S_API_torrents_info( $dbh, $rows, $fetched_on );
-}
-
-sub torrents_info_request ( $self, %params ) {
-  my $request = $self->api->torrents_info( %params );
-
-  return {
-          ok      => 1,
-          action  => 'qbt_torrents_info',
-          request => $request,};
 }
 
 sub version ( $self ) {
