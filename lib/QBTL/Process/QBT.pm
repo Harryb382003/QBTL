@@ -19,68 +19,6 @@ sub api ( $self ) {
   return $self->{api};
 }
 
-sub refresh_API_torrents ( $self, %arg ) {
-  my $method = $arg{method};
-
-  my $reject = sub ( $error, %extra ) {
-    warn "$error\n";
-
-    return {
-            ok                 => 0,
-            rejected           => 1,
-            preserved_existing => 1,
-            action             => 'qbt_API_refresh_rejected',
-            method             => $method,
-            %extra,
-            problems => [ {error => $error,} ],};
-  };
-
-  return $reject->( 'API torrents refresh method is required' )
-      if !defined $method || $method eq '';
-
-  return $reject->( "unsupported API torrents method: $method" )
-      unless $method =~ /\A(?:info|files|properties|trackers)\z/;
-
-  my $db = $arg{db};
-  return $reject->( 'db is required' ) if !defined $db;
-
-  my $dbh = $arg{dbh};
-  return $reject->( 'dbh is required' ) if !defined $dbh;
-
-  my $payload = exists $arg{payload} ? $arg{payload} : $arg{rows};
-  return $reject->( "API_torrents_${method} payload is required" )
-      if !defined $payload;
-
-  my $hash = $arg{hash};
-  return $reject->( "hash is required for API_torrents_$method" )
-      if $method ne 'info' && ( !defined $hash || $hash eq '' );
-
-  my $fetched_on   = $arg{fetched_on} // time;
-  my $store_method = "S_API_torrents_$method";
-
-  my $store = eval {
-    return $method eq 'info'
-        ? $db->$store_method( $dbh, $payload, $fetched_on, )
-        : $db->$store_method( $dbh, $hash, $payload, $fetched_on, );
-  };
-
-  if ( !$store || !$store->{ok} ) {
-    my $error = $@ || "API_torrents_${method} store failed";
-    return $reject->( $error, hash => $hash, );
-  }
-
-  my $action =
-      $method eq 'info'
-      ? 'qbt_refresh'
-      : "qbt_torrents_${method}_refresh";
-
-  return {
-          %{$store},
-          action => $action,
-          $method eq 'info' ? ( removed => $store->{removed} // 0 ) : (),
-          problems => [],};
-}
-
 sub _decode_preferences ( $self, $result ) {
   return {} if !$result->{ok};
 
