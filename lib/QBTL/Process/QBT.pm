@@ -51,179 +51,29 @@ sub _decode_object ( $self, $result ) {
   return $object;
 }
 
-sub fake_info_rows ( $self ) {
-  return [
-           {
-            hash          => 'abc123',
-            name          => 'Fake qBT Torrent One',
-            state         => 'pausedUP',
-            progress      => 1,
-            save_path     => '/Downloads',
-            content_path  => '/Downloads/Fake qBT Torrent One',
-            category      => 'test',
-            tags          => 'fake,offline',
-            amount_left   => 0,
-            total_size    => 1000,
-            added_on      => 1700000000,
-            completion_on => 1700000100,
-            last_activity => 1700000200,
-            tracker       => 'https://tracker.example.invalid/announce',
-            ratio         => 1.0,
-           },
-           {
-            hash          => 'def456',
-            name          => 'Fake qBT Torrent Two',
-            state         => 'downloading',
-            progress      => 0.5,
-            save_path     => '/Downloads',
-            content_path  => '/Downloads/Fake qBT Torrent Two',
-            category      => 'test',
-            tags          => 'fake,offline',
-            amount_left   => 500,
-            total_size    => 2000,
-            added_on      => 1700000300,
-            completion_on => 0,
-            last_activity => 1700000400,
-            tracker       => 'https://tracker.example.invalid/announce',
-            ratio         => 0.25,
-           }, ];
-}
+sub _API_torrents_fetch ( $self, $method, %arg ) {
+  return {
+          ok       => 0,
+          action   => 'qbt_API_torrents_fetch_rejected',
+          method   => $method,
+          problems => [ {error => 'unsupported API torrents method'}, ],}
+      unless defined $method
+      && $method =~ /\A(?:info|files|properties|trackers)\z/;
 
-sub info ( $self, %params ) {
-  my $request = $self->{api}->torrents_info( %params );
-  my $result  = $self->{api}->execute_request( $request );
-
-  if ( !$result->{ok} && ( $result->{code} // 0 ) =~ /\A(?:401|403)\z/ ) {
-    my $login = $self->login;
-
-    if ( !$login->{ok} ) {
-      return {
-              ok      => 0,
-              action  => 'qbt_torrents_info',
-              request => $request,
-              result  => $result,
-              login   => $login,};
-    }
-
-    $result = $self->{api}->execute_request( $request );
-
-    my $rows = $self->_decode_info_rows( $result );
-
-    return {
-            ok      => $result->{ok} ? 1 : 0,
-            action  => 'qbt_torrents_info',
-            request => $request,
-            result  => $result,
-            rows    => $rows,
-            count   => scalar @{$rows},
-            login   => $login,
-            retried => 1,};
-  }
-
-  my $rows = $self->_decode_info_rows( $result );
+  my $hash = $arg{hash};
 
   return {
-          ok      => $result->{ok} ? 1 : 0,
-          action  => 'qbt_torrents_info',
-          request => $request,
-          result  => $result,
-          rows    => $rows,
-          count   => scalar @{$rows},};
-}
+          ok       => 0,
+          action   => "qbt_torrents_$method",
+          method   => $method,
+          problems => [ {error => 'hash is required'}, ],}
+      if $method ne 'info' && ( !defined $hash || $hash eq '' );
 
-sub files ( $self, $hash ) {
-  die 'hash is required' if !defined $hash || $hash eq '';
-
-  my $request = $self->{api}->torrents_files( $hash );
-  my $result  = $self->{api}->execute_request( $request );
-  my $login;
-  my $retried = 0;
-
-  if ( !$result->{ok} && ( $result->{code} // 0 ) =~ /\A(?:401|403)\z/ ) {
-    $login = $self->login;
-
-    if ( !$login->{ok} ) {
-      return {
-              ok      => 0,
-              action  => 'qbt_torrents_files',
-              hash    => $hash,
-              request => $request,
-              result  => $result,
-              rows    => [],
-              count   => 0,
-              login   => $login,};
-    }
-
-    $result  = $self->{api}->execute_request( $request );
-    $retried = 1;
-  }
-
-  my $rows = $self->_decode_info_rows( $result );
-  my $response = {
-                  ok      => $result->{ok} ? 1 : 0,
-                  action  => 'qbt_torrents_files',
-                  hash    => $hash,
-                  request => $request,
-                  result  => $result,
-                  rows    => $rows,
-                  count   => scalar @{$rows},};
-
-  $response->{login}   = $login if $login;
-  $response->{retried} = 1      if $retried;
-
-  return $response;
-}
-
-sub properties ( $self, $hash ) {
-  my $request = $self->{api}->torrents_properties( $hash );
-  my $result  = $self->{api}->execute_request( $request );
-
-  if ( !$result->{ok} && ( $result->{code} // 0 ) =~ /\A(?:401|403)\z/ ) {
-    my $login = $self->login;
-
-    if ( !$login->{ok} ) {
-      return {
-              ok      => 0,
-              action  => 'qbt_torrents_properties',
-              request => $request,
-              result  => $result,
-              login   => $login,};
-    }
-
-    $result = $self->{api}->execute_request( $request );
-
-    my $properties = $self->_decode_object( $result );
-
-    return {
-            ok         => $result->{ok} ? 1 : 0,
-            action     => 'qbt_torrents_properties',
-            request    => $request,
-            result     => $result,
-            properties => $properties,
-            count      => scalar keys %{$properties},
-            login      => $login,
-            retried    => 1,};
-  }
-
-  my $properties = $self->_decode_object( $result );
-
-  return {
-          ok         => $result->{ok} ? 1 : 0,
-          action     => 'qbt_torrents_properties',
-          request    => $request,
-          result     => $result,
-          properties => $properties,
-          count      => scalar keys %{$properties},};
-}
-
-sub trackers ( $self, $hash, $is_private ) {
-  die 'hash is required'       if !defined $hash || $hash eq '';
-  die 'is_private is required' if !defined $is_private;
-
-  if ( $is_private ) {
+  if ( $method eq 'trackers' && $arg{is_private} ) {
     return {
             ok         => 1,
             action     => 'qbt_torrents_trackers',
+            method     => 'trackers',
             hash       => $hash,
             is_private => 1,
             skipped    => 1,
@@ -232,8 +82,12 @@ sub trackers ( $self, $hash, $is_private ) {
             count      => 0,};
   }
 
-  my $request = $self->{api}->torrents_trackers( $hash );
-  my $result  = $self->{api}->execute_request( $request );
+  my $api_method = "torrents_$method";
+  my $request = $method eq 'info'
+      ? $self->{api}->$api_method( %{ $arg{params} // {} } )
+      : $self->{api}->$api_method( $hash );
+
+  my $result = $self->{api}->execute_request( $request );
   my $login;
   my $retried = 0;
 
@@ -242,36 +96,217 @@ sub trackers ( $self, $hash, $is_private ) {
 
     if ( !$login->{ok} ) {
       return {
-              ok         => 0,
-              action     => 'qbt_torrents_trackers',
-              hash       => $hash,
-              is_private => 0,
-              request    => $request,
-              result     => $result,
-              rows       => [],
-              count      => 0,
-              login      => $login,};
+              ok      => 0,
+              action  => "qbt_torrents_$method",
+              method  => $method,
+              hash    => $hash,
+              request => $request,
+              result  => $result,
+              login   => $login,
+              problems => [ {error => 'qBittorrent login failed'}, ],};
     }
 
     $result  = $self->{api}->execute_request( $request );
     $retried = 1;
   }
 
-  my $rows = $self->_decode_info_rows( $result );
-  my $response = {
-                  ok         => $result->{ok} ? 1 : 0,
-                  action     => 'qbt_torrents_trackers',
-                  hash       => $hash,
-                  is_private => 0,
-                  request    => $request,
-                  result     => $result,
-                  rows       => $rows,
-                  count      => scalar @{$rows},};
+  my $payload = $method eq 'properties'
+      ? $self->_decode_object( $result )
+      : $self->_decode_info_rows( $result );
 
-  $response->{login}   = $login if $login;
-  $response->{retried} = 1      if $retried;
+  my $response = {
+    ok      => $result->{ok} ? 1 : 0,
+    action  => "qbt_torrents_$method",
+    method  => $method,
+    request => $request,
+    result  => $result,
+    count   => ref( $payload ) eq 'HASH' ? scalar keys $payload->%* : scalar $payload->@*,
+  };
+
+  $response->{hash} = $hash if defined $hash;
+  $response->{properties} = $payload if $method eq 'properties';
+  $response->{rows}       = $payload if $method ne 'properties';
+  $response->{login}      = $login   if $login;
+  $response->{retried}    = 1        if $retried;
+  $response->{problems}   = [ {error => "qBittorrent torrents/$method request failed"}, ]
+      if !$response->{ok};
 
   return $response;
+}
+
+sub info ( $self, %params ) {
+  return $self->_API_torrents_fetch( 'info', params => \%params );
+}
+
+sub files ( $self, $hash ) {
+  return $self->_API_torrents_fetch( 'files', hash => $hash );
+}
+
+sub properties ( $self, $hash ) {
+  return $self->_API_torrents_fetch( 'properties', hash => $hash );
+}
+
+sub trackers ( $self, $hash, $is_private ) {
+  die 'is_private is required' if !defined $is_private;
+
+  my $response = $self->_API_torrents_fetch(
+    'trackers',
+    hash       => $hash,
+    is_private => $is_private,
+  );
+
+  delete $response->{method};
+  $response->{is_private} = $is_private ? 1 : 0;
+
+  return $response;
+}
+
+sub refresh_API_torrents_metadata ( $self, %arg ) {
+  my $db  = $arg{db};
+  my $dbh = $arg{dbh};
+
+  my $reject = sub ( $error ) {
+    warn "$error\n";
+    return {
+            ok                 => 0,
+            action             => 'qbt_API_torrents_metadata_refresh_rejected',
+            rejected           => 1,
+            preserved_existing => 1,
+            problems           => [ {error => $error}, ],};
+  };
+
+  return $reject->( 'db is required' )  if !defined $db;
+  return $reject->( 'dbh is required' ) if !defined $dbh;
+
+  my $fetched_on = $arg{fetched_on} // time;
+  my $info = $self->info( %{ $arg{info_params} // {} } );
+
+  return {
+          ok                 => 0,
+          action             => 'qbt_API_torrents_metadata_refresh',
+          preserved_existing => 1,
+          info               => $info,
+          problems           => $info->{problems} // [
+            {error => 'qBittorrent torrents/info request failed'},
+          ],}
+      if !$info->{ok};
+
+  my $info_store = $db->S_API_torrents_refresh(
+    db         => $db,
+    dbh        => $dbh,
+    method     => 'info',
+    payload    => $info->{rows},
+    fetched_on => $fetched_on,
+  );
+
+  return {
+          ok                 => 0,
+          action             => 'qbt_API_torrents_metadata_refresh',
+          preserved_existing => 1,
+          info               => $info,
+          info_store         => $info_store,
+          problems           => $info_store->{problems},}
+      if !$info_store->{ok};
+
+  my $summary = {
+    ok                 => 1,
+    action             => 'qbt_API_torrents_metadata_refresh',
+    fetched_on         => 0 + $fetched_on,
+    torrents           => scalar $info->{rows}->@*,
+    info_stored        => $info_store->{stored} // 0,
+    files_stored       => 0,
+    properties_stored  => 0,
+    trackers_stored    => 0,
+    trackers_skipped   => 0,
+    preserved_existing => 0,
+    problems           => [],
+  };
+
+  for my $row ( $info->{rows}->@* ) {
+    my $hash = ref( $row ) eq 'HASH' ? $row->{hash} : undef;
+
+    if ( !defined $hash || $hash eq '' ) {
+      $summary->{ok} = 0;
+      $summary->{preserved_existing}++;
+      push $summary->{problems}->@*, {error => 'torrents/info row requires hash'};
+      next;
+    }
+
+    for my $method ( qw( properties files ) ) {
+      my $fetch = $self->$method( $hash );
+
+      if ( !$fetch->{ok} ) {
+        $summary->{ok} = 0;
+        $summary->{preserved_existing}++;
+        push $summary->{problems}->@*, {
+          hash   => $hash,
+          method => $method,
+          error  => "qBittorrent torrents/$method request failed",
+        };
+        next;
+      }
+
+      my $payload = $method eq 'properties'
+          ? $fetch->{properties}
+          : $fetch->{rows};
+
+      my $store = $db->S_API_torrents_refresh(
+        db         => $db,
+        dbh        => $dbh,
+        method     => $method,
+        hash       => $hash,
+        payload    => $payload,
+        fetched_on => $fetched_on,
+      );
+
+      if ( !$store->{ok} ) {
+        $summary->{ok} = 0;
+        $summary->{preserved_existing}++;
+        push $summary->{problems}->@*, $store->{problems}->@*;
+        next;
+      }
+
+      $summary->{"${method}_stored"} += $store->{stored} // 1;
+    }
+
+    if ( $row->{is_private} ) {
+      $summary->{trackers_skipped}++;
+      next;
+    }
+
+    my $fetch = $self->trackers( $hash, 0 );
+
+    if ( !$fetch->{ok} ) {
+      $summary->{ok} = 0;
+      $summary->{preserved_existing}++;
+      push $summary->{problems}->@*, {
+        hash   => $hash,
+        method => 'trackers',
+        error  => 'qBittorrent torrents/trackers request failed',
+      };
+      next;
+    }
+
+    my $store = $db->S_API_torrents_refresh(
+      db         => $db,
+      dbh        => $dbh,
+      method     => 'trackers',
+      hash       => $hash,
+      payload    => $fetch->{rows},
+      fetched_on => $fetched_on,
+    );
+
+    if ( !$store->{ok} ) {
+      $summary->{ok} = 0;
+      $summary->{preserved_existing}++;
+      push $summary->{problems}->@*, $store->{problems}->@*;
+      next;
+    }
+
+    $summary->{trackers_stored} += $store->{stored} // 0;
+  }
+
+  return $summary;
 }
 
 sub log_main ( $self, %params ) {
@@ -363,88 +398,6 @@ sub preferences ( $self ) {
   }
 
   return $response;
-}
-
-sub store_api_values_for_info_rows ( $self, %arg ) {
-  my $db               = $arg{db}               // die 'db is required';
-  my $dbh              = $arg{dbh}              // die 'dbh is required';
-  my $rows             = $arg{rows}             // die 'rows is required';
-  my $fetch_properties = $arg{fetch_properties} // 0;
-
-  my $info_keys_stored       = 0;
-  my $properties_seen        = 0;
-  my $properties_keys_stored = 0;
-  my @problems               = ();
-
-  for my $row ( @{$rows} ) {
-    my $hash = $row->{hash};
-
-    if ( !defined $hash || $hash eq '' ) {
-      push @problems,
-          {
-           hash  => undef,
-           error => 'qBT API value row requires hash',};
-      next;
-    }
-
-    my $info_store = eval {
-      $db->replace_qbt_api_values(
-                                   $dbh,
-                                   hash     => $hash,
-                                   endpoint => 'torrents_info',
-                                   data     => $row, );
-    };
-
-    if ( !$info_store || !$info_store->{ok} ) {
-      push @problems,
-          {
-           hash  => $hash,
-           error => $@ || 'qbt_api_values torrents_info store failed',};
-      next;
-    }
-
-    $info_keys_stored += $info_store->{stored} // 0;
-
-    next if !$fetch_properties;
-
-    my $properties = $self->properties( $hash );
-
-    if ( !$properties->{ok} ) {
-      push @problems,
-          {
-           hash  => $hash,
-           error => 'qBittorrent torrents/properties request failed',};
-      next;
-    }
-
-    $properties_seen++;
-
-    my $properties_store = eval {
-      $db->replace_qbt_api_values(
-                                   $dbh,
-                                   hash     => $hash,
-                                   endpoint => 'torrents_properties',
-                                   data     => $properties->{properties} // {},
-      );
-    };
-
-    if ( !$properties_store || !$properties_store->{ok} ) {
-      push @problems,
-          {
-           hash  => $hash,
-           error => $@ || 'qbt_api_values torrents_properties store failed',};
-      next;
-    }
-
-    $properties_keys_stored += $properties_store->{stored} // 0;
-  }
-
-  return {
-          ok                     => @problems ? 0 : 1,
-          info_keys_stored       => $info_keys_stored,
-          properties_seen        => $properties_seen,
-          properties_keys_stored => $properties_keys_stored,
-          problems               => \@problems,};
 }
 
 sub with_qbt_log_context ( $self, %arg ) {
@@ -567,23 +520,11 @@ sub add ( $self, %arg ) {
 
   my $interpret = $self->_interpret_add_context( $add_context );
 
-  my $info = $self->info( hashes => $hash );
-  my $refresh =
-      $info->{ok}
-      ? $self->refresh_info_rows(
-                                  dbh              => $dbh,
-                                  db               => $db,
-                                  rows             => $info->{rows} // [],
-                                  fetch_properties => 1, )
-      : {
-         ok       => 0,
-         action   => 'qbt_refresh',
-         problems => [
-                  {
-                   hash  => $hash,
-                   error => 'qBittorrent torrents/info request failed after add'
-                  }
-         ],};
+  my $refresh = $self->refresh_API_torrents_metadata(
+    db          => $db,
+    dbh         => $dbh,
+    info_params => {hashes => $hash},
+  );
 
   if ( $interpret->{ok} ) {
     $db->update_qbt_last( $dbh, hash => $hash, caller => 'ADD' );
