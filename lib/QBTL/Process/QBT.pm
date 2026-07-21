@@ -151,8 +151,7 @@ sub files ( $self, $hash ) {
               result  => $result,
               rows    => [],
               count   => 0,
-              login   => $login,
-             };
+              login   => $login,};
     }
 
     $result  = $self->{api}->execute_request( $request );
@@ -167,11 +166,10 @@ sub files ( $self, $hash ) {
                   request => $request,
                   result  => $result,
                   rows    => $rows,
-                  count   => scalar @{$rows},
-                 };
+                  count   => scalar @{$rows},};
 
-  $response->{login} = $login if $login;
-  $response->{retried} = 1 if $retried;
+  $response->{login}   = $login if $login;
+  $response->{retried} = 1      if $retried;
 
   return $response;
 }
@@ -218,9 +216,8 @@ sub properties ( $self, $hash ) {
           count      => scalar keys %{$properties},};
 }
 
-
 sub trackers ( $self, $hash, $is_private ) {
-  die 'hash is required' if !defined $hash || $hash eq '';
+  die 'hash is required'       if !defined $hash || $hash eq '';
   die 'is_private is required' if !defined $is_private;
 
   if ( $is_private ) {
@@ -232,8 +229,7 @@ sub trackers ( $self, $hash, $is_private ) {
             skipped    => 1,
             reason     => 'private torrent uses torrents_info tracker',
             rows       => [],
-            count      => 0,
-           };
+            count      => 0,};
   }
 
   my $request = $self->{api}->torrents_trackers( $hash );
@@ -254,8 +250,7 @@ sub trackers ( $self, $hash, $is_private ) {
               result     => $result,
               rows       => [],
               count      => 0,
-              login      => $login,
-             };
+              login      => $login,};
     }
 
     $result  = $self->{api}->execute_request( $request );
@@ -271,8 +266,7 @@ sub trackers ( $self, $hash, $is_private ) {
                   request    => $request,
                   result     => $result,
                   rows       => $rows,
-                  count      => scalar @{$rows},
-                 };
+                  count      => scalar @{$rows},};
 
   $response->{login}   = $login if $login;
   $response->{retried} = 1      if $retried;
@@ -429,13 +423,7 @@ sub refresh_info_rows ( $self, %arg ) {
   my $rows       = $arg{rows}       // die 'rows is required';
   my $fetched_on = $arg{fetched_on} // time;
 
-  my $store = eval {
-    $db->store_API_torrents_info(
-                                  $dbh,
-                                  $rows,
-                                  $fetched_on,
-    );
-  };
+  my $store = eval { $db->S_API_torrents_info( $dbh, $rows, $fetched_on, ); };
 
   if ( !$store || !$store->{ok} ) {
     return {
@@ -445,20 +433,15 @@ sub refresh_info_rows ( $self, %arg ) {
             stored   => 0,
             new      => 0,
             existing => 0,
-            problems => [
-                         {
-                          error => $@ || 'API_torrents_info store failed',
-                         }
-            ],
-           };
+            problems => [ {error => $@ || 'API_torrents_info store failed',} ],
+    };
   }
 
   return {
           %{$store},
           action   => 'qbt_refresh',
           removed  => 0,
-          problems => [],
-         };
+          problems => [],};
 }
 
 sub refresh_files_rows ( $self, %arg ) {
@@ -468,14 +451,8 @@ sub refresh_files_rows ( $self, %arg ) {
   my $rows       = $arg{rows}       // die 'rows is required';
   my $fetched_on = $arg{fetched_on} // time;
 
-  my $store = eval {
-    $db->store_API_torrents_files(
-      $dbh,
-      $hash,
-      $rows,
-      $fetched_on,
-    );
-  };
+  my $store =
+      eval { $db->S_API_torrents_files( $dbh, $hash, $rows, $fetched_on, ); };
 
   if ( !$store || !$store->{ok} ) {
     return {
@@ -484,19 +461,14 @@ sub refresh_files_rows ( $self, %arg ) {
             hash     => $hash,
             seen     => scalar @{$rows},
             stored   => 0,
-            problems => [
-                         {
-                          error => $@ || 'API_torrents_files store failed',
-                         }
-            ],
-           };
+            problems => [ {error => $@ || 'API_torrents_files store failed',} ],
+    };
   }
 
   return {
           %{$store},
           action   => 'qbt_torrents_files_refresh',
-          problems => [],
-         };
+          problems => [],};
 }
 
 sub store_api_values_for_info_rows ( $self, %arg ) {
@@ -1048,7 +1020,7 @@ sub store_info_rows ( $self, %arg ) {
   my $rows       = $arg{rows}       // die 'rows is required';
   my $fetched_on = $arg{fetched_on} // time;
 
-  return $db->store_API_torrents_info( $dbh, $rows, $fetched_on );
+  return $db->S_API_torrents_info( $dbh, $rows, $fetched_on );
 }
 
 sub torrents_info_request ( $self, %params ) {
