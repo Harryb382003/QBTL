@@ -62,7 +62,7 @@ my $stored = $db->S_API_torrents_info(
                           is_private   => 0,
                          },
                        ],
-                       $fetched_on, );
+                       fetched_on => $fetched_on, );
 
 is(
     $stored,
@@ -141,7 +141,7 @@ my $updated = $db->S_API_torrents_info(
                                    is_private   => 1,
                                   },
                                 ],
-                                $updated_on, );
+                                fetched_on => $updated_on, );
 
 is( $updated->{new},      0, 'repeat observation is not new' );
 is( $updated->{existing}, 1, 'repeat observation counted as existing' );
@@ -171,7 +171,7 @@ my $error  = dies {
                             },
                             {name => 'missing hash'},
                           ],
-                          $updated_on + 60, );
+                          fetched_on => $updated_on + 60, );
 };
 
 like( $error, qr/requires hash/, 'missing hash rejects the response' );

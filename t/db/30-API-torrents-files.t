@@ -44,16 +44,18 @@ my $rows = [
               is_seed      => 0,
               piece_range  => [ 10, 14 ],
               availability => 1.25,
-             }, ];
+             },
+             fetched_on => $fetched_on, ];
 
 is(
-    $db->S_API_torrents_files( $dbh, $hash, $rows, $fetched_on ),
+    $db->S_API_torrents_files(
+                               $dbh, $hash, $rows, fetched_on => $fetched_on
+    ),
     {
-     ok         => 1,
-     infohash   => $hash,
-     seen       => 2,
-     stored     => 2,
-     fetched_on => $fetched_on,
+     ok       => 1,
+     infohash => $hash,
+     seen     => 2,
+     stored   => 2,
     },
     'complete torrents_files response stored', );
 
