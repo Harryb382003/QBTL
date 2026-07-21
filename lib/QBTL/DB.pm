@@ -515,8 +515,9 @@ sub S_API_torrents_refresh ( $self, %arg ) {
 
   my $store = eval {
     return $method eq 'info'
-        ? $db->$store_method( $dbh, $payload, $fetched_on, )
-        : $db->$store_method( $dbh, $hash, $payload, $fetched_on, );
+        ? $db->$store_method( $dbh, $payload, fetched_on => $fetched_on, )
+        : $db->$store_method( $dbh, $hash, $payload, fetched_on => $fetched_on,
+        );
   };
 
   if ( !$store || !$store->{ok} ) {
@@ -536,13 +537,14 @@ sub S_API_torrents_refresh ( $self, %arg ) {
           problems => [],};
 }
 
-sub S_API_torrents_info ( $self, $dbh, $rows, $fetched_on = time ) {
-  die 'fetched_on is required'
-      if !defined $fetched_on || $fetched_on eq '';
-
+sub S_API_torrents_info ( $self, $dbh, $rows, %arg ) {
   my $descriptor = $self->P_API_torrents_info;
   my $prepared   = $descriptor->{validate}->( $rows );
   my @columns    = $descriptor->{index_columns}->@*;
+  my $fetched_on = $arg{fetched_on} // time;
+
+  die 'fetched_on is required'
+      if !defined $fetched_on || $fetched_on eq '';
 
   my %existing;
   if ( $prepared->@* ) {
@@ -603,7 +605,8 @@ sub S_API_torrents_info ( $self, $dbh, $rows, $fetched_on = time ) {
           fetched_on => 0 + $fetched_on,};
 }
 
-sub S_API_torrents_files ( $self, $dbh, $infohash, $rows, $fetched_on = time ) {
+sub S_API_torrents_files ( $self, $dbh, $infohash, $rows, %arg ) {
+  my $fetched_on = $arg{fetched_on} // time;
   return
       $self->_S_producer(
                           $dbh,
@@ -613,9 +616,8 @@ sub S_API_torrents_files ( $self, $dbh, $infohash, $rows, $fetched_on = time ) {
                           fetched_on => $fetched_on, );
 }
 
-sub S_API_torrents_properties ( $self, $dbh, $infohash, $properties,
-                                $fetched_on = time )
-{
+sub S_API_torrents_properties ( $self, $dbh, $infohash, $properties, %arg ) {
+  my $fetched_on = $arg{fetched_on} // time;
   my $stored = $self->_S_producer(
                                  $dbh,
                                  descriptor => $self->P_API_torrents_properties,
@@ -629,9 +631,8 @@ sub S_API_torrents_properties ( $self, $dbh, $infohash, $properties,
           fetched_on => $stored->{fetched_on},};
 }
 
-sub S_API_torrents_trackers ( $self, $dbh, $infohash, $rows,
-                              $fetched_on = time )
-{
+sub S_API_torrents_trackers ( $self, $dbh, $infohash, $rows, %arg ) {
+  my $fetched_on = $arg{fetched_on} // time;
   return
       $self->_S_producer(
                           $dbh,

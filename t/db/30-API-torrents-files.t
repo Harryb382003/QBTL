@@ -45,17 +45,18 @@ my $rows = [
               piece_range  => [ 10, 14 ],
               availability => 1.25,
              },
-             fetched_on => $fetched_on, ];
+           ];
 
 is(
     $db->S_API_torrents_files(
                                $dbh, $hash, $rows, fetched_on => $fetched_on
     ),
     {
-     ok       => 1,
-     infohash => $hash,
-     seen     => 2,
-     stored   => 2,
+     ok         => 1,
+     infohash   => $hash,
+     seen       => 2,
+     stored     => 2,
+     fetched_on => $fetched_on,
     },
     'complete torrents_files response stored', );
 
@@ -108,7 +109,7 @@ $db->S_API_torrents_files(
                               availability => 3,
                              },
                            ],
-                           $fetched_on + 60, );
+                           fetched_on => $fetched_on + 60, );
 
 is(
     $dbh->selectrow_array(
@@ -130,7 +131,7 @@ like(
                                  {index => 0, name => 'valid'},
                                  {name  => 'missing index'}
                                ],
-                               $fetched_on + 120, );
+                               fetched_on => $fetched_on + 120, );
   },
   qr/requires index/,
   'invalid response rejected', );

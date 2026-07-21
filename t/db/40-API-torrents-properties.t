@@ -33,7 +33,9 @@ my $properties = {
                   future_key => 'retained only in complete payload',};
 
 is(
-    $db->S_API_torrents_properties( $dbh, $hash, $properties, $fetched_on, ),
+    $db->S_API_torrents_properties(
+                            $dbh, $hash, $properties, fetched_on => $fetched_on,
+    ),
     {
      ok         => 1,
      infohash   => $hash,
@@ -72,7 +74,7 @@ $db->S_API_torrents_properties(
           %{$properties},
           comment => 'UPDATED URL: https://tracker.example.invalid/details/456',
          },
-         $fetched_on + 60, );
+         fetched_on => $fetched_on + 60, );
 
 is(
   $dbh->selectrow_hashref(
@@ -96,7 +98,8 @@ my $before = $dbh->selectrow_array(
 
 like(
   dies {
-    $db->S_API_torrents_properties( $dbh, $hash, [], $fetched_on + 120, );
+    $db->S_API_torrents_properties( $dbh, $hash, [],
+                                    fetched_on => $fetched_on + 120, );
   },
   qr/properties must be a hash reference/,
   'invalid properties response rejected', );

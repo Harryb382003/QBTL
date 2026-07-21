@@ -41,7 +41,9 @@ my $rows = [
              }, ];
 
 is(
-    $db->S_API_torrents_trackers( $dbh, $hash, $rows, $fetched_on ),
+    $db->S_API_torrents_trackers(
+                                  $dbh, $hash, $rows, fetched_on => $fetched_on
+    ),
     {
      ok         => 1,
      infohash   => $hash,
@@ -92,7 +94,7 @@ $db->S_API_torrents_trackers(
                              url => 'udp://tracker.example.invalid:80/announce',
                              status => 3}
                           ],
-                          $fetched_on + 60, );
+                          fetched_on => $fetched_on + 60, );
 
 is(
     $dbh->selectrow_array(
@@ -110,7 +112,7 @@ like(
   dies {
     $db->S_API_torrents_trackers( $dbh, $hash,
                                   [ {url => 'valid'}, {status => 2} ],
-                                  $fetched_on + 120, );
+                                  fetched_on => $fetched_on + 120, );
   },
   qr/tracker row 1 requires url/,
   'invalid tracker response rejected', );
