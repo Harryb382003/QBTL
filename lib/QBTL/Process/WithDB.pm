@@ -30,16 +30,7 @@ sub with_db ( $self, $code ) {
 
   my $dbh = $connect->{dbh};
 
-  my $migration = $db->migrate( $dbh );
-
-  if ( !$migration->{ok} ) {
-    $dbh->disconnect;
-
-    return {
-            ok        => 0,
-            status    => 'db_migration_failed',
-            db_result => $migration,};
-  }
+  $db->migrate( $dbh );
 
   my $result = $code->( $db, $dbh );
 

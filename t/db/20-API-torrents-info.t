@@ -44,7 +44,7 @@ my $stored = $db->S_API_torrents_info(
                           completion_on => 1700000100,
                           last_activity => 1700000200,
                           ratio         => 1.5,
-                          is_private    => 1,
+                              => 1,
                           future_key => 'retained only in the complete payload',
                          },
                          {
@@ -59,7 +59,7 @@ my $stored = $db->S_API_torrents_info(
                           total_size   => 1000,
                           added_on     => 1700000300,
                           ratio        => 0.25,
-                          is_private   => 0,
+                             => 0,
                          },
                        ],
                        fetched_on => $fetched_on, );
@@ -110,7 +110,7 @@ is( $payload->{future_key},
 is(
   $dbh->selectrow_hashref(
     q{
-        SELECT infohash, fetched_on, name, save_path, total_size, is_private
+        SELECT infohash, fetched_on, name, save_path, total_size,
         FROM API_torrents_info_index
         WHERE infohash = ?
       },
@@ -123,7 +123,7 @@ is(
    name       => 'First torrent',
    save_path  => '/Volumes/One',
    total_size => 100,
-   is_private => 1,
+    => 1,
   },
   'selected torrents_info fields indexed', );
 
@@ -138,7 +138,7 @@ my $updated = $db->S_API_torrents_info(
                                    save_path    => '/Volumes/One',
                                    content_path => '/Volumes/One/First torrent',
                                    total_size   => 100,
-                                   is_private   => 1,
+                                      => 1,
                                   },
                                 ],
                                 fetched_on => $updated_on, );

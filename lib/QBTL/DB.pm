@@ -39,7 +39,10 @@ sub connect ( $self ) {
 
   $dbh->do( 'PRAGMA foreign_keys = ON' );
 
-  return dbh => $dbh;
+  return {
+          ok  => 1,
+          dbh => $dbh,};
+
 }
 
 sub db_path ( $self ) {
@@ -304,7 +307,7 @@ sub P_API_torrents_info ( $class ) {
       qw(
           name state progress save_path content_path category tags tracker
           amount_left size total_size added_on completion_on last_activity
-          ratio is_private
+          ratio
       )
     ],
     validate => sub ( $rows ) {
@@ -333,7 +336,7 @@ sub P_API_torrents_info ( $class ) {
             qw(
             name state progress save_path content_path category tags tracker
             amount_left size total_size added_on completion_on last_activity
-            ratio is_private
+            ratio
             )};
     },};
 }
@@ -640,6 +643,92 @@ sub S_API_torrents_trackers ( $self, $dbh, $infohash, $rows, %arg ) {
                           infohash   => $infohash,
                           payload    => $rows,
                           fetched_on => $fetched_on, );
+}
+
+sub S_local_torrent_file_upsert ( $self, $dbh, $row ) {
+  die 'dbh is required'
+      if !$dbh;
+
+  die 'local torrent path is required'
+      if !defined $row->{path} || $row->{path} eq q{};
+
+  my $sth = $dbh->prepare(
+    <<'SQL'
+INSERT INTO local_torrent_files (
+    path,
+    size,
+    mtime,
+    backend,
+    seen_on
+)
+VALUES (
+    ?,
+    ?,
+    ?,
+    ?,
+    CURRENT_TIMESTAMP
+)
+ON CONFLICT(path) DO UPDATE SET
+    size    = excluded.size,
+    mtime   = excluded.mtime,
+    backend = excluded.backend,
+    seen_on = CURRENT_TIMESTAMP
+SQL
+  );
+
+  $sth->execute( $row->{path}, $row->{size}, $row->{mtime}, $row->{backend}, );
+
+  return {
+          ok   => 1,
+          path => $row->{path},};
+}
+
+sub S_local_torrent_parse_update ( $self, $dbh, $row ) {
+  die 'dbh is required'
+      if !$dbh;
+
+  die 'local torrent path is required'
+      if !defined $row->{path} || $row->{path} eq q{};
+
+  my $sth = $dbh->prepare(
+    <<'SQL'
+UPDATE local_torrent_files
+SET
+    infohash           = ?,
+    torrent_name       = ?,
+    comment            = ?,
+    announce           = ?,
+    created_by         = ?,
+    creation_date      = ?,
+    parsed_on          = CURRENT_TIMESTAMP,
+    parse_ok           = ?,
+    parse_problem      = ?,
+    payload_kind       = ?,
+    payload_root_name  = ?,
+    payload_file_count = ?,
+    payload_total_size = ?,
+    payload_probe_path = ?,
+    payload_probe_name = ?
+WHERE path = ?
+SQL
+  );
+
+  $sth->execute(
+                 $row->{infohash},           $row->{torrent_name},
+                 $row->{comment},            $row->{announce},
+                 $row->{created_by},         $row->{creation_date},
+                 $row->{parse_ok},           $row->{parse_problem},
+                 $row->{payload_kind},       $row->{payload_root_name},
+                 $row->{payload_file_count}, $row->{payload_total_size},
+                 $row->{payload_probe_path}, $row->{payload_probe_name},
+                 $row->{path}, );
+
+  my $changed = $sth->rows;
+
+  return {
+          ok      => $changed > 0 ? 1 : 0,
+          path    => $row->{path},
+          changed => $changed,};
 }
 
 1;

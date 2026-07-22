@@ -16,7 +16,7 @@ CREATE TABLE API_torrents_info_index (
     completion_on INTEGER,
     last_activity INTEGER,
     ratio         REAL,
-    is_private    INTEGER,
+        INTEGER,
 
     FOREIGN KEY (infohash)
         REFERENCES torrents(infohash)
@@ -42,7 +42,7 @@ CREATE TABLE API_torrents_info_index (
     completion_on INTEGER,
     last_activity INTEGER,
     ratio         REAL,
-    is_private    INTEGER,
+        INTEGER,
 
     FOREIGN KEY (infohash)
         REFERENCES torrents(infohash)

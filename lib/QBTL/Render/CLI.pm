@@ -1143,12 +1143,14 @@ sub qbt_refresh ( $self, $result ) {
     say {$out} "qBT refresh complete.";
   }
 
-  say {$out} "  seen:     " . ( $result->{seen}     // 0 );
-  say {$out} "  stored:   " . ( $result->{stored}   // 0 );
-  say {$out} "  new:      " . ( $result->{new}      // 0 );
-  say {$out} "  existing: " . ( $result->{existing} // 0 );
-  say {$out} "  removed:  " . ( $result->{removed}  // 0 );
-  say {$out} "  problems: " . scalar @{$result->{problems} // []};
+  say {$out} "  torrents:           " . ( $result->{torrents}           // 0 );
+  say {$out} "  info stored:        " . ( $result->{info_stored}        // 0 );
+  say {$out} "  properties stored:  " . ( $result->{properties_stored}  // 0 );
+  say {$out} "  files stored:       " . ( $result->{files_stored}       // 0 );
+  say {$out} "  trackers stored:    " . ( $result->{trackers_stored}    // 0 );
+  say {$out} "  trackers skipped:   " . ( $result->{trackers_skipped}   // 0 );
+  say {$out} "  existing preserved: " . ( $result->{preserved_existing} // 0 );
+  say {$out} "  problems:           " . scalar @{ $result->{problems} // [] };
 
   if ( $result->{export_dedupe} ) {
     my $export = $result->{export_dedupe};
@@ -1163,7 +1165,7 @@ sub qbt_refresh ( $self, $result ) {
                                              indent       => '', );
   }
 
-  if ( @{$result->{problems}} ) {
+  if ( @{$result->{problems}} // [] ) {
     say {$out} "";
     say {$out} "Problems:";
 

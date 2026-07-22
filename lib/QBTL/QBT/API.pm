@@ -80,6 +80,14 @@ sub endpoint_spec ($self, $name) {
             method => 'POST',
             path   => 'torrents/pause',
         },
+        torrents_rename_folder => {
+            method => 'POST',
+            path   => 'torrents/renameFolder',
+        },
+        rss_refresh_item => {
+            method => 'POST',
+            path   => 'rss/refreshItem',
+        },
         torrents_resume => {
             method => 'POST',
             path   => 'torrents/resume',
@@ -92,13 +100,9 @@ sub endpoint_spec ($self, $name) {
             method => 'POST',
             path   => 'torrents/setDownloadPath',
         },
-        torrents_rename_folder => {
-            method => 'POST',
-            path   => 'torrents/renameFolder',
-        },
-        rss_refresh_item => {
-            method => 'POST',
-            path   => 'rss/refreshItem',
+        torrents_trackers => {
+        method => 'GET',
+        path   => 'torrents/trackers',
         },
     );
 

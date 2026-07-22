@@ -55,40 +55,31 @@ sub init ( $self ) {
   my $migration = $db->migrate($dbh);
   my $qbt = $self->qbt;
   my $raw_preferences = $qbt->preferences;
-  my $preferences = $raw_preferences->{ok}
-      ? $qbt->refresh_preferences(
-          dbh         => $dbh,
-          db          => $db,
-          preferences => $raw_preferences->{preferences} // {},
-        )
-      : {
-          ok       => 0,
-          action   => 'qbt_preferences_refresh',
-          problems => [
-            { error => 'qBittorrent app/preferences request failed' },
-          ],
-        };
+  my $preferences = $qbt->preferences;
+#   my $preferences = $raw_preferences->{ok}
+#       ? $qbt->refresh_preferences(
+#           dbh         => $dbh,
+#           db          => $db,
+#           preferences => $raw_preferences->{preferences} // {},
+#         )
+#       : {
+#           ok       => 0,
+#           action   => 'qbt_preferences_refresh',
+#           problems => [
+#             { error => 'qBittorrent app/preferences request failed' },
+#           ],
+#         };
 
-  my $info = $qbt->info;
 
-  my $refresh = $info->{ok}
-      ? $qbt->refresh_info_rows(
-          dbh  => $dbh,
-          db   => $db,
-          rows => $info->{rows} // [],
-        )
-      : {
-          ok       => 0,
-          action   => 'qbt_refresh',
-          problems => [
-            { error => 'qBittorrent torrents/info request failed' },
-          ],
-        };
-
-    my $qbt_status = $qbt->status(
+  my $refresh = $qbt->refresh_API_torrents_metadata(
     dbh => $dbh,
     db  => $db,
   );
+
+#     my $qbt_status = $qbt->status(
+#     dbh => $dbh,
+#     db  => $db,
+#   );
 
   my $local_scan = $self->local->scan(
     threshold => $self->{config}->metadata_promoter_threshold,
@@ -96,21 +87,25 @@ sub init ( $self ) {
 
   $dbh->disconnect;
 
-  my $export_dedupe = $self->_qbt_export_dedupe_result;
+#  my $export_dedupe = $self->_qbt_export_dedupe_result;
 
   my $elapsed = time - $started;
 
   return {
-          ok          => $migration->{ok}
-                          && $preferences->{ok}
-                          && $refresh->{ok}
-                          && $export_dedupe->{ok}
-                          ? 1 : 0,
+#           ok          => $migration->{ok}
+#                           && $preferences->{ok}
+#                           && $refresh->{ok}
+# #                           && $export_dedupe->{ok}
+#                           ? 1 : 0,
+          ok => $preferences->{ok}
+      && $refresh->{ok}
+      && $local_scan->{ok}
+      ? 1 : 0,
           migration     => $migration,
           preferences   => $preferences,
           qbt_refresh   => $refresh,
           local_scan    => $local_scan,
-          export_dedupe => $export_dedupe,
+#           export_dedupe => $export_dedupe,
           elapsed       => sprintf( '%.3f', $elapsed ),};
 }
 
@@ -554,102 +549,56 @@ $self->{config}->local_search_tool,
     }
 
     if ( $subcmd eq 'refresh' ) {
-      my $db      = QBTL::DB->new( db_path => $self->{config}->db_path );
-      my $connect = $db->connect;
+    my $db = QBTL::DB->new(
+        db_path => $self->{config}->db_path,
+    );
 
-      if ( !$connect->{ok} ) {
-        return
-            $self->{renderer}->status(
-                                       {
-                                        ok       => 0,
-                                        db_path  => $self->{config}->db_path,
-                                        problems => $connect->{problems},} );
-      }
+    my $connect = $db->connect;
 
-      my $migration = $db->migrate( $connect->{dbh} );
-
-      if ( !$migration->{ok} ) {
-        $connect->{dbh}->disconnect;
-
-        return
-            $self->{renderer}->qbt_refresh(
-                      {
-                       ok       => 0,
-                       action   => 'qbt_refresh',
-                       seen     => 0,
-                       stored   => 0,
-                       problems => [
-                                     {
-                                      hash  => undef,
-                                      error => 'database schema update failed',
-                                     },
-                       ],} );
-      }
-      my $clear = $db->clear_current_qbt( $connect->{dbh} );
-
-      if ( !$clear->{ok} ) {
-        $connect->{dbh}->disconnect;
-
-        return
-            $self->{renderer}->qbt_refresh(
-                {
-                 ok       => 0,
-                 action   => 'qbt_refresh',
-                 seen     => 0,
-                 stored   => 0,
-                 new      => 0,
-                 existing => 0,
-                 removed  => 0,
-                 problems => [
-                               {
-                                hash  => undef,
-                                error => 'failed to clear qBT current markers',
-                               },
-                 ],} );
-      }
-
-      my $api = QBTL::QBT::API->new(
-                               base_url => $self->{config}->qbt_url,
-                               $self->{qbt_ua} ? ( ua => $self->{qbt_ua} ) : (),
-      );
-      my $process = QBTL::Process::QBT->new( api => $api );
-      my $info    = $process->info;
-
-      if ( !$info->{ok} ) {
-        $connect->{dbh}->disconnect;
-
-        return
-            $self->{renderer}->qbt_refresh(
+    if ( !$connect->{ok} ) {
+        return $self->{renderer}->qbt_refresh(
             {
-             ok       => 0,
-             action   => 'qbt_refresh',
-             seen     => 0,
-             stored   => 0,
-             problems => [
-                           {
-                            hash  => undef,
-                            error => 'qBittorrent torrents/info request failed',
-                           },
-             ],} );
-      }
-
-      my $result =
-          $process->refresh_info_rows(
-                                       dbh              => $connect->{dbh},
-                                       db               => $db,
-                                       rows             => $info->{rows} // [],
-                                       fetch_properties => 1, );
-
-      $connect->{dbh}->disconnect;
-
-      if ( $result->{ok} ) {
-        my $export_dedupe = $self->_qbt_export_dedupe_result;
-        $result->{export_dedupe} = $export_dedupe;
-        $result->{ok} = $export_dedupe->{ok} ? 1 : 0;
-      }
-
-      return $self->{renderer}->qbt_refresh( $result );
+                ok       => 0,
+                action   => 'qbt_refresh',
+                problems => $connect->{problems} // [
+                    {
+                        hash  => undef,
+                        error => 'database connection failed without details',
+                    },
+                ],
+            }
+        );
     }
+
+    my $dbh = $connect->{dbh};
+
+    my $migration = $db->migrate($dbh);
+
+    my $api = QBTL::QBT::API->new(
+      base_url => $self->{config}->qbt_url,
+      $self->{qbt_ua} ? ( ua => $self->{qbt_ua} ) : (),
+    );
+
+    my $process = QBTL::Process::QBT->new(
+        api => $api,
+    );
+
+    my $result = $process->refresh_API_torrents_metadata(
+        dbh => $dbh,
+        db  => $db,
+    );
+
+    $dbh->disconnect;
+#
+#     if ( $result->{ok} ) {
+#         my $export_dedupe = $self->_qbt_export_dedupe_result;
+#
+#         $result->{export_dedupe} = $export_dedupe;
+#         $result->{ok} = $export_dedupe->{ok} ? 1 : 0;
+#     }
+
+    return $self->{renderer}->qbt_refresh($result);
+}
 
     if ( $subcmd eq 'preferences' ) {
       my $prefcmd = shift @argv;

@@ -34,11 +34,11 @@ use QBTL::Process::QBT;
     return $self->{responses}{files}{$hash};
   }
 
-  sub trackers ( $self, $hash, $is_private ) {
+  sub trackers ( $self, $hash, $ ) {
     push $self->{calls}->@*, {
       method     => 'trackers',
       hash       => $hash,
-      is_private => $is_private,
+       => $,
     };
     return $self->{responses}{trackers}{$hash};
   }
@@ -87,8 +87,8 @@ subtest 'stores complete metadata and skips private tracker lists' => sub {
       info => {
         ok   => 1,
         rows => [
-          {hash => $private, is_private => 1},
-          {hash => $public,  is_private => 0},
+          {hash => $private,  => 1},
+          {hash => $public,   => 0},
         ],
       },
       properties => {
@@ -100,7 +100,8 @@ subtest 'stores complete metadata and skips private tracker lists' => sub {
         $public  => {ok => 1, rows => [ {index => 0} ]},
       },
       trackers => {
-        $public => {ok => 1, rows => [ {url => 'udp://one'}, {url => 'udp://two'} ]},
+        $public => {ok => 1, rows => [ {url => 'udp://one'}, {url => 'udp://two'}
+]},
       },
     },
   );
@@ -135,7 +136,7 @@ subtest 'stores complete metadata and skips private tracker lists' => sub {
       {
         method     => 'trackers',
         hash       => $public,
-        is_private => 0,
+         => 0,
       },
     ],
     'full tracker list requested only for public torrent',
@@ -148,12 +149,13 @@ subtest 'stores complete metadata and skips private tracker lists' => sub {
   );
 };
 
-subtest 'endpoint failures preserve old metadata and do not stop later work' => sub {
+subtest 'endpoint failures preserve old metadata and do not stop later work' => sub
+{
   my $hash = '3333333333333333333333333333333333333333';
 
   my $qbt = Local::QBT->new(
     responses => {
-      info => {ok => 1, rows => [ {hash => $hash, is_private => 0} ]},
+      info => {ok => 1, rows => [ {hash => $hash,  => 0} ]},
       properties => {
         $hash => {ok => 1, properties => {comment => 'new comment'}},
       },
@@ -215,7 +217,7 @@ subtest 'hash-limited refresh passes selection to torrents info' => sub {
 
   my $qbt = Local::QBT->new(
     responses => {
-      info       => {ok => 1, rows => [ {hash => $hash, is_private => 1} ]},
+      info       => {ok => 1, rows => [ {hash => $hash,  => 1} ]},
       properties => {$hash => {ok => 1, properties => {}}},
       files      => {$hash => {ok => 1, rows => []}},
       trackers   => {},

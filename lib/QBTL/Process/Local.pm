@@ -143,7 +143,6 @@ sub _scan_common ( $self, %arg ) {
                                                path     => $path,
                                                backend  => $scan->{backend},
                                                problems => \@problem, );
-
             $fastresume_stored++        if $stored_one->{stored};
             $fastresume_parsed++        if $stored_one->{parsed};
             $fastresume_parse_problem++ if $stored_one->{parse_problem};
@@ -165,8 +164,13 @@ sub _scan_common ( $self, %arg ) {
         }
       }
 
-      my $metadata_candidates =
-          $db->promotion_candidates( $dbh, threshold => $threshold, );
+      #       my $metadata_candidates =
+      #           $db->promotion_candidates( $dbh, threshold => $threshold, );
+
+      my $metadata_candidates = {
+                                 ok         => 1,
+                                 threshold  => $threshold,
+                                 candidates => [],};
 
       my $bt_backup_dir =
           ( $ENV{HOME} // '' )
@@ -244,20 +248,28 @@ sub _scan_common ( $self, %arg ) {
         search_tool     => $scan->{search_tool},
         seen            => $scan->{count},
 
-        torrent_seen     => $scan->{types}{torrent}{count} // 0,
+        #         torrent_seen     => $scan->{types}{torrent}{count} // 0,
+        torrent_seen => undef,
+
         stored           => $stored,
         parsed           => $parsed,
         parse_problems   => $parse_problem,
         skipped_known    => $skipped_known,
         skipped_excluded => $skipped_excluded,
-        fastresume_seen  => $scan->{types}{fastresume}{count} // 0,
-        total            => $db->local_torrent_file_count( $dbh ),
+
+        #         fastresume_seen  => $scan->{types}{fastresume}{count} // 0,
+        fastresume_seen => undef,
+
+        #         total           => $db->local_torrent_file_count( $dbh ),
+        total => undef,
 
         fastresume_stored         => $fastresume_stored,
         fastresume_parsed         => $fastresume_parsed,
         fastresume_parse_problems => $fastresume_parse_problem,
         fastresume_skipped_known  => $fastresume_skipped_known,
-        fastresume_total          => $db->local_fastresume_file_count( $dbh ),
+
+#         fastresume_total          => $db->local_fastresume_file_count( $dbh ),
+        local_fastresume_file_count => undef,
 
         bt_backup_exists        => $bt_backup_exists,
         bt_backup_count_source  => $bt_backup_db_valid ? 'db' : 'filesystem',
@@ -360,35 +372,54 @@ sub _store_torrent_path ( $self, %arg ) {
   my @stat = stat( $path );
 
   if ( !@stat ) {
+    warn "STAT FAILED for $path: $!\n";
+
     push @$problem, "stat failed for $path: $!";
-    return {stored => 0, parsed => 0, parse_problem => 0,};
+
+    return {
+            stored        => 0,
+            parsed        => 0,
+            parse_problem => 0,};
   }
 
   my $result = eval {
-    $db->upsert_local_torrent_file(
-                                    $dbh,
-                                    {
-                                     path    => $path,
-                                     size    => $stat[7],
-                                     mtime   => $stat[9],
-                                     backend => $backend,
-                                    } );
+    $db->S_local_torrent_file_upsert(
+                                      $dbh,
+                                      {
+                                       path    => $path,
+                                       size    => $stat[7],
+                                       mtime   => $stat[9],
+                                       backend => $backend,
+                                      } );
   };
 
-  if ( $@ ) {
-    push @$problem, "store failed for $path: $@";
-    return {stored => 0, parsed => 0, parse_problem => 0,};
+  my $upsert_error = $@;
+
+  if ( $upsert_error ) {
+    warn "UPSERT EXCEPTION for $path:\n$upsert_error\n";
+    push @$problem, "store failed for $path: $upsert_error";
+
+    return {
+            stored        => 0,
+            parsed        => 0,
+            parse_problem => 0,};
   }
 
   if ( !$result->{ok} ) {
+    require Data::Dumper;
+    warn "BAD UPSERT RESULT:\n" . Data::Dumper::Dumper( $result );
     push @$problem, "store failed for $path";
-    return {stored => 0, parsed => 0, parse_problem => 0,};
+
+    return {
+            stored        => 0,
+            parsed        => 0,
+            parse_problem => 0,};
   }
 
   my $parse = $self->parser->parse_file( $path );
 
   my $parse_result = eval {
-    $db->update_local_torrent_parse(
+    $db->S_local_torrent_parse_update(
                             $dbh,
                             {
                              path               => $path,
@@ -411,14 +442,28 @@ sub _store_torrent_path ( $self, %arg ) {
                             } );
   };
 
-  if ( $@ ) {
-    push @$problem, "parse store failed for $path: $@";
-    return {stored => 1, parsed => 0, parse_problem => 0,};
+  my $parse_store_error = $@;
+
+  if ( $parse_store_error ) {
+    warn "PARSE STORE EXCEPTION for $path:\n$parse_store_error\n";
+    push @$problem, "parse store failed for $path: $parse_store_error";
+
+    return {
+            stored        => 1,
+            parsed        => 0,
+            parse_problem => 0,};
   }
 
   if ( !$parse_result->{ok} ) {
+    require Data::Dumper;
+    warn "BAD PARSE STORE RESULT:\n" . Data::Dumper::Dumper( $parse_result );
+
     push @$problem, "parse store failed for $path";
-    return {stored => 1, parsed => 0, parse_problem => 0,};
+
+    return {
+            stored        => 1,
+            parsed        => 0,
+            parse_problem => 0,};
   }
 
   $self->_store_observed_keys(

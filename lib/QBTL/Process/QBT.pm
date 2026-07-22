@@ -69,13 +69,13 @@ sub _API_torrents_fetch ( $self, $method, %arg ) {
           problems => [ {error => 'hash is required'}, ],}
       if $method ne 'info' && ( !defined $hash || $hash eq '' );
 
-  if ( $method eq 'trackers' && $arg{is_private} ) {
+  if ( $method eq 'trackers' && $arg{private} ) {
     return {
             ok         => 1,
             action     => 'qbt_torrents_trackers',
             method     => 'trackers',
             hash       => $hash,
-            is_private => 1,
+             => 1,
             skipped    => 1,
             reason     => 'private torrent uses torrents_info tracker',
             rows       => [],
@@ -120,7 +120,8 @@ sub _API_torrents_fetch ( $self, $method, %arg ) {
     method  => $method,
     request => $request,
     result  => $result,
-    count   => ref( $payload ) eq 'HASH' ? scalar keys $payload->%* : scalar $payload->@*,
+    count   => ref( $payload ) eq 'HASH' ? scalar keys $payload->%* : scalar
+$payload->@*,
   };
 
   $response->{hash} = $hash if defined $hash;
@@ -128,7 +129,8 @@ sub _API_torrents_fetch ( $self, $method, %arg ) {
   $response->{rows}       = $payload if $method ne 'properties';
   $response->{login}      = $login   if $login;
   $response->{retried}    = 1        if $retried;
-  $response->{problems}   = [ {error => "qBittorrent torrents/$method request failed"}, ]
+  $response->{problems}   = [ {error => "qBittorrent torrents/$method request
+failed"}, ]
       if !$response->{ok};
 
   return $response;
@@ -146,17 +148,17 @@ sub properties ( $self, $hash ) {
   return $self->_API_torrents_fetch( 'properties', hash => $hash );
 }
 
-sub trackers ( $self, $hash, $is_private ) {
-  die 'is_private is required' if !defined $is_private;
+sub trackers ( $self, $hash, $private ) {
+  die ' is required' if !defined $private;
 
   my $response = $self->_API_torrents_fetch(
     'trackers',
     hash       => $hash,
-    is_private => $is_private,
+    private => $private,
   );
 
   delete $response->{method};
-  $response->{is_private} = $is_private ? 1 : 0;
+  $response->{private} = $private ? 1 : 0;
 
   return $response;
 }
@@ -269,7 +271,7 @@ sub refresh_API_torrents_metadata ( $self, %arg ) {
       $summary->{"${method}_stored"} += $store->{stored} // 1;
     }
 
-    if ( $row->{is_private} ) {
+    if ( $row->{private} ) {
       $summary->{trackers_skipped}++;
       next;
     }
@@ -835,19 +837,19 @@ sub _interpret_add_context ( $self, $context ) {
           error  => join( '; ', @message ) || 'qBT add failed',};
 }
 
-sub status ( $self, %arg ) {
-  my $db  = $arg{db}  // die 'db is required';
-  my $dbh = $arg{dbh} // die 'dbh is required';
-
-  my $status = $db->qbt_status( $dbh );
-
-  return {
-          ok         => $status->{ok},
-          action     => 'qbt_status',
-          summary    => $status->{summary},
-          states     => $status->{states},
-          categories => $status->{categories},};
-}
+# sub status ( $self, %arg ) {
+#   my $db  = $arg{db}  // die 'db is required';
+#   my $dbh = $arg{dbh} // die 'dbh is required';
+#
+#   my $status = $db->qbt_status( $dbh );
+#
+#   return {
+#           ok         => $status->{ok},
+#           action     => 'qbt_status',
+#           summary    => $status->{summary},
+#           states     => $status->{states},
+#           categories => $status->{categories},};
+# }
 
 sub version ( $self ) {
   my $request = $self->{api}->app_version;

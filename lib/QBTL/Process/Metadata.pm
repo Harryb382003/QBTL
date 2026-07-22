@@ -297,7 +297,7 @@ sub _bt_backup_dir ( $self ) {
 }
 
 
-sub _is_private_value ($value) {
+sub _private_value ($value) {
   return undef if !defined $value;
 
   return $value ? 1 : 0
@@ -313,23 +313,23 @@ sub _is_private_value ($value) {
   return $value ? 1 : 0;
 }
 
-sub _torrent_is_private ($torrent) {
-  die "_torrent_is_private requires a hashref torrent\n"
+sub _torrent_private ($torrent) {
+  die "_torrent_private requires a hashref torrent\n"
       unless ref($torrent) eq 'HASH';
 
-  return _is_private_value( $torrent->{is_private} );
+  return _private_value( $torrent->{private} );
 }
 
 sub _torrent_needs_tracker_list ($torrent) {
-  my $is_private = _torrent_is_private($torrent);
+  my $private = _torrent_private($torrent);
 
   # Unknown should be conservative.  Do not silently lose multi-tracker data
-  # just because this row does not expose is_private.
-  return 1 if !defined $is_private;
+  # just because this row does not expose private.
+  return 1 if !defined $private;
 
   # Private torrents can rely on the single tracker/announce already present
   # from torrents_info. Public torrents need the full trackers API result.
-  return $is_private ? 0 : 1;
+  return $private ? 0 : 1;
 }
 
 sub _live_api_infill_plan (@torrents) {
@@ -351,7 +351,7 @@ sub _live_api_infill_plan (@torrents) {
         {
           hash               => $hash,
           name               => $torrent->{name},
-          is_private         => _torrent_is_private($torrent),
+          private         => _torrent_private($torrent),
           fetch_comment      => 1,
           fetch_file_list    => 1,
           fetch_tracker_list => _torrent_needs_tracker_list($torrent),
