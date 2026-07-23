@@ -661,7 +661,7 @@ sub S_API_torrents_trackers ( $self, $dbh, $hash, $rows, %arg ) {
                           fetched_on => $fetched_on, );
 }
 
-sub S_local_torrent_file_upsert ( $self, $dbh, $row ) {
+sub S_LOC_torrents_upsert ( $self, $dbh, $row ) {
   die 'dbh is required'
       if !$dbh;
 
@@ -670,29 +670,23 @@ sub S_local_torrent_file_upsert ( $self, $dbh, $row ) {
 
   my $sth = $dbh->prepare(
     <<'SQL'
-INSERT INTO local_torrent_files (
+INSERT INTO LOC_torrents (
     path,
-    size,
-    mtime,
-    backend,
-    seen_on
+    seen,
+    backend
 )
 VALUES (
     ?,
-    ?,
-    ?,
-    ?,
-    CURRENT_TIMESTAMP
+    1,
+    ?
 )
 ON CONFLICT(path) DO UPDATE SET
-    size    = excluded.size,
-    mtime   = excluded.mtime,
-    backend = excluded.backend,
-    seen_on = CURRENT_TIMESTAMP
+    seen    = 1,
+    backend = excluded.backend
 SQL
   );
 
-  $sth->execute( $row->{path}, $row->{size}, $row->{mtime}, $row->{backend}, );
+  $sth->execute( $row->{path}, $row->{backend}, );
 
   return {
           ok   => 1,
@@ -706,45 +700,117 @@ sub S_local_torrent_parse_update ( $self, $dbh, $row ) {
   die 'local torrent path is required'
       if !defined $row->{path} || $row->{path} eq q{};
 
-  my $sth = $dbh->prepare(
-    <<'SQL'
-UPDATE local_torrent_files
-SET
-    hash           = ?,
-    torrent_name       = ?,
-    comment            = ?,
-    announce           = ?,
-    created_by         = ?,
-    creation_date      = ?,
-    parsed_on          = CURRENT_TIMESTAMP,
-    parse_ok           = ?,
-    parse_problem      = ?,
-    payload_kind       = ?,
-    payload_root_name  = ?,
-    payload_file_count = ?,
-    payload_total_size = ?,
-    payload_probe_path = ?,
-    payload_probe_name = ?
+  my $owns_transaction = $dbh->{AutoCommit} ? 1 : 0;
+
+  my $result = eval {
+    $dbh->begin_work
+        if $owns_transaction;
+
+    my $hash_sth = $dbh->prepare(
+      <<'SQL'
+UPDATE LOC_torrents
+SET hash = ?
 WHERE path = ?
 SQL
-  );
+    );
 
-  $sth->execute(
-                 $row->{hash},               $row->{torrent_name},
-                 $row->{comment},            $row->{announce},
-                 $row->{created_by},         $row->{creation_date},
-                 $row->{parse_ok},           $row->{parse_problem},
-                 $row->{payload_kind},       $row->{payload_root_name},
-                 $row->{payload_file_count}, $row->{payload_total_size},
-                 $row->{payload_probe_path}, $row->{payload_probe_name},
-                 $row->{path}, );
+    $hash_sth->execute( $row->{hash}, $row->{path}, );
 
-  my $changed = $sth->rows;
+    die "local torrent path is not stored: $row->{path}"
+        if $hash_sth->rows < 1;
 
-  return {
-          ok      => $changed > 0 ? 1 : 0,
-          path    => $row->{path},
-          changed => $changed,};
+    my $info_sth = $dbh->prepare(
+      <<'SQL'
+INSERT INTO LOC_torrents_info_index (
+    path,
+    hash,
+    torrent_name,
+    comment,
+    announce,
+    created_by,
+    creation_date,
+    parsed_on,
+    parse_ok,
+    parse_problem,
+    payload_kind,
+    payload_root_name,
+    payload_file_count,
+    payload_total_size,
+    payload_probe_path,
+    payload_probe_name
+)
+VALUES (
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    CURRENT_TIMESTAMP,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?
+)
+ON CONFLICT(path) DO UPDATE SET
+    hash                = excluded.hash,
+    torrent_name        = excluded.torrent_name,
+    comment             = excluded.comment,
+    announce            = excluded.announce,
+    created_by          = excluded.created_by,
+    creation_date       = excluded.creation_date,
+    parsed_on           = CURRENT_TIMESTAMP,
+    parse_ok            = excluded.parse_ok,
+    parse_problem       = excluded.parse_problem,
+    payload_kind        = excluded.payload_kind,
+    payload_root_name   = excluded.payload_root_name,
+    payload_file_count  = excluded.payload_file_count,
+    payload_total_size  = excluded.payload_total_size,
+    payload_probe_path  = excluded.payload_probe_path,
+    payload_probe_name  = excluded.payload_probe_name
+SQL
+    );
+
+    $info_sth->execute(
+                         $row->{path},
+                         $row->{hash},
+                         $row->{torrent_name},
+                         $row->{comment},
+                         $row->{announce},
+                         $row->{created_by},
+                         $row->{creation_date},
+                         $row->{parse_ok},
+                         $row->{parse_problem},
+                         $row->{payload_kind},
+                         $row->{payload_root_name},
+                         $row->{payload_file_count},
+                         $row->{payload_total_size},
+                         $row->{payload_probe_path},
+                         $row->{payload_probe_name}, );
+
+    $dbh->commit
+        if $owns_transaction;
+
+    {
+     ok      => 1,
+     path    => $row->{path},
+     changed => $info_sth->rows,
+    };
+  };
+
+  my $error = $@;
+
+  if ($error) {
+    eval { $dbh->rollback if $owns_transaction && !$dbh->{AutoCommit}; };
+    die $error;
+  }
+
+  return $result;
 }
 
 1;

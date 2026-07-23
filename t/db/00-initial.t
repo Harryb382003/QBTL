@@ -41,7 +41,7 @@ is( $dbh->selectrow_array( 'PRAGMA foreign_keys' ),
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 12, 'Twelve migrations discovered', );
+is( scalar @migration_files, 13, 'Thirteen migrations discovered', );
 
 like( $migration_files[0], qr{001_initial[.]sql\z},
       'initial migration discovered first', );
@@ -74,8 +74,10 @@ like( $migration_files[9],
 like( $migration_files[10], qr{011_BC_torrents[.]sql\z},
       'BC_backup migration discovered eleventh', );
 like( $migration_files[11], qr{012_LOC_torrents[.]sql\z},
-      'LOC torrents migration discovered twelvth', );
-is( $db->migrate( $dbh ), 12, 'Twelve migrations executed', );
+      'LOC torrents migration discovered twelfth', );
+like( $migration_files[12], qr{013_LOC_torrents_info_index[.]sql\z},
+      'LOC torrents info index migration discovered thirteenth', );
+is( $db->migrate( $dbh ), 13, 'Thirteen migrations executed', );
 
 my $table_name = $dbh->selectrow_array(
   q{
@@ -95,7 +97,7 @@ my $migration_count = $dbh->selectrow_array(
   }
 );
 
-is( $migration_count, 12, 'migrations recorded exactly once', );
+is( $migration_count, 13, 'migrations recorded exactly once', );
 
 is( $db->migrate( $dbh ), 0, 'all migrations skipped after application', );
 
@@ -116,6 +118,8 @@ for my $name (
                API_torrents_info_index
                API_torrents_files
                API_torrents_files_index
+               LOC_torrents
+               LOC_torrents_info_index
                ) )
 {
   my ( $table_count ) = $dbh->selectrow_array(
@@ -157,7 +161,7 @@ my $recorded_versions = $dbh->selectcol_arrayref(
 );
 
 is( $recorded_versions,
-    [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 ],
+    [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 ],
     'applied migration versions recorded in order', );
 
 $dbh->disconnect;

@@ -420,14 +420,12 @@ sub _store_torrent_path ( $self, %arg ) {
   }
 
   my $result = eval {
-    $db->S_local_torrent_file_upsert(
-                                      $dbh,
-                                      {
-                                       path    => $path,
-                                       size    => $stat[7],
-                                       mtime   => $stat[9],
-                                       backend => $backend,
-                                      } );
+    $db->S_LOC_torrents_upsert(
+                                $dbh,
+                                {
+                                 path    => $path,
+                                 backend => $backend,
+                                } );
   };
 
   my $upsert_error = $@;
