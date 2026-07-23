@@ -75,7 +75,7 @@ sub _API_torrents_fetch ( $self, $method, %arg ) {
             action     => 'qbt_torrents_trackers',
             method     => 'trackers',
             hash       => $hash,
-             => 1,
+            private     => 1,
             skipped    => 1,
             reason     => 'private torrent uses torrents_info tracker',
             rows       => [],
@@ -149,7 +149,7 @@ sub properties ( $self, $hash ) {
 }
 
 sub trackers ( $self, $hash, $private ) {
-  die ' is required' if !defined $private;
+  die 'private is required' if !defined $private;
 
   my $response = $self->_API_torrents_fetch(
     'trackers',
@@ -619,14 +619,14 @@ sub _resolve_add_target ( $self, %arg ) {
          }
        ],}
       if !( $row->{parse_ok} // 0 )
-      || !defined $row->{infohash}
-      || $row->{infohash} eq '';
+      || !defined $row->{hash}
+      || $row->{hash} eq '';
 
   return {
           ok         => 1,
           action     => 'qbt_add_resolve',
           input_type => 'path',
-          hash       => $row->{infohash},
+          hash       => $row->{hash},
           torrent    => $row,};
 }
 

@@ -17,7 +17,9 @@ my $db = QBTL::DB->new(
      migration_dir =>
          File::Spec->catdir( $FindBin::Bin, '..', '..', 'share', 'migrations' ),
 );
-my $dbh = $db->connect;
+my $connection = $db->connect;
+my $dbh        = $connection->{dbh};
+
 $db->migrate( $dbh );
 
 my $hash       = '0123456789abcdef0123456789abcdef01234567';
@@ -53,7 +55,7 @@ is(
     ),
     {
      ok         => 1,
-     infohash   => $hash,
+     hash   => $hash,
      seen       => 2,
      stored     => 2,
      fetched_on => $fetched_on,
@@ -62,7 +64,7 @@ is(
 
 my $payload = decode_json(
             $dbh->selectrow_array(
-              q{SELECT payload_json FROM API_torrents_files WHERE infohash = ?},
+              q{SELECT payload_json FROM API_torrents_files WHERE hash = ?},
               undef, $hash, ) );
 
 is( scalar @{$payload}, 2, 'complete file-list payload retained together' );
@@ -76,7 +78,7 @@ is(
         SELECT file_index, fetched_on, name, size, progress, priority,
                is_seed, piece_start, piece_end, availability
         FROM API_torrents_files_index
-        WHERE infohash = ? AND file_index = 0
+        WHERE hash = ? AND file_index = 0
       },
     undef,
     $hash,
@@ -113,14 +115,14 @@ $db->S_API_torrents_files(
 
 is(
     $dbh->selectrow_array(
-            q{SELECT COUNT(*) FROM API_torrents_files_index WHERE infohash = ?},
+            q{SELECT COUNT(*) FROM API_torrents_files_index WHERE hash = ?},
             undef, $hash,
     ),
     1,
     'later response removes stale indexed file rows', );
 
 my $before = $dbh->selectrow_array(
-              q{SELECT payload_json FROM API_torrents_files WHERE infohash = ?},
+              q{SELECT payload_json FROM API_torrents_files WHERE hash = ?},
               undef, $hash, );
 
 like(
@@ -138,7 +140,7 @@ like(
 
 is(
     $dbh->selectrow_array(
-              q{SELECT payload_json FROM API_torrents_files WHERE infohash = ?},
+              q{SELECT payload_json FROM API_torrents_files WHERE hash = ?},
               undef, $hash,
     ),
     $before,

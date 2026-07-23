@@ -447,26 +447,26 @@ sub parse_file ( $self, $path ) {
             problem => "bdecode failed for $path: $problem",};
   }
 
-  my $infohash;
+  my $hash;
   my $file_type;
 
   if ( $path =~ /\.fastresume\z/i ) {
     $file_type = 'fastresume';
 
-    ( $infohash ) = $path =~ m{([0-9a-f]{40})\.fastresume\z};
+    ( $hash ) = $path =~ m{([0-9a-f]{40})\.fastresume\z};
 
-    if ( !$infohash ) {
+    if ( !$hash ) {
       return {
         ok        => 0,
         file_type => $file_type,
         problem   => 'fastresume filename does not match lowercase
-infohash.fastresume',};
+hash.fastresume',};
     }
 
     return {
             ok            => 1,
             file_type     => $file_type,
-            infohash      => $infohash,
+            hash      => $hash,
             observed_keys => _observed_top_level_keys( $data ),};
   }
 
@@ -487,7 +487,7 @@ infohash.fastresume',};
             problem   => 'raw info dictionary was not found',};
   }
 
-  $infohash = sha1_hex($raw_info);
+  $hash = sha1_hex($raw_info);
   my $observed_keys = _observed_top_level_keys( $data );
   push @{$observed_keys}, @{_observed_info_keys( $data->{info} )};
 
@@ -496,8 +496,8 @@ infohash.fastresume',};
   return {
           ok                 => 1,
           path               => $path,
-          infohash           => $infohash,
-          hash               => $infohash,
+          hash           => $hash,
+          hash               => $hash,
           torrent_name       => _string_value( $data->{info}{name} ),
           comment            => _string_value( $data->{comment} ),
           announce           => _string_value( $data->{announce} ),

@@ -46,14 +46,14 @@ my $hash    = '0123456789abcdef0123456789abcdef01234567';
 is(
     $process->trackers( $hash, 1 ),
     {
-     ok         => 1,
-     action     => 'qbt_torrents_trackers',
-     hash       => $hash,
-      => 1,
-     skipped    => 1,
-     reason     => 'private torrent uses torrents_info tracker',
-     rows       => [],
-     count      => 0,
+     ok      => 1,
+     action  => 'qbt_torrents_trackers',
+     hash    => $hash,
+     private => 1,
+     skipped => 1,
+     reason  => 'private torrent uses torrents_info tracker',
+     rows    => [],
+     count   => 0,
     },
     'private torrent skips trackers API call', );
 
@@ -62,11 +62,11 @@ is( $api->calls, 0, 'private torrent made no trackers API request', );
 is(
    $process->trackers( $hash, 0 ),
    {
-    ok         => 1,
-    action     => 'qbt_torrents_trackers',
-    hash       => $hash,
-     => 0,
-    request    => {
+    ok      => 1,
+    action  => 'qbt_torrents_trackers',
+    hash    => $hash,
+    private => 0,
+    request => {
                 endpoint => 'torrents_trackers',
                 hash     => $hash,
     },
@@ -87,8 +87,7 @@ is(
 
 is( $api->calls, 1, 'public torrent made one trackers API request', );
 
-like(
-      dies { $process->trackers( $hash, undef ) },
+like( dies { $process->trackers( $hash, undef ) },
       qr/ is required/,
       'caller must provide privacy classification', );
 

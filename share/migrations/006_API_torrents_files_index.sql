@@ -1,5 +1,5 @@
 CREATE TABLE API_torrents_files_index (
-    infohash      TEXT NOT NULL,
+    hash      TEXT NOT NULL,
     file_index    INTEGER NOT NULL,
     fetched_on    INTEGER NOT NULL,
     name          TEXT,
@@ -11,9 +11,9 @@ CREATE TABLE API_torrents_files_index (
     piece_end     INTEGER,
     availability  REAL,
 
-    PRIMARY KEY (infohash, file_index),
+    PRIMARY KEY (hash, file_index),
 
-    FOREIGN KEY (infohash)
-        REFERENCES torrents(infohash)
+    FOREIGN KEY (hash)
+        REFERENCES torrents(hash)
         ON DELETE CASCADE
 );

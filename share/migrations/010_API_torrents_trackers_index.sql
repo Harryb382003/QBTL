@@ -1,5 +1,5 @@
 CREATE TABLE API_torrents_trackers_index (
-    infohash       TEXT NOT NULL,
+    hash       TEXT NOT NULL,
     tracker_index  INTEGER NOT NULL,
     fetched_on     INTEGER NOT NULL,
     url            TEXT NOT NULL,
@@ -11,9 +11,9 @@ CREATE TABLE API_torrents_trackers_index (
     num_downloaded INTEGER,
     msg            TEXT,
 
-    PRIMARY KEY (infohash, tracker_index),
+    PRIMARY KEY (hash, tracker_index),
 
-    FOREIGN KEY (infohash)
-        REFERENCES torrents(infohash)
+    FOREIGN KEY (hash)
+        REFERENCES torrents(hash)
         ON DELETE CASCADE
 );

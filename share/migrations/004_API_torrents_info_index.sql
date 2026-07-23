@@ -1,5 +1,5 @@
 CREATE TABLE API_torrents_info_index (
-    infohash      TEXT PRIMARY KEY,
+    hash      TEXT PRIMARY KEY,
     fetched_on    INTEGER NOT NULL,
     name          TEXT,
     state         TEXT,
@@ -16,16 +16,16 @@ CREATE TABLE API_torrents_info_index (
     completion_on INTEGER,
     last_activity INTEGER,
     ratio         REAL,
-        INTEGER,
+    private    INTEGER,
 
-    FOREIGN KEY (infohash)
-        REFERENCES torrents(infohash)
+    FOREIGN KEY (hash)
+        REFERENCES torrents(hash)
         ON DELETE CASCADE
 );
 -- share/migrations/004_API_torrents_info_index.sql
 
 CREATE TABLE API_torrents_info_index (
-    infohash      TEXT PRIMARY KEY,
+    hash      TEXT PRIMARY KEY,
     fetched_on    INTEGER NOT NULL,
     name          TEXT,
     state         TEXT,
@@ -42,9 +42,9 @@ CREATE TABLE API_torrents_info_index (
     completion_on INTEGER,
     last_activity INTEGER,
     ratio         REAL,
-        INTEGER,
+    private    INTEGER,
 
-    FOREIGN KEY (infohash)
-        REFERENCES torrents(infohash)
+    FOREIGN KEY (hash)
+        REFERENCES torrents(hash)
         ON DELETE CASCADE
 );

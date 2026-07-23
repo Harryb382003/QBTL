@@ -26,8 +26,13 @@ is( $db->db_path, $db_path, 'database path retained', );
 
 ok( $db->verify_path, 'database path is usable', );
 
-my $dbh = $db->connect;
-isa_ok( $dbh, ['DBI::db'], 'connected to SQLite database', );
+my $connect = $db->connect;
+
+is( $connect->{ok}, 1, 'connected to SQLite database', );
+
+my $dbh = $connect->{dbh};
+
+isa_ok( $dbh, ['DBI::db'], 'SQLite database handle returned', );
 
 ok( -f $db_path, 'SQLite database file created', );
 
@@ -36,7 +41,7 @@ is( $dbh->selectrow_array( 'PRAGMA foreign_keys' ),
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 10, 'Ten migrations discovered', );
+is( scalar @migration_files, 12, 'Twelve migrations discovered', );
 
 like( $migration_files[0], qr{001_initial[.]sql\z},
       'initial migration discovered first', );
@@ -66,8 +71,11 @@ like( $migration_files[8],
 like( $migration_files[9],
       qr{010_API_torrents_trackers_index[.]sql\z},
       'API torrents_trackers index migration discovered tenth', );
-
-is( $db->migrate( $dbh ), 10, 'Ten migrations executed', );
+like( $migration_files[10], qr{011_BC_torrents[.]sql\z},
+      'BC_backup migration discovered eleventh', );
+like( $migration_files[11], qr{012_LOC_torrents[.]sql\z},
+      'LOC torrents migration discovered twelvth', );
+is( $db->migrate( $dbh ), 12, 'Twelve migrations executed', );
 
 my $table_name = $dbh->selectrow_array(
   q{
@@ -87,7 +95,7 @@ my $migration_count = $dbh->selectrow_array(
   }
 );
 
-is( $migration_count, 10, 'migrations recorded exactly once', );
+is( $migration_count, 12, 'migrations recorded exactly once', );
 
 is( $db->migrate( $dbh ), 0, 'all migrations skipped after application', );
 
@@ -133,7 +141,7 @@ is(
   [ map { $_->{name} } @$torrent_columns ],
   [
     qw(
-        infohash
+        hash
         discovered_on
         discovered_by
     )
@@ -149,7 +157,7 @@ my $recorded_versions = $dbh->selectcol_arrayref(
 );
 
 is( $recorded_versions,
-    [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ],
+    [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 ],
     'applied migration versions recorded in order', );
 
 $dbh->disconnect;

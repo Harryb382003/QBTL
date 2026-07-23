@@ -179,7 +179,7 @@ sub infill_known_exports ( $self, %arg ) {
           next;
         }
 
-        if ( ( $decoded->{infohash} // '' ) ne $hash ) {
+        if ( ( $decoded->{hash} // '' ) ne $hash ) {
           push @problem,
               {
                which          => $which,
@@ -187,7 +187,7 @@ sub infill_known_exports ( $self, %arg ) {
                hash           => $hash,
                error          => 'metadata source hash mismatch',
                expected_hash  => $hash,
-               actual_hash    => $decoded->{infohash},
+               actual_hash    => $decoded->{hash},
                parse_ok       => 1,
                parse_problem  => undef,
               };
@@ -341,10 +341,10 @@ sub _live_api_infill_plan (@torrents) {
 
     my $hash =
            $torrent->{hash}
-        // $torrent->{infohash}
+        // $torrent->{hash}
         // $torrent->{info_hash};
 
-    die "torrent is missing hash/infohash\n"
+    die "torrent is missing hash/hash\n"
         unless defined $hash && length $hash;
 
     push @plan,

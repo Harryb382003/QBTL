@@ -207,6 +207,9 @@ sub init ( $self, $result ) {
   say {$out} '  torrent parsed:   ' . ( $scan->{parsed} // 0 );
   say {$out} '  torrent problems: ' . ( $scan->{parse_problems} // 0 );
   say {$out} '  torrent total:    ' . ( $scan->{total} // 0 );
+  say {$out} '  fastres classified: ' . ( $scan->{fastresume_seen} // 0 );
+  say {$out} '  fastres excluded:   '
+              . ( $scan->{fastresume_skipped_excluded} // 0 );
   say {$out} '  fastres stored:   ' . ( $scan->{fastresume_stored} // 0 );
   say {$out} '  fastres parsed:   ' . ( $scan->{fastresume_parsed} // 0 );
   say {$out} '  fastres problems: ' . ( $scan->{fastresume_parse_problems} // 0 );
@@ -978,7 +981,7 @@ sub qbt_mismatch ( $self, $result ) {
   say {$out} 'Rows:';
 
   for my $row ( @{ $result->{rows} } ) {
-    say {$out} '  ' . ( $row->{infohash} // '' );
+    say {$out} '  ' . ( $row->{hash} // '' );
     say {$out} '    fastresume:        ' . ( $row->{fastresume_path} // '' );
     say {$out} '    qBT name:          ' . ( $row->{qbt_name} // '' );
 

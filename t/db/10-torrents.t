@@ -14,7 +14,9 @@ my $db = QBTL::DB->new(
     migration_dir =>
         File::Spec->catdir( $FindBin::Bin, '..', '..', 'share', 'migrations', ),
 );
-my $dbh = $db->connect;
+my $connection = $db->connect;
+my $dbh        = $connection->{dbh};
+
 $db->migrate( $dbh );
 
 my $first = $db->ensure_torrent( $dbh,
@@ -24,7 +26,7 @@ my $first = $db->ensure_torrent( $dbh,
 is(
     $first,
     {
-     infohash      => '0123456789abcdef0123456789abcdef01234567',
+     hash      => '0123456789abcdef0123456789abcdef01234567',
      discovered_on => '2026-07-19 16:00:00',
      discovered_by => 'qbt',
     },
@@ -37,7 +39,7 @@ my $second = $db->ensure_torrent( $dbh,
 is(
     $second,
     {
-     infohash      => '0123456789abcdef0123456789abcdef01234567',
+     hash      => '0123456789abcdef0123456789abcdef01234567',
      discovered_on => '2026-07-19 16:00:00',
      discovered_by => 'qbt',
     },
@@ -50,7 +52,7 @@ my $earlier = $db->ensure_torrent( $dbh,
 is(
     $earlier,
     {
-     infohash      => '0123456789abcdef0123456789abcdef01234567',
+     hash      => '0123456789abcdef0123456789abcdef01234567',
      discovered_on => '2025-12-01 08:30:00',
      discovered_by => 'local',
     },

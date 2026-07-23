@@ -39,7 +39,26 @@ sub browse ( $self ) {
 
 sub init ( $self ) {
   my $started = time;
-  my $db      = QBTL::DB->new( db_path => $self->{config}->db_path );
+  my $db_path = $self->{config}->db_path;
+
+  for my $path ( $db_path, "$db_path-wal", "$db_path-shm" ) {
+    next if !-e $path;
+
+    if ( !unlink $path ) {
+      return {
+        ok       => 0,
+        status   => 'db_reset_failed',
+        problems => [
+          {
+            path  => $path,
+            error => "Could not remove $path: $!",
+          },
+        ],
+      };
+    }
+  }
+
+  my $db      = QBTL::DB->new( db_path => $db_path );
   my $connect = $db->connect;
 
   if (!$connect->{ok}) {
@@ -92,20 +111,11 @@ sub init ( $self ) {
   my $elapsed = time - $started;
 
   return {
-#           ok          => $migration->{ok}
-#                           && $preferences->{ok}
-#                           && $refresh->{ok}
-# #                           && $export_dedupe->{ok}
-#                           ? 1 : 0,
-          ok => $preferences->{ok}
-      && $refresh->{ok}
-      && $local_scan->{ok}
-      ? 1 : 0,
-          migration     => $migration,
-          preferences   => $preferences,
-          qbt_refresh   => $refresh,
-          local_scan    => $local_scan,
-#           export_dedupe => $export_dedupe,
+          ok          => $migration->{ok}
+                      && $preferences->{ok}
+                      && $refresh->{ok}
+#                     && $export_dedupe->{ok}
+                      ? 1 : 0,
           elapsed       => sprintf( '%.3f', $elapsed ),};
 }
 

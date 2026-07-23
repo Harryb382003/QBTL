@@ -17,7 +17,9 @@ my $db = QBTL::DB->new(
      migration_dir =>
          File::Spec->catdir( $FindBin::Bin, '..', '..', 'share', 'migrations' ),
 );
-my $dbh = $db->connect;
+my $connection = $db->connect;
+my $dbh        = $connection->{dbh};
+
 $db->migrate( $dbh );
 
 my $hash       = '0123456789abcdef0123456789abcdef01234567';
@@ -38,14 +40,14 @@ is(
     ),
     {
      ok         => 1,
-     infohash   => $hash,
+     hash   => $hash,
      fetched_on => $fetched_on,
     },
     'complete torrents_properties response stored', );
 
 my $payload = decode_json(
        $dbh->selectrow_array(
-         q{SELECT payload_json FROM API_torrents_properties WHERE infohash = ?},
+         q{SELECT payload_json FROM API_torrents_properties WHERE hash = ?},
          undef, $hash, ) );
 
 is( $payload->{future_key},
@@ -57,7 +59,7 @@ is(
     q{
         SELECT fetched_on, comment
         FROM API_torrents_properties_index
-        WHERE infohash = ?
+        WHERE hash = ?
       },
     undef,
     $hash,
@@ -81,7 +83,7 @@ is(
     q{
         SELECT fetched_on, comment
         FROM API_torrents_properties_index
-        WHERE infohash = ?
+        WHERE hash = ?
       },
     undef,
     $hash,
@@ -93,7 +95,7 @@ is(
   'later properties response replaces indexed comment', );
 
 my $before = $dbh->selectrow_array(
-         q{SELECT payload_json FROM API_torrents_properties WHERE infohash = ?},
+         q{SELECT payload_json FROM API_torrents_properties WHERE hash = ?},
          undef, $hash, );
 
 like(
@@ -106,7 +108,7 @@ like(
 
 is(
     $dbh->selectrow_array(
-         q{SELECT payload_json FROM API_torrents_properties WHERE infohash = ?},
+         q{SELECT payload_json FROM API_torrents_properties WHERE hash = ?},
          undef, $hash,
     ),
     $before,

@@ -157,6 +157,24 @@ sub verify_path ( $self ) {
 }
 
 #--------------------------------------------------------------------------
+# Consume
+#--------------------------------------------------------------------------
+
+sub C_local_torrent_file_count ( $self, $dbh ) {
+  my ( $count ) =
+      $dbh->selectrow_array( 'SELECT COUNT(*) FROM local_torrent_files' );
+
+  return $count // 0;
+}
+
+sub C_local_fastresume_file_count ( $self, $dbh ) {
+  my ( $count ) =
+      $dbh->selectrow_array( 'SELECT COUNT(*) FROM local_fastresume_files' );
+
+  return $count // 0;
+}
+
+#--------------------------------------------------------------------------
 # Produce
 #--------------------------------------------------------------------------
 
@@ -164,10 +182,10 @@ sub _canonical_json ( $self, $value ) {
   return JSON::PP->new->canonical->encode( $value );
 }
 
-sub ensure_torrent ( $self, $dbh, $infohash, $discovered_on, $discovered_by, ) {
-  die 'infohash is required'
-      if !defined $infohash
-      || $infohash eq '';
+sub ensure_torrent ( $self, $dbh, $hash, $discovered_on, $discovered_by, ) {
+  die 'hash is required'
+      if !defined $hash
+      || $hash eq '';
 
   die 'discovered_on is required'
       if !defined $discovered_on
@@ -180,32 +198,32 @@ sub ensure_torrent ( $self, $dbh, $infohash, $discovered_on, $discovered_by, ) {
   $dbh->do(
     q{
       INSERT INTO torrents (
-        infohash,
+        hash,
         discovered_on,
         discovered_by
       )
       VALUES (?, ?, ?)
-      ON CONFLICT(infohash) DO UPDATE SET
+      ON CONFLICT(hash) DO UPDATE SET
         discovered_on = excluded.discovered_on,
         discovered_by = excluded.discovered_by
       WHERE excluded.discovered_on < torrents.discovered_on
     },
     undef,
-    $infohash,
+    $hash,
     $discovered_on,
     $discovered_by, );
 
   return $dbh->selectrow_hashref(
     q{
       SELECT
-        infohash,
+        hash,
         discovered_on,
         discovered_by
       FROM torrents
-      WHERE infohash = ?
+      WHERE hash = ?
     },
     undef,
-    $infohash, );
+    $hash, );
 }
 
 sub _in_transaction ( $self, $dbh, $code ) {
@@ -228,7 +246,7 @@ sub _in_transaction ( $self, $dbh, $code ) {
 }
 
 sub _replace_retained_payload ( $self, $dbh, %arg ) {
-  for my $required ( qw( table infohash fetched_on payload ) ) {
+  for my $required ( qw( table hash fetched_on payload ) ) {
     die "$required is required"
         if !defined $arg{$required} || $arg{$required} eq '';
   }
@@ -239,14 +257,14 @@ sub _replace_retained_payload ( $self, $dbh, %arg ) {
 
   $dbh->do(
     qq{
-      INSERT INTO $table (infohash, fetched_on, payload_json)
+      INSERT INTO $table (hash, fetched_on, payload_json)
       VALUES (?, ?, ?)
-      ON CONFLICT(infohash) DO UPDATE SET
+      ON CONFLICT(hash) DO UPDATE SET
         fetched_on = excluded.fetched_on,
         payload_json = excluded.payload_json
     },
     undef,
-    $arg{infohash},
+    $arg{hash},
     $arg{fetched_on},
     $self->_canonical_json( $arg{payload} ), );
 
@@ -307,7 +325,7 @@ sub P_API_torrents_info ( $class ) {
       qw(
           name state progress save_path content_path category tags tracker
           amount_left size total_size added_on completion_on last_activity
-          ratio
+          ratio private
       )
     ],
     validate => sub ( $rows ) {
@@ -320,12 +338,12 @@ sub P_API_torrents_info ( $class ) {
         die 'API::torrents_info row must be a hash reference'
             if ref( $row ) ne 'HASH';
 
-        my $infohash = $row->{hash};
+        my $hash = $row->{hash};
 
         die 'API::torrents_info row requires hash'
-            if !defined $infohash || $infohash eq '';
+            if !defined $hash || $hash eq '';
 
-        push @prepared, {infohash => $infohash, row => $row};
+        push @prepared, {hash => $hash, row => $row};
       }
 
       return \@prepared;
@@ -336,7 +354,7 @@ sub P_API_torrents_info ( $class ) {
             qw(
             name state progress save_path content_path category tags tracker
             amount_left size total_size added_on completion_on last_activity
-            ratio
+            ratio private
             )};
     },};
 }
@@ -418,15 +436,15 @@ sub P_API_torrents_properties ( $class ) {
 
 sub _S_producer ( $self, $dbh, %arg ) {
   my $descriptor = $arg{descriptor};
-  my $infohash   = $arg{infohash};
+  my $hash       = $arg{hash};
   my $payload    = $arg{payload};
   my $fetched_on = $arg{fetched_on};
 
   die 'producer descriptor is required'
       if ref( $descriptor ) ne 'HASH';
 
-  die 'infohash is required'
-      if !defined $infohash || $infohash eq '';
+  die 'hash is required'
+      if !defined $hash || $hash eq '';
 
   die 'fetched_on is required'
       if !defined $fetched_on || $fetched_on eq '';
@@ -435,7 +453,7 @@ sub _S_producer ( $self, $dbh, %arg ) {
   my $rows     = $descriptor->{index_rows}->( $prepared );
   my @columns  = $descriptor->{index_columns}->@*;
 
-  my $column_sql = join ', ', qw( infohash fetched_on ), @columns;
+  my $column_sql = join ', ', qw( hash fetched_on ), @columns;
   my $value_sql  = join ', ', ( '?' ) x ( 2 + @columns );
   my $insert_sql = sprintf 'INSERT INTO %s (%s) VALUES (%s)',
       $descriptor->{index_table}, $column_sql, $value_sql;
@@ -443,32 +461,30 @@ sub _S_producer ( $self, $dbh, %arg ) {
   $self->_in_transaction(
     $dbh,
     sub {
-      $self->ensure_torrent( $dbh, $infohash, $fetched_on,
-                             $descriptor->{producer}, );
+      $self->ensure_torrent( $dbh, $hash, $fetched_on, $descriptor->{producer},
+      );
 
       $self->_replace_retained_payload(
                                         $dbh,
                                         table => $descriptor->{payload_table},
-                                        infohash   => $infohash,
+                                        hash  => $hash,
                                         fetched_on => $fetched_on,
                                         payload    => $prepared, );
 
-      $dbh->do(
-            'DELETE FROM ' . $descriptor->{index_table} . ' WHERE infohash = ?',
-            undef, $infohash, );
+      $dbh->do( 'DELETE FROM ' . $descriptor->{index_table} . ' WHERE hash = ?',
+                undef, $hash, );
 
       for my $row ( $rows->@* ) {
-        $dbh->do( $insert_sql, undef, $infohash,
-                  $fetched_on, @{$row}{@columns}, );
+        $dbh->do( $insert_sql, undef, $hash, $fetched_on, @{$row}{@columns}, );
       }
 
       return 1;
     }, );
 
   return {
-          ok       => 1,
-          infohash => $infohash,
-          seen     => scalar(
+          ok   => 1,
+          hash => $hash,
+          seen => scalar(
                           ref( $prepared ) eq 'ARRAY'
                           ? $prepared->@*
                           : 1
@@ -553,21 +569,21 @@ sub S_API_torrents_info ( $self, $dbh, $rows, %arg ) {
   if ( $prepared->@* ) {
     my $placeholders = join q{,}, ( '?' ) x $prepared->@*;
     my $known = $dbh->selectcol_arrayref(
-                                     'SELECT infohash FROM '
-                                         . $descriptor->{payload_table}
-                                         . " WHERE infohash IN ($placeholders)",
-                                     undef,
-                                     map { $_->{infohash} } $prepared->@*, );
+                                         'SELECT hash FROM '
+                                             . $descriptor->{payload_table}
+                                             . " WHERE hash IN ($placeholders)",
+                                         undef,
+                                         map { $_->{hash} } $prepared->@*, );
     %existing = map { $_ => 1 } $known->@*;
   }
 
-  my $column_sql = join ', ', qw( infohash fetched_on ), @columns;
+  my $column_sql = join ', ', qw( hash fetched_on ), @columns;
   my $value_sql  = join ', ', ( '?' ) x ( 2 + @columns );
   my $update_sql = join ', ', map {"$_ = excluded.$_"} qw( fetched_on ),
       @columns;
   my $insert_sql = sprintf(
                             'INSERT INTO %s (%s) VALUES (%s) '
-                                . 'ON CONFLICT(infohash) DO UPDATE SET %s',
+                                . 'ON CONFLICT(hash) DO UPDATE SET %s',
                             $descriptor->{index_table},
                             $column_sql, $value_sql, $update_sql, );
 
@@ -576,20 +592,20 @@ sub S_API_torrents_info ( $self, $dbh, $rows, %arg ) {
     sub {
       for my $item ( $prepared->@* ) {
         my $row       = $item->{row};
-        my $infohash  = $item->{infohash};
+        my $hash      = $item->{hash};
         my $index_row = $descriptor->{index_row}->( $row );
 
-        $self->ensure_torrent( $dbh, $infohash, $fetched_on,
+        $self->ensure_torrent( $dbh, $hash, $fetched_on,
                                $descriptor->{producer}, );
 
         $self->_replace_retained_payload(
                                           $dbh,
                                           table => $descriptor->{payload_table},
-                                          infohash   => $infohash,
+                                          hash  => $hash,
                                           fetched_on => $fetched_on,
                                           payload    => $row, );
 
-        $dbh->do( $insert_sql, undef, $infohash, $fetched_on,
+        $dbh->do( $insert_sql, undef, $hash, $fetched_on,
                   @{$index_row}{@columns}, );
       }
 
@@ -597,7 +613,7 @@ sub S_API_torrents_info ( $self, $dbh, $rows, %arg ) {
     }, );
 
   my $stored         = scalar $prepared->@*;
-  my $existing_count = scalar grep { $existing{$_->{infohash}} } $prepared->@*;
+  my $existing_count = scalar grep { $existing{$_->{hash}} } $prepared->@*;
 
   return {
           ok         => 1,
@@ -608,39 +624,39 @@ sub S_API_torrents_info ( $self, $dbh, $rows, %arg ) {
           fetched_on => 0 + $fetched_on,};
 }
 
-sub S_API_torrents_files ( $self, $dbh, $infohash, $rows, %arg ) {
+sub S_API_torrents_files ( $self, $dbh, $hash, $rows, %arg ) {
   my $fetched_on = $arg{fetched_on} // time;
   return
       $self->_S_producer(
                           $dbh,
                           descriptor => $self->P_API_torrents_files,
-                          infohash   => $infohash,
+                          hash       => $hash,
                           payload    => $rows,
                           fetched_on => $fetched_on, );
 }
 
-sub S_API_torrents_properties ( $self, $dbh, $infohash, $properties, %arg ) {
+sub S_API_torrents_properties ( $self, $dbh, $hash, $properties, %arg ) {
   my $fetched_on = $arg{fetched_on} // time;
   my $stored = $self->_S_producer(
                                  $dbh,
                                  descriptor => $self->P_API_torrents_properties,
-                                 infohash   => $infohash,
+                                 hash       => $hash,
                                  payload    => $properties,
                                  fetched_on => $fetched_on, );
 
   return {
           ok         => $stored->{ok},
-          infohash   => $stored->{infohash},
+          hash       => $stored->{hash},
           fetched_on => $stored->{fetched_on},};
 }
 
-sub S_API_torrents_trackers ( $self, $dbh, $infohash, $rows, %arg ) {
+sub S_API_torrents_trackers ( $self, $dbh, $hash, $rows, %arg ) {
   my $fetched_on = $arg{fetched_on} // time;
   return
       $self->_S_producer(
                           $dbh,
                           descriptor => $self->P_API_torrents_trackers,
-                          infohash   => $infohash,
+                          hash       => $hash,
                           payload    => $rows,
                           fetched_on => $fetched_on, );
 }
@@ -694,7 +710,7 @@ sub S_local_torrent_parse_update ( $self, $dbh, $row ) {
     <<'SQL'
 UPDATE local_torrent_files
 SET
-    infohash           = ?,
+    hash           = ?,
     torrent_name       = ?,
     comment            = ?,
     announce           = ?,
@@ -714,7 +730,7 @@ SQL
   );
 
   $sth->execute(
-                 $row->{infohash},           $row->{torrent_name},
+                 $row->{hash},               $row->{torrent_name},
                  $row->{comment},            $row->{announce},
                  $row->{created_by},         $row->{creation_date},
                  $row->{parse_ok},           $row->{parse_problem},

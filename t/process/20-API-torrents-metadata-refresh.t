@@ -8,6 +8,7 @@ use lib 'lib';
 use QBTL::Process::QBT;
 
 {
+
   package Local::QBT;
 
   use parent 'QBTL::Process::QBT';
@@ -34,17 +35,18 @@ use QBTL::Process::QBT;
     return $self->{responses}{files}{$hash};
   }
 
-  sub trackers ( $self, $hash, $ ) {
-    push $self->{calls}->@*, {
-      method     => 'trackers',
-      hash       => $hash,
-       => $,
-    };
+  sub trackers ( $self, $hash, $private ) {
+    push $self->{calls}->@*,
+        {
+         method  => 'trackers',
+         hash    => $hash,
+         private => $private,};
     return $self->{responses}{trackers}{$hash};
   }
 }
 
 {
+
   package Local::DB;
 
   sub new ( $class, %arg ) {
@@ -65,12 +67,11 @@ use QBTL::Process::QBT;
         if exists $self->{responses}{$key};
 
     my $payload = $arg{payload};
-    my $stored = ref($payload) eq 'ARRAY' ? scalar $payload->@* : 1;
+    my $stored  = ref( $payload ) eq 'ARRAY' ? scalar $payload->@* : 1;
 
     return {
-      ok     => 1,
-      stored => $stored,
-    };
+            ok     => 1,
+            stored => $stored,};
   }
 }
 
@@ -83,35 +84,43 @@ subtest 'stores complete metadata and skips private tracker lists' => sub {
   my $public  = '2222222222222222222222222222222222222222';
 
   my $qbt = Local::QBT->new(
-    responses => {
-      info => {
-        ok   => 1,
-        rows => [
-          {hash => $private,  => 1},
-          {hash => $public,   => 0},
-        ],
-      },
-      properties => {
-        $private => {ok => 1, properties => {comment => 'private comment'}},
-        $public  => {ok => 1, properties => {comment => 'public comment'}},
-      },
-      files => {
-        $private => {ok => 1, rows => [ {index => 0}, {index => 1} ]},
-        $public  => {ok => 1, rows => [ {index => 0} ]},
-      },
-      trackers => {
-        $public => {ok => 1, rows => [ {url => 'udp://one'}, {url => 'udp://two'}
-]},
-      },
-    },
-  );
+        responses => {
+          info => {
+                   ok   => 1,
+                   rows => [
+                             {
+                              hash    => $private,
+                              private => 1,
+                             },
+                             {
+                              hash    => $public,
+                              private => 0,
+                             },
+                   ],
+          },
+          properties => {
+            $private => {ok => 1, properties => {comment => 'private comment'}},
+            $public  => {ok => 1, properties => {comment => 'public comment'}},
+          },
+          files => {
+                  $private => {ok => 1, rows => [ {index => 0}, {index => 1} ]},
+                  $public  => {ok => 1, rows => [ {index => 0} ]},
+          },
+          trackers => {
+                       $public => {
+                          ok   => 1,
+                          rows => [ {url => 'udp://one'}, {url => 'udp://two'} ]
+                       },
+          },
+        }, );
+
   my $db = Local::DB->new;
 
-  my $result = $qbt->refresh_API_torrents_metadata(
-    db         => $db,
-    dbh        => 'dbh',
-    fetched_on => 1784512046,
-  );
+  my $result =
+      $qbt->refresh_API_torrents_metadata(
+                                           db         => $db,
+                                           dbh        => 'dbh',
+                                           fetched_on => 1784512046, );
 
   is(
     $result,
@@ -127,62 +136,53 @@ subtest 'stores complete metadata and skips private tracker lists' => sub {
       field problems           => [];
       etc;
     },
-    'complete metadata refresh summarized',
-  );
+    'complete metadata refresh summarized', );
 
   is(
-    method_calls( $qbt->calls, 'trackers' ),
-    [
-      {
-        method     => 'trackers',
-        hash       => $public,
-         => 0,
-      },
-    ],
-    'full tracker list requested only for public torrent',
-  );
+      method_calls( $qbt->calls, 'trackers' ),
+      [
+        {
+         method  => 'trackers',
+         hash    => $public,
+         private => 0,
+        },
+      ],
+      'full tracker list requested only for public torrent', );
 
   is(
-    [ map { $_->{method} } $db->calls->@* ],
-    [qw( info properties files properties files trackers )],
-    'DB receives info first followed by per-torrent metadata',
-  );
+      [ map { $_->{method} } $db->calls->@* ],
+      [qw( info properties files properties files trackers )],
+      'DB receives info first followed by per-torrent metadata', );
 };
 
-subtest 'endpoint failures preserve old metadata and do not stop later work' => sub
-{
+subtest 'endpoint failures preserve old metadata and do not stop later work' =>
+    sub {
   my $hash = '3333333333333333333333333333333333333333';
 
   my $qbt = Local::QBT->new(
-    responses => {
-      info => {ok => 1, rows => [ {hash => $hash,  => 0} ]},
-      properties => {
-        $hash => {ok => 1, properties => {comment => 'new comment'}},
-      },
-      files => {
-        $hash => {
-          ok       => 0,
-          problems => [ {error => 'files unavailable'} ],
+      responses => {
+        info       => {ok => 1, rows => [ {hash => $hash, private => 0} ]},
+        properties =>
+            {$hash => {ok => 1, properties => {comment => 'new comment'}},},
+        files => {
+                  $hash => {
+                            ok       => 0,
+                            problems => [ {error => 'files unavailable'} ],
+                  },
         },
-      },
-      trackers => {
-        $hash => {ok => 1, rows => [ {url => 'udp://tracker'} ]},
-      },
-    },
-  );
+        trackers => {$hash => {ok => 1, rows => [ {url => 'udp://tracker'} ]},},
+      }, );
   my $db = Local::DB->new(
-    responses => {
-      "properties:$hash" => {
-        ok       => 0,
-        problems => [ {error => 'properties rejected'} ],
-      },
-    },
-  );
+                           responses => {
+                             "properties:$hash" => {
+                               ok       => 0,
+                               problems => [ {error => 'properties rejected'} ],
+                             },
+                           }, );
 
-  my $result = $qbt->refresh_API_torrents_metadata(
-    db  => $db,
-    dbh => 'dbh',
-  );
+  my $result =
+      $qbt->refresh_API_torrents_metadata( db  => $db,
+                                           dbh => 'dbh', );
 
   is(
     $result,
@@ -192,7 +192,7 @@ subtest 'endpoint failures preserve old metadata and do not stop later work' => 
       field files_stored       => 0;
       field properties_stored  => 0;
       field trackers_stored    => 1;
-      field problems => bag {
+      field problems           => bag {
         item hash {
           field hash   => $hash;
           field method => 'files';
@@ -205,30 +205,34 @@ subtest 'endpoint failures preserve old metadata and do not stop later work' => 
     'failed endpoints preserve prior rows while successful endpoint continues',
   );
 
-  is(
-    [ map { $_->{method} } $db->calls->@* ],
-    [qw( info properties trackers )],
-    'failed files fetch is not stored and tracker work still runs',
-  );
-};
+  is( [ map { $_->{method} } $db->calls->@* ],
+      [qw( info properties trackers )],
+      'failed files fetch is not stored and tracker work still runs', );
+    };
 
 subtest 'hash-limited refresh passes selection to torrents info' => sub {
   my $hash = '4444444444444444444444444444444444444444';
 
   my $qbt = Local::QBT->new(
-    responses => {
-      info       => {ok => 1, rows => [ {hash => $hash,  => 1} ]},
-      properties => {$hash => {ok => 1, properties => {}}},
-      files      => {$hash => {ok => 1, rows => []}},
-      trackers   => {},
-    },
-  );
+                         responses => {
+                           info => {
+                                    ok   => 1,
+                                    rows => [
+                                              {
+                                               hash    => $hash,
+                                               private => 1}
+                                    ]
+                           },
+                           properties => {$hash => {ok => 1, properties => {}}},
+                           files      => {$hash => {ok => 1, rows       => []}},
+                           trackers   => {},
+                         }, );
 
-  my $result = $qbt->refresh_API_torrents_metadata(
-    db          => Local::DB->new,
-    dbh         => 'dbh',
-    info_params => {hashes => $hash},
-  );
+  my $result =
+      $qbt->refresh_API_torrents_metadata(
+                                           db          => Local::DB->new,
+                                           dbh         => 'dbh',
+                                           info_params => {hashes => $hash}, );
 
   is $result->{ok}, 1, 'limited refresh succeeds';
   is $qbt->calls->[0],
@@ -238,19 +242,17 @@ subtest 'hash-limited refresh passes selection to torrents info' => sub {
 
 subtest 'failed torrents info does not touch the database' => sub {
   my $qbt = Local::QBT->new(
-    responses => {
-      info => {
-        ok       => 0,
-        problems => [ {error => 'info unavailable'} ],
-      },
-    },
-  );
+                             responses => {
+                                info => {
+                                  ok       => 0,
+                                  problems => [ {error => 'info unavailable'} ],
+                                },
+                             }, );
   my $db = Local::DB->new;
 
-  my $result = $qbt->refresh_API_torrents_metadata(
-    db  => $db,
-    dbh => 'dbh',
-  );
+  my $result =
+      $qbt->refresh_API_torrents_metadata( db  => $db,
+                                           dbh => 'dbh', );
 
   is(
     $result,
@@ -260,8 +262,7 @@ subtest 'failed torrents info does not touch the database' => sub {
       field problems           => [ {error => 'info unavailable'} ];
       etc;
     },
-    'failed inventory fetch preserves existing database state',
-  );
+    'failed inventory fetch preserves existing database state', );
   is $db->calls, [], 'database is untouched';
 };
 

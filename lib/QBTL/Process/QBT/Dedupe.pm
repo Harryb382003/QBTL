@@ -556,7 +556,7 @@ sub _hydrate_copy_keeper ( $self, %arg ) {
   return {ok => 1, keeper => $validated[0]};
 }
 
-sub _same_infohash ( $left, $right ) {
+sub _same_hash ( $left, $right ) {
   return 0 if !defined $left || !defined $right;
   return 0 if $left !~ m{\A[0-9A-Fa-f]{40}\z};
   return 0 if $right !~ m{\A[0-9A-Fa-f]{40}\z};
@@ -669,7 +669,8 @@ sub _write_canonical_torrent ( $self, %arg ) {
   my %tracker_seen;
   @tracker = grep { !$tracker_seen{$_}++ } @tracker;
 
-  if ( @tracker && ( !defined $torrent->{announce} || !length $torrent->{announce} ) ) {
+  if ( @tracker && ( !defined $torrent->{announce} || !length $torrent->{announce} )
+) {
     $torrent->{announce} = $tracker[0];
     $reconstructed = 1;
   }
@@ -721,7 +722,8 @@ sub _write_canonical_torrent ( $self, %arg ) {
         unlink $temporary;
         return {
           ok      => 0,
-          problem => "write reconstructed torrent failed after $written_bytes of $encoded_bytes bytes: $problem",
+          problem => "write reconstructed torrent failed after $written_bytes of
+$encoded_bytes bytes: $problem",
         };
       }
 
@@ -730,7 +732,8 @@ sub _write_canonical_torrent ( $self, %arg ) {
         unlink $temporary;
         return {
           ok      => 0,
-          problem => "write reconstructed torrent stopped after $written_bytes of $encoded_bytes bytes",
+          problem => "write reconstructed torrent stopped after $written_bytes of
+$encoded_bytes bytes",
         };
       }
 
@@ -744,10 +747,10 @@ sub _write_canonical_torrent ( $self, %arg ) {
     }
 
     my $parsed = $self->parser->parse_file($temporary);
-    if ( !$parsed->{ok} || !_same_infohash( $parsed->{infohash}, $hash ) ) {
+    if ( !$parsed->{ok} || !_same_hash( $parsed->{hash}, $hash ) ) {
       my $expected_hash   = defined $hash ? $hash : '(undefined)';
-      my $parsed_hash     = defined $parsed->{infohash}
-          ? $parsed->{infohash}
+      my $parsed_hash     = defined $parsed->{hash}
+          ? $parsed->{hash}
           : '(undefined)';
       my $source_raw_hash = sha1_hex($raw_info);
       my $parser_problem  = $parsed->{problem} // '(none)';
@@ -768,7 +771,7 @@ sub _write_canonical_torrent ( $self, %arg ) {
         ok => 0,
         problem => join(
           "\n",
-          'reconstructed torrent failed post-write infohash validation',
+          'reconstructed torrent failed post-write hash validation',
           "expected hash: $expected_hash",
           "source raw-info hash: $source_raw_hash",
           "parsed hash: $parsed_hash",
@@ -796,8 +799,9 @@ sub _write_canonical_torrent ( $self, %arg ) {
     $db, $dbh, $target, $arg{backend} // 'canonical_copy', force_parse => 1,
   );
 
-  if ( !$stored->{parse_ok} || !_same_infohash( $stored->{hash}, $hash ) ) {
-    return {ok => 0, problem => 'written canonical torrent failed final validation'};
+  if ( !$stored->{parse_ok} || !_same_hash( $stored->{hash}, $hash ) ) {
+    return {ok => 0, problem => 'written canonical torrent failed final
+validation'};
   }
 
   return {
@@ -817,7 +821,8 @@ sub _queue_reconstructed_duplicates ( $self, %arg ) {
   my @entry;
   my @problem;
 
-  for my $candidate ( @{ $db->torrent_copy_candidates_for_hash( $dbh, $hash ) // [] } ) {
+  for my $candidate ( @{ $db->torrent_copy_candidates_for_hash( $dbh, $hash ) // []
+} ) {
     my $path = $candidate->{path} // next;
     next if $path eq $target;
     next if $path =~ m{(?:\A|/)BT_backup(?:/|\z)};
@@ -1274,7 +1279,8 @@ sub _copy_completed_to_downloaded ( $self, %arg ) {
       my $source = $copy->{old_path};
       my $target = $copy->{new_path};
 
-      my $stored = $copy->{stored} // $self->_store_torrent_file( $db, $dbh, $target, 'export_dir' );
+      my $stored = $copy->{stored} // $self->_store_torrent_file( $db, $dbh,
+$target, 'export_dir' );
 
       if ( !$stored->{parse_ok} || !$stored->{hash} || $stored->{hash} ne $hash ) {
         my $actual_target_hash =
@@ -2152,7 +2158,7 @@ sub _restore_current_qbt_from_bt_backup ( $self, %arg ) {
   my $recorded = $db->record_known_local_torrent_file(
                                                        $dbh,
                                                        path         => $target,
-                                                       infohash     => $hash,
+                                                       hash     => $hash,
                                                        torrent_name => $name,
                                                        backend      =>
 'qbt_bt_backup_restore',
@@ -2373,7 +2379,7 @@ sub _canonicalize_scanned_torrents ( $self, %arg ) {
     next if $self->_path_is_under( $path, $deletion_dir );
     next if length $bt_backup && $self->_path_is_under( $path, $bt_backup );
 
-    $row->{hash} = $row->{infohash};
+    $row->{hash} = $row->{hash};
     push @{ $group{ $row->{hash} } }, $row;
   }
 
@@ -2822,8 +2828,8 @@ sub _store_torrent_file ( $self, $db, $dbh, $path, $backend, %arg ) {
   if (    !$arg{force_parse}
        && $existing
        && ( $existing->{parse_ok} // 0 )
-       && defined $existing->{infohash}
-       && length $existing->{infohash}
+       && defined $existing->{hash}
+       && length $existing->{hash}
        && defined $existing->{size}
        && defined $existing->{mtime}
        && $existing->{size} == $size
@@ -2835,7 +2841,7 @@ sub _store_torrent_file ( $self, $db, $dbh, $path, $backend, %arg ) {
             parsed       => 0,
             from_db      => 1,
             path         => $path,
-            hash         => $existing->{infohash},
+            hash         => $existing->{hash},
             torrent_name => $existing->{torrent_name},
             announce     => $existing->{announce},
             comment      => $existing->{comment},
@@ -2868,7 +2874,7 @@ sub _store_torrent_file ( $self, $db, $dbh, $path, $backend, %arg ) {
                             $dbh,
                             {
                              path               => $path,
-                             infohash           => $parse->{infohash},
+                             hash           => $parse->{hash},
                              torrent_name       => $parse->{torrent_name},
                              comment            => $parse->{comment},
                              announce           => $effective_announce,
@@ -2886,11 +2892,11 @@ sub _store_torrent_file ( $self, $db, $dbh, $path, $backend, %arg ) {
                              : $parse->{problem},
                             }, );
 
-  if ( $parse->{ok} && $parse->{infohash} ) {
+  if ( $parse->{ok} && $parse->{hash} ) {
     for my $key ( @{$parse->{observed_keys} // []} ) {
       $db->upsert_hash_value(
                               $dbh,
-                              hash       => $parse->{infohash},
+                              hash       => $parse->{hash},
                               key        => $key->{key},
                               value      => $key->{value},
                               value_type => $key->{value_type} // 'text', );
@@ -2903,7 +2909,7 @@ sub _store_torrent_file ( $self, $db, $dbh, $path, $backend, %arg ) {
           parsed       => $parse->{ok}                         ? 1 : 0,
           from_db      => 0,
           path         => $path,
-          hash         => $parse->{infohash} ? $parse->{infohash} : undef,
+          hash         => $parse->{hash} ? $parse->{hash} : undef,
           torrent_name => $parse->{torrent_name},
           announce     => $effective_announce,
           comment      => $parse->{comment},
@@ -2952,7 +2958,7 @@ sub _torrent_metadata_base ( $self, $torrent ) {
     return $base . '.torrent';
   }
 
-  my $hash = $torrent->{hash} // $torrent->{infohash} // '';
+  my $hash = $torrent->{hash} // $torrent->{hash} // '';
   if ( $hash =~ /\A[0-9A-Fa-f]{40}\z/ ) {
     $self->{torrent_name_source_counts}{hash_fallback}++;
     return $hash . '.torrent';

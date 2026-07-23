@@ -150,7 +150,7 @@ sub _store_qbt_backup_torrent ( $self, $db, $dbh, $path ) {
     $dbh,
     {
      path               => $path,
-     infohash           => $parse->{infohash},
+     hash           => $parse->{hash},
      torrent_name       => $parse->{torrent_name},
      comment            => $parse->{comment},
      announce           => $parse->{announce},
@@ -166,11 +166,11 @@ sub _store_qbt_backup_torrent ( $self, $db, $dbh, $path ) {
      parse_problem      => $parse->{ok} ? undef : $parse->{problem},
     } );
 
-  if ( $parse->{ok} && $parse->{infohash} ) {
+  if ( $parse->{ok} && $parse->{hash} ) {
     for my $key ( @{ $parse->{observed_keys} // [] } ) {
       $db->upsert_hash_value(
                               $dbh,
-                              hash       => $parse->{infohash},
+                              hash       => $parse->{hash},
                               key        => $key->{key},
                               value      => $key->{value},
                               value_type => $key->{value_type} // 'text',

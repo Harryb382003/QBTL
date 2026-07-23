@@ -17,7 +17,9 @@ my $db = QBTL::DB->new(
      migration_dir =>
          File::Spec->catdir( $FindBin::Bin, '..', '..', 'share', 'migrations' ),
 );
-my $dbh = $db->connect;
+my $connection = $db->connect;
+my $dbh        = $connection->{dbh};
+
 $db->migrate( $dbh );
 
 my $hash       = '0123456789abcdef0123456789abcdef01234567';
@@ -46,7 +48,7 @@ is(
     ),
     {
      ok         => 1,
-     infohash   => $hash,
+     hash   => $hash,
      seen       => 2,
      stored     => 2,
      fetched_on => $fetched_on,
@@ -55,7 +57,7 @@ is(
 
 my $payload = decode_json(
          $dbh->selectrow_array(
-           q{SELECT payload_json FROM API_torrents_trackers WHERE infohash = ?},
+           q{SELECT payload_json FROM API_torrents_trackers WHERE hash = ?},
            undef, $hash, ) );
 
 is( $payload->[0]{future_key},
@@ -68,7 +70,7 @@ is(
         SELECT tracker_index, fetched_on, url, status, tier,
                num_peers, num_seeds, num_leeches, num_downloaded, msg
         FROM API_torrents_trackers_index
-        WHERE infohash = ? AND tracker_index = 0
+        WHERE hash = ? AND tracker_index = 0
       },
     undef,
     $hash,
@@ -98,14 +100,14 @@ $db->S_API_torrents_trackers(
 
 is(
     $dbh->selectrow_array(
-         q{SELECT COUNT(*) FROM API_torrents_trackers_index WHERE infohash = ?},
+         q{SELECT COUNT(*) FROM API_torrents_trackers_index WHERE hash = ?},
          undef, $hash,
     ),
     1,
     'later response removes stale tracker rows', );
 
 my $before = $dbh->selectrow_array(
-           q{SELECT payload_json FROM API_torrents_trackers WHERE infohash = ?},
+           q{SELECT payload_json FROM API_torrents_trackers WHERE hash = ?},
            undef, $hash, );
 
 like(
@@ -119,7 +121,7 @@ like(
 
 is(
     $dbh->selectrow_array(
-           q{SELECT payload_json FROM API_torrents_trackers WHERE infohash = ?},
+           q{SELECT payload_json FROM API_torrents_trackers WHERE hash = ?},
            undef, $hash,
     ),
     $before,

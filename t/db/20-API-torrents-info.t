@@ -17,7 +17,9 @@ my $db = QBTL::DB->new(
      migration_dir =>
          File::Spec->catdir( $FindBin::Bin, '..', '..', 'share', 'migrations' ),
 );
-my $dbh = $db->connect;
+my $connection = $db->connect;
+my $dbh        = $connection->{dbh};
+
 $db->migrate( $dbh );
 
 my $first_hash  = '0123456789abcdef0123456789abcdef01234567';
@@ -44,7 +46,7 @@ my $stored = $db->S_API_torrents_info(
                           completion_on => 1700000100,
                           last_activity => 1700000200,
                           ratio         => 1.5,
-                              => 1,
+                          private       => 1,
                           future_key => 'retained only in the complete payload',
                          },
                          {
@@ -59,7 +61,7 @@ my $stored = $db->S_API_torrents_info(
                           total_size   => 1000,
                           added_on     => 1700000300,
                           ratio        => 0.25,
-                             => 0,
+                          private      => 0,
                          },
                        ],
                        fetched_on => $fetched_on, );
@@ -78,18 +80,19 @@ is(
 
 is(
   $dbh->selectall_arrayref(
-    q{SELECT infohash, discovered_on, discovered_by FROM torrents ORDER BY
-infohash},
+    q{SELECT hash, discovered_on, discovered_by
+      FROM torrents
+      ORDER BY hash},
     {Slice => {}},
   ),
   [
     {
-     infohash      => $first_hash,
+     hash      => $first_hash,
      discovered_on => $fetched_on,
      discovered_by => 'API_torrents_info',
     },
     {
-     infohash      => $second_hash,
+     hash      => $second_hash,
      discovered_on => $fetched_on,
      discovered_by => 'API_torrents_info',
     },
@@ -98,7 +101,7 @@ infohash},
 
 my $payload = decode_json(
       $dbh->selectrow_array(
-        q{SELECT payload_json FROM API_torrents_info WHERE infohash = ?}, undef,
+        q{SELECT payload_json FROM API_torrents_info WHERE hash = ?}, undef,
         $first_hash, ) );
 
 is( $payload->{hash}, $first_hash,
@@ -110,20 +113,20 @@ is( $payload->{future_key},
 is(
   $dbh->selectrow_hashref(
     q{
-        SELECT infohash, fetched_on, name, save_path, total_size,
-        FROM API_torrents_info_index
-        WHERE infohash = ?
-      },
+    SELECT hash, fetched_on, name, save_path, total_size, private
+    FROM API_torrents_info_index
+    WHERE hash = ?
+    },
     undef,
     $first_hash,
   ),
   {
-   infohash   => $first_hash,
+   hash   => $first_hash,
    fetched_on => $fetched_on,
    name       => 'First torrent',
    save_path  => '/Volumes/One',
    total_size => 100,
-    => 1,
+   private    => 1,
   },
   'selected torrents_info fields indexed', );
 
@@ -132,13 +135,13 @@ my $updated = $db->S_API_torrents_info(
                                 $dbh,
                                 [
                                   {
-                                   hash         => $first_hash,
+                                   hash     => $first_hash,
                                    name         => 'First torrent renamed',
                                    state        => 'uploading',
                                    save_path    => '/Volumes/One',
                                    content_path => '/Volumes/One/First torrent',
                                    total_size   => 100,
-                                      => 1,
+                                   private      => 1,
                                   },
                                 ],
                                 fetched_on => $updated_on, );
@@ -148,7 +151,7 @@ is( $updated->{existing}, 1, 'repeat observation counted as existing' );
 
 is(
   $dbh->selectrow_hashref(
-q{SELECT fetched_on, name, state FROM API_torrents_info_index WHERE infohash =
+    q{SELECT fetched_on, name, state FROM API_torrents_info_index WHERE hash =
 ?},
     undef,
     $first_hash,

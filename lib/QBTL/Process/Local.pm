@@ -98,26 +98,32 @@ sub _scan_common ( $self, %arg ) {
 
   return $self->db_process->with_db(
     sub ( $db, $dbh ) {
-      my $stored                   = 0;
-      my $parsed                   = 0;
-      my $parse_problem            = 0;
-      my $skipped_known            = 0;
-      my $skipped_excluded         = 0;
-      my $fastresume_stored        = 0;
-      my $fastresume_parsed        = 0;
-      my $fastresume_parse_problem = 0;
-      my $fastresume_skipped_known = 0;
+      my $stored                      = 0;
+      my $parsed                      = 0;
+      my $parse_problem               = 0;
+      my $skipped_known               = 0;
+      my $skipped_excluded            = 0;
+      my $fastresume_stored           = 0;
+      my $fastresume_parsed           = 0;
+      my $fastresume_parse_problem    = 0;
+      my $fastresume_skipped_excluded = 0;
+      my $fastresume_skipped_known    = 0;
       my @problem;
 
       my $broad_scan = defined $arg{path} && $arg{path} ne '' ? 0 : 1;
 
       for my $type ( qw(torrent fastresume) ) {
         for my $path ( @{$scan->{types}{$type}{paths} // []} ) {
-
-          if ( $broad_scan && _is_broad_excluded_path( $path ) ) {
-            $skipped_excluded++;
-            next;
-          }
+          #
+          #           if ( $broad_scan && _is_broad_excluded_path( $path ) ) {
+          #             if ( $type eq 'fastresume' ) {
+          #               $fastresume_skipped_excluded++;
+          #             } else {
+          #               $skipped_excluded++;
+          #             }
+          #
+          #             next;
+          #           }
 
           if ( $refresh_only ) {
             my $known =
@@ -135,6 +141,8 @@ sub _scan_common ( $self, %arg ) {
             }
           }
 
+          my $excluded = $broad_scan && _is_broad_excluded_path( $path );
+
           if ( $type eq 'fastresume' ) {
             my $stored_one =
                 $self->_store_fastresume_path(
@@ -142,12 +150,28 @@ sub _scan_common ( $self, %arg ) {
                                                dbh      => $dbh,
                                                path     => $path,
                                                backend  => $scan->{backend},
-                                               problems => \@problem, );
-            $fastresume_stored++        if $stored_one->{stored};
-            $fastresume_parsed++        if $stored_one->{parsed};
-            $fastresume_parse_problem++ if $stored_one->{parse_problem};
+                                               problems => \@problem,
+                                               parse    => $excluded ? 0 : 1, );
+
+            $fastresume_stored++ if $stored_one->{stored};
+
+            if ( $excluded ) {
+              $fastresume_skipped_excluded++;
+            } else {
+              $fastresume_parsed++ if $stored_one->{parsed};
+              $fastresume_parse_problem++
+                  if $stored_one->{parse_problem};
+            }
 
             next;
+
+          }
+
+          if ( $excluded ) {
+            $skipped_excluded++;
+
+            next;
+
           }
 
           my $stored_one =
@@ -239,6 +263,12 @@ sub _scan_common ( $self, %arg ) {
           ? $bt_backup_db_fastresume
           : $bt_backup_fs_fastresume;
 
+      warn "torrent seen: " . ( $scan->{types}{torrent}{count} // 0 ) . "\n";
+      warn "excluded: $skipped_excluded\n";
+      warn "fastresume seen: "
+          . ( $scan->{types}{fastresume}{count} // 0 ) . "\n";
+      warn "fastresume excluded: $fastresume_skipped_excluded\n";
+
       return {
         ok              => @problem      ? 0               : 1,
         action          => $refresh_only ? 'local_refresh' : 'local_scan',
@@ -248,28 +278,23 @@ sub _scan_common ( $self, %arg ) {
         search_tool     => $scan->{search_tool},
         seen            => $scan->{count},
 
-        #         torrent_seen     => $scan->{types}{torrent}{count} // 0,
-        torrent_seen => undef,
+        torrent_seen => $scan->{types}{torrent}{count} // 0,
 
         stored           => $stored,
         parsed           => $parsed,
         parse_problems   => $parse_problem,
         skipped_known    => $skipped_known,
         skipped_excluded => $skipped_excluded,
+        fastresume_seen  => $scan->{types}{fastresume}{count} // 0,
 
-        #         fastresume_seen  => $scan->{types}{fastresume}{count} // 0,
-        fastresume_seen => undef,
+        total => $db->C_local_torrent_file_count( $dbh ),
 
-        #         total           => $db->local_torrent_file_count( $dbh ),
-        total => undef,
-
-        fastresume_stored         => $fastresume_stored,
-        fastresume_parsed         => $fastresume_parsed,
-        fastresume_parse_problems => $fastresume_parse_problem,
-        fastresume_skipped_known  => $fastresume_skipped_known,
-
-#         fastresume_total          => $db->local_fastresume_file_count( $dbh ),
-        local_fastresume_file_count => undef,
+        fastresume_stored           => $fastresume_stored,
+        fastresume_parsed           => $fastresume_parsed,
+        fastresume_parse_problems   => $fastresume_parse_problem,
+        fastresume_skipped_known    => $fastresume_skipped_known,
+        fastresume_skipped_excluded => $fastresume_skipped_excluded,
+        fastresume_total => $db->C_local_fastresume_file_count( $dbh ),
 
         bt_backup_exists        => $bt_backup_exists,
         bt_backup_count_source  => $bt_backup_db_valid ? 'db' : 'filesystem',
@@ -289,13 +314,13 @@ sub _scan_common ( $self, %arg ) {
 }
 
 sub _store_fastresume_path ( $self, %arg ) {
-  my $db      = $arg{db};
-  my $dbh     = $arg{dbh};
-  my $path    = $arg{path};
-  my $backend = $arg{backend};
-  my $problem = $arg{problems};
-
-  my @stat = stat( $path );
+  my $db       = $arg{db};
+  my $dbh      = $arg{dbh};
+  my $path     = $arg{path};
+  my $backend  = $arg{backend};
+  my $problem  = $arg{problems};
+  my $do_parse = exists $arg{parse} ? $arg{parse} : 1;
+  my @stat     = stat( $path );
 
   if ( !@stat ) {
     push @$problem, "stat failed for $path: $!";
@@ -320,7 +345,18 @@ sub _store_fastresume_path ( $self, %arg ) {
 
   if ( !$store->{ok} ) {
     push @$problem, "fastresume store failed for $path";
-    return {stored => 0, parsed => 0, parse_problem => 0,};
+
+    return {
+            stored        => 0,
+            parsed        => 0,
+            parse_problem => 0,};
+  }
+
+  if ( !$do_parse ) {
+    return {
+            stored        => 1,
+            parsed        => 0,
+            parse_problem => 0,};
   }
 
   my $parse = $self->parser->parse_file( $path );
@@ -330,7 +366,7 @@ sub _store_fastresume_path ( $self, %arg ) {
                                         $dbh,
                                         {
                                          path          => $path,
-                                         infohash      => $parse->{infohash},
+                                         hash      => $parse->{hash},
                                          parse_ok      => $parse->{ok} ? 1 : 0,
                                          parse_problem => $parse->{ok}
                                          ? undef
@@ -358,6 +394,7 @@ sub _store_fastresume_path ( $self, %arg ) {
 
   return {
           stored        => 1,
+          inserted      => 0,
           parsed        => $parse->{ok} ? 1 : 0,
           parse_problem => $parse->{ok} ? 0 : 1,};
 }
@@ -423,7 +460,7 @@ sub _store_torrent_path ( $self, %arg ) {
                             $dbh,
                             {
                              path               => $path,
-                             infohash           => $parse->{infohash},
+                             hash           => $parse->{hash},
                              torrent_name       => $parse->{torrent_name},
                              comment            => $parse->{comment},
                              announce           => $parse->{announce},
@@ -488,7 +525,7 @@ sub _store_observed_keys ( $self, %arg ) {
   my $label   = $arg{label};
   my $problem = $arg{problems};
 
-  return if !$parse->{ok} || !$parse->{infohash};
+  return if !$parse->{ok} || !$parse->{hash};
 
   my %seen;
   my @observed;
@@ -512,7 +549,7 @@ sub _store_observed_keys ( $self, %arg ) {
   my $stored = eval {
     $db->upsert_hash_values(
                              $dbh,
-                             hash   => $parse->{infohash},
+                             hash   => $parse->{hash},
                              values => \@observed, );
   };
 

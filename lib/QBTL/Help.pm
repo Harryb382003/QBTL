@@ -84,7 +84,7 @@ sub topics ( $class ) {
             title    => 'QBT qBittorrent commands',
             usage    => 'qbtl qbt <command>',
             commands => [
-                    [ add  => 'Add/rehydrate a torrent by path or infohash' ],
+                    [ add  => 'Add/rehydrate a torrent by path or hash' ],
                     [ help => 'Show this help' ],
                     [ info            => 'Fetch qBittorrent torrents/info' ],
                     [ preferences => 'Store/list qBittorrent app/preferences' ],
@@ -94,7 +94,7 @@ sub topics ( $class ) {
             examples => [
                           'qbtl qbt help',
                           'qbtl qbt add /path/to/file.torrent',
-                          'qbtl qbt add <infohash>',
+                          'qbtl qbt add <hash>',
                           'qbtl qbt info',
                           'qbtl qbt preferences',
                           'qbtl qbt preferences keys',
