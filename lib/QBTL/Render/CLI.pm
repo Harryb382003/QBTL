@@ -190,11 +190,20 @@ sub init ( $self, $result ) {
     say {$out} '  refreshed';
   }
 
-  if ( $result->{qbt_refresh} && $result->{qbt_refresh}{ok} ) {
+  if ( my $qbt = $result->{qbt_refresh} ) {
     say {$out} '';
     say {$out} 'qBT inventory:';
     say {$out} '  refreshed';
-  }
+    say {$out} '  loaded:              ' . ( $qbt->{torrents}           // 0 );
+    say {$out} '  info stored:         ' . ( $qbt->{info_stored}        // 0 );
+    say {$out} '  properties stored:   ' . ( $qbt->{properties_stored}  // 0 );
+    say {$out} '  file lists stored:   ' . ( $qbt->{files_stored}       // 0 );
+    say {$out} '  trackers stored:     ' . ( $qbt->{trackers_stored}    // 0 );
+    say {$out} '  trackers skipped:    ' . ( $qbt->{trackers_skipped}   // 0 );
+    say {$out} '  metadata preserved:  ' . ( $qbt->{preserved_existing} // 0 );
+    say {$out} '  problems:            '
+        . scalar( @{ $qbt->{problems} // [] } );
+}
 
   if ( $result->{local_scan} ) {
   my $scan = $result->{local_scan};
@@ -207,6 +216,7 @@ sub init ( $self, $result ) {
   say {$out} '  torrent parsed:   ' . ( $scan->{parsed} // 0 );
   say {$out} '  torrent problems: ' . ( $scan->{parse_problems} // 0 );
   say {$out} '  torrent total:    ' . ( $scan->{total} // 0 );
+  say {$out} '';
   say {$out} '  fastres classified: ' . ( $scan->{fastresume_seen} // 0 );
   say {$out} '  fastres excluded:   '
               . ( $scan->{fastresume_skipped_excluded} // 0 );

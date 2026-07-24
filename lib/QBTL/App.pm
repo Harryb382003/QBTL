@@ -111,12 +111,24 @@ sub init ( $self ) {
   my $elapsed = time - $started;
 
   return {
-          ok          => $migration->{ok}
-                      && $preferences->{ok}
-                      && $refresh->{ok}
+    ok => $preferences->{ok}
+      && $refresh->{ok}
+      && $local_scan->{ok}
 #                     && $export_dedupe->{ok}
-                      ? 1 : 0,
-          elapsed       => sprintf( '%.3f', $elapsed ),};
+      ? 1
+      : 0,
+
+    migration => {
+      ok      => 1,
+      applied => $migration,
+    },
+
+    preferences => $preferences,
+    qbt_refresh => $refresh,
+    local_scan  => $local_scan,
+
+    elapsed => sprintf( '%.3f', $elapsed ),
+  };
 }
 
 sub install ( $self ) {

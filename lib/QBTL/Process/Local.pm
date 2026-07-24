@@ -204,8 +204,6 @@ sub _scan_common ( $self, %arg ) {
 
       my $bt_backup_fs_torrents   = 0;
       my $bt_backup_fs_fastresume = 0;
-      my $bt_backup_db_torrents   = 0;
-      my $bt_backup_db_fastresume = 0;
 
       if ( $bt_backup_exists ) {
         if ( opendir my $bt_dh, $bt_backup_dir ) {
@@ -225,43 +223,7 @@ sub _scan_common ( $self, %arg ) {
 
           closedir $bt_dh;
         }
-
-        my $bt_backup_prefix = $bt_backup_dir . '/';
-        my $prefix_length    = length $bt_backup_prefix;
-
-        ( $bt_backup_db_torrents ) = $dbh->selectrow_array(
-          q{
-            SELECT COUNT(*)
-            FROM local_torrent_files
-            WHERE substr(path, 1, ?) = ?
-          },
-          undef,
-          $prefix_length,
-          $bt_backup_prefix, );
-
-        ( $bt_backup_db_fastresume ) = $dbh->selectrow_array(
-          q{
-            SELECT COUNT(*)
-            FROM local_fastresume_files
-            WHERE substr(path, 1, ?) = ?
-          },
-          undef,
-          $prefix_length,
-          $bt_backup_prefix, );
       }
-
-      my $bt_backup_db_valid =
-             $bt_backup_exists
-          && $bt_backup_db_torrents == $bt_backup_fs_torrents
-          && $bt_backup_db_fastresume == $bt_backup_fs_fastresume ? 1 : 0;
-
-      my $bt_backup_torrents =
-          $bt_backup_db_valid ? $bt_backup_db_torrents : $bt_backup_fs_torrents;
-
-      my $bt_backup_fastresume =
-            $bt_backup_db_valid
-          ? $bt_backup_db_fastresume
-          : $bt_backup_fs_fastresume;
 
       warn "torrent seen: " . ( $scan->{types}{torrent}{count} // 0 ) . "\n";
       warn "excluded: $skipped_excluded\n";
@@ -287,23 +249,30 @@ sub _scan_common ( $self, %arg ) {
         skipped_excluded => $skipped_excluded,
         fastresume_seen  => $scan->{types}{fastresume}{count} // 0,
 
-        total => $db->C_local_torrent_file_count( $dbh ),
+        # DBD::SQLite::db selectrow_array failed:
+        # no such table: local_torrent_files at lib/QBTL/DB.pm line 164.
+
+        total => $db->C_LOC_torrents_count( $dbh ),
 
         fastresume_stored           => $fastresume_stored,
         fastresume_parsed           => $fastresume_parsed,
         fastresume_parse_problems   => $fastresume_parse_problem,
         fastresume_skipped_known    => $fastresume_skipped_known,
         fastresume_skipped_excluded => $fastresume_skipped_excluded,
-        fastresume_total => $db->C_local_fastresume_file_count( $dbh ),
 
-        bt_backup_exists        => $bt_backup_exists,
-        bt_backup_count_source  => $bt_backup_db_valid ? 'db' : 'filesystem',
-        bt_backup_db_valid      => $bt_backup_db_valid,
-        bt_backup_torrents      => $bt_backup_torrents,
-        bt_backup_fastresume    => $bt_backup_fastresume,
-        bt_backup_mismatch      => $bt_backup_fastresume - $bt_backup_torrents,
-        bt_backup_db_torrents   => $bt_backup_db_torrents,
-        bt_backup_db_fastresume => $bt_backup_db_fastresume,
+       #         fastresume_total => $db->C_local_fastresume_file_count( $dbh ),
+        fastresume_total => undef,    # no LOC_fastresume inventory exists yet
+
+        bt_backup_exists       => $bt_backup_exists,
+        bt_backup_count_source => 'filesystem',
+        bt_backup_db_valid     => undef,
+
+        bt_backup_torrents   => $bt_backup_fs_torrents,
+        bt_backup_fastresume => $bt_backup_fs_fastresume,
+        bt_backup_mismatch => $bt_backup_fs_fastresume - $bt_backup_fs_torrents,
+
+        bt_backup_db_torrents   => undef,
+        bt_backup_db_fastresume => undef,
         bt_backup_fs_torrents   => $bt_backup_fs_torrents,
         bt_backup_fs_fastresume => $bt_backup_fs_fastresume,
 
@@ -366,7 +335,7 @@ sub _store_fastresume_path ( $self, %arg ) {
                                         $dbh,
                                         {
                                          path          => $path,
-                                         hash      => $parse->{hash},
+                                         hash          => $parse->{hash},
                                          parse_ok      => $parse->{ok} ? 1 : 0,
                                          parse_problem => $parse->{ok}
                                          ? undef
@@ -458,7 +427,7 @@ sub _store_torrent_path ( $self, %arg ) {
                             $dbh,
                             {
                              path               => $path,
-                             hash           => $parse->{hash},
+                             hash               => $parse->{hash},
                              torrent_name       => $parse->{torrent_name},
                              comment            => $parse->{comment},
                              announce           => $parse->{announce},

@@ -160,14 +160,13 @@ sub verify_path ( $self ) {
 # Consume
 #--------------------------------------------------------------------------
 
-sub C_local_torrent_file_count ( $self, $dbh ) {
-  my ( $count ) =
-      $dbh->selectrow_array( 'SELECT COUNT(*) FROM local_torrent_files' );
+sub C_LOC_torrents_count ( $self, $dbh ) {
+  my ( $count ) = $dbh->selectrow_array( 'SELECT COUNT(*) FROM LOC_torrents' );
 
   return $count // 0;
 }
 
-sub C_local_fastresume_file_count ( $self, $dbh ) {
+sub C_LOC_fastresume_file_count ( $self, $dbh ) {
   my ( $count ) =
       $dbh->selectrow_array( 'SELECT COUNT(*) FROM local_fastresume_files' );
 
@@ -777,21 +776,21 @@ SQL
     );
 
     $info_sth->execute(
-                         $row->{path},
-                         $row->{hash},
-                         $row->{torrent_name},
-                         $row->{comment},
-                         $row->{announce},
-                         $row->{created_by},
-                         $row->{creation_date},
-                         $row->{parse_ok},
-                         $row->{parse_problem},
-                         $row->{payload_kind},
-                         $row->{payload_root_name},
-                         $row->{payload_file_count},
-                         $row->{payload_total_size},
-                         $row->{payload_probe_path},
-                         $row->{payload_probe_name}, );
+                        $row->{path},
+                        $row->{hash},
+                        $row->{torrent_name},
+                        $row->{comment},
+                        $row->{announce},
+                        $row->{created_by},
+                        $row->{creation_date},
+                        $row->{parse_ok},
+                        $row->{parse_problem},
+                        $row->{payload_kind},
+                        $row->{payload_root_name},
+                        $row->{payload_file_count},
+                        $row->{payload_total_size},
+                        $row->{payload_probe_path},
+                        $row->{payload_probe_name}, );
 
     $dbh->commit
         if $owns_transaction;
@@ -799,13 +798,12 @@ SQL
     {
      ok      => 1,
      path    => $row->{path},
-     changed => $info_sth->rows,
-    };
+     changed => $info_sth->rows,};
   };
 
   my $error = $@;
 
-  if ($error) {
+  if ( $error ) {
     eval { $dbh->rollback if $owns_transaction && !$dbh->{AutoCommit}; };
     die $error;
   }
