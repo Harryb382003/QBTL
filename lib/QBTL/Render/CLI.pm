@@ -174,6 +174,25 @@ sub init ( $self, $result ) {
 
   if ( !$result->{ok} ) {
     say {$out} 'QBTL init completed with problems.';
+
+    my $local = $result->{local_scan} // {};
+    if ($local->{parse_problems}) {
+      say {$out} '  local torrent parse failures: '
+        . $local->{parse_problems} // 0 ;
+    }
+
+    if (@{ $local->{problems} // [] }) {
+      say {$out} '  local operational failures: '
+        . scalar( @{ $local->{problems} // [] } );
+    }
+
+    my $qbt = $result->{qbt_refresh} // {};
+
+    if (@{ $qbt->{problems} // [] }) {
+      say {$out} '  qBT refresh failures: '
+        . scalar( @{ $qbt->{problems} // [] } );
+    }
+
   } else {
     say {$out} 'QBTL init complete.';
   }
@@ -206,25 +225,41 @@ sub init ( $self, $result ) {
 }
 
   if ( $result->{local_scan} ) {
-  my $scan = $result->{local_scan};
+    my $scan = $result->{local_scan};
 
-  say {$out} '';
-  say {$out} 'Local scan:';
-  say {$out} '  backend:          ' . ( $scan->{backend} // '' );
-  say {$out} '  seen:             ' . ( $scan->{seen} // 0 );
-  say {$out} '  torrent stored:   ' . ( $scan->{stored} // 0 );
-  say {$out} '  torrent parsed:   ' . ( $scan->{parsed} // 0 );
-  say {$out} '  torrent problems: ' . ( $scan->{parse_problems} // 0 );
-  say {$out} '  torrent total:    ' . ( $scan->{total} // 0 );
-  say {$out} '';
-  say {$out} '  fastres classified: ' . ( $scan->{fastresume_seen} // 0 );
-  say {$out} '  fastres excluded:   '
+    say {$out} '';
+    say {$out} 'Local scan:';
+    say {$out} '  backend:          ' . ( $scan->{backend} // '' );
+    say {$out} '  seen:             ' . ( $scan->{seen} // 0 );
+    say {$out} '  torrent stored:   ' . ( $scan->{stored} // 0 );
+    say {$out} '  torrent parsed:   ' . ( $scan->{parsed} // 0 );
+
+    for my $detail ( @{ $scan->{parse_problem_details} // [] } ) {
+      say {$out} '    path:    ' . ( $detail->{path} // '(unknown)' );
+      say {$out} '    problem: '
+        . ( $detail->{problem} // 'unknown parse failure' );
+    }
+
+    say {$out} '  torrent total:    ' . ( $scan->{total} // 0 );
+    say {$out} '';
+    say {$out} '  fastres classified: ' . ( $scan->{fastresume_seen} // 0 );
+    say {$out} '  fastres excluded:   '
               . ( $scan->{fastresume_skipped_excluded} // 0 );
-  say {$out} '  fastres stored:   ' . ( $scan->{fastresume_stored} // 0 );
-  say {$out} '  fastres parsed:   ' . ( $scan->{fastresume_parsed} // 0 );
-  say {$out} '  fastres problems: ' . ( $scan->{fastresume_parse_problems} // 0 );
-  say {$out} '  fastres total:    ' . ( $scan->{fastresume_total} // 0 );
-}
+    say {$out} '  fastres stored:   ' . ( $scan->{fastresume_stored} // 0 );
+    say {$out} '  fastres parsed:   ' . ( $scan->{fastresume_parsed} // 0 );
+    say {$out} '  fastres problems: '
+      . ( $scan->{fastresume_parse_problems} // 0 );
+    say {$out} '  fastres total:    ' . ( $scan->{fastresume_total} // 0 );
+
+  my $operational_problems = $scan->{problems} // [];
+  say {$out} '  operational problems: ' . scalar @$operational_problems;
+  say {$out} "    $_" for @$operational_problems;
+
+  }
+  say {$out} '';
+  say {$out} 'Elapsed: ' . $self->elapsed(
+                            human_duration( $result->{elapsed} // 0 )
+                          );
 
   if ( $result->{export_dedupe} ) {
     my $export = $result->{export_dedupe};
@@ -242,10 +277,7 @@ sub init ( $self, $result ) {
                                              indent       => '', );
   }
 
-  say {$out} '';
-  say {$out} 'Elapsed: ' . $self->elapsed(
-                            human_duration( $result->{elapsed} // 0 )
-                          );
+
 
   return $result->{ok} ? 0 : 1;
 }

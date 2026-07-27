@@ -75,9 +75,17 @@ like( $migration_files[10], qr{011_BC_torrents[.]sql\z},
       'BC_backup migration discovered eleventh', );
 like( $migration_files[11], qr{012_LOC_torrents[.]sql\z},
       'LOC torrents migration discovered twelfth', );
-like( $migration_files[12], qr{013_LOC_torrents_info_index[.]sql\z},
+like( $migration_files[12],
+      qr{013_LOC_torrents_info_index[.]sql\z},
       'LOC torrents info index migration discovered thirteenth', );
-is( $db->migrate( $dbh ), 13, 'Thirteen migrations executed', );
+like( $migration_files[13],
+      qr{014_LOC_hash_values[.]sql\z},
+      'LOC torrents info index migration discovered foourteenth', );
+like( $migration_files[14],
+      qr{015_LOC_torrents_fastresume[.]sql\z},
+      'LOC torrents info index migration discovered fifteenth', );
+
+is( $db->migrate( $dbh ), 15, 'Fourteen migrations executed', );
 
 my $table_name = $dbh->selectrow_array(
   q{
@@ -97,7 +105,7 @@ my $migration_count = $dbh->selectrow_array(
   }
 );
 
-is( $migration_count, 13, 'migrations recorded exactly once', );
+is( $migration_count, 15, 'migrations recorded exactly once', );
 
 is( $db->migrate( $dbh ), 0, 'all migrations skipped after application', );
 
@@ -161,7 +169,7 @@ my $recorded_versions = $dbh->selectcol_arrayref(
 );
 
 is( $recorded_versions,
-    [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 ],
+    [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 ],
     'applied migration versions recorded in order', );
 
 $dbh->disconnect;

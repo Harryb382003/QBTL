@@ -5,11 +5,19 @@ use common::sense;
 use feature qw( signatures );
 
 use Time::HiRes qw( time );
+use File::Basename qw( basename );
+use File::Copy qw( move );
+use File::Path qw( make_path );
+use File::Spec;
 
 use QBTL::DB;
 use QBTL::Local::Parser;
 use QBTL::Local::Scanner;
 use QBTL::Process::WithDB;
+use QBTL::Process::Errors qw(
+    classify_torrent_parse_error
+    is_quarantinable
+);
 
 sub new ( $class, %arg ) {
   $arg{db_process} //= QBTL::Process::WithDB->new( db_path => $arg{db_path}, );
@@ -98,9 +106,10 @@ sub _scan_common ( $self, %arg ) {
 
   return $self->db_process->with_db(
     sub ( $db, $dbh ) {
-      my $stored                      = 0;
-      my $parsed                      = 0;
-      my $parse_problem               = 0;
+      my $stored        = 0;
+      my $parsed        = 0;
+      my $parse_problem = 0;
+      my @parse_problem_detail;
       my $skipped_known               = 0;
       my $skipped_excluded            = 0;
       my $fastresume_stored           = 0;
@@ -182,9 +191,14 @@ sub _scan_common ( $self, %arg ) {
                                           backend  => $scan->{backend},
                                           problems => \@problem, );
 
-          $stored++        if $stored_one->{stored};
-          $parsed++        if $stored_one->{parsed};
-          $parse_problem++ if $stored_one->{parse_problem};
+          $stored++ if $stored_one->{stored};
+          $parsed++ if $stored_one->{parsed};
+          if ( $stored_one->{parse_problem} ) {
+            $parse_problem++;
+
+            push @parse_problem_detail, $stored_one->{parse_problem_detail}
+                if $stored_one->{parse_problem_detail};
+          }
         }
       }
 
@@ -242,12 +256,13 @@ sub _scan_common ( $self, %arg ) {
 
         torrent_seen => $scan->{types}{torrent}{count} // 0,
 
-        stored           => $stored,
-        parsed           => $parsed,
-        parse_problems   => $parse_problem,
-        skipped_known    => $skipped_known,
-        skipped_excluded => $skipped_excluded,
-        fastresume_seen  => $scan->{types}{fastresume}{count} // 0,
+        stored                => $stored,
+        parsed                => $parsed,
+        parse_problems        => $parse_problem,
+        parse_problem_details => \@parse_problem_detail,
+        skipped_known         => $skipped_known,
+        skipped_excluded      => $skipped_excluded,
+        fastresume_seen       => $scan->{types}{fastresume}{count} // 0,
 
         # DBD::SQLite::db selectrow_array failed:
         # no such table: local_torrent_files at lib/QBTL/DB.pm line 164.
@@ -297,24 +312,21 @@ sub _store_fastresume_path ( $self, %arg ) {
   }
 
   my $store = eval {
-    $db->upsert_local_fastresume_file(
-                                       $dbh,
-                                       {
-                                        path    => $path,
-                                        size    => $stat[7],
-                                        mtime   => $stat[9],
-                                        backend => $backend,
-                                       } );
+    $db->S_LOC_torrents_fastresume(
+                                    $dbh,
+                                    path    => $path,
+                                    size    => $stat[7],
+                                    mtime   => $stat[9],
+                                    backend => $backend, );
   };
 
   if ( $@ ) {
-    push @$problem, "fastresume store failed for $path: $@";
+    push @$problem, __LINE__ . ": LOC_torrents_fastresume $path: $@";
     return {stored => 0, parsed => 0, parse_problem => 0,};
   }
 
   if ( !$store->{ok} ) {
-    push @$problem, "fastresume store failed for $path";
-
+    __LINE__ . ": LOC_torrents_fastresume $path";
     return {
             stored        => 0,
             parsed        => 0,
@@ -344,12 +356,12 @@ sub _store_fastresume_path ( $self, %arg ) {
   };
 
   if ( $@ ) {
-    push @$problem, "fastresume parse store failed for $path: $@";
+    push @$problem, ": fastresume parse store failed for $path: $@";
     return {stored => 1, parsed => 0, parse_problem => 0,};
   }
 
   if ( !$parse_store->{ok} ) {
-    push @$problem, "fastresume parse store failed for $path";
+    push @$problem, ": fastresume parse store failed for $path";
     return {stored => 1, parsed => 0, parse_problem => 0,};
   }
 
@@ -388,6 +400,37 @@ sub _store_torrent_path ( $self, %arg ) {
             parse_problem => 0,};
   }
 
+  my $parse      = $self->parser->parse_file( $path );
+  my $error_code = $parse->{ok}
+      ? undef
+      : classify_torrent_parse_error( $parse->{problem} );
+  my $squelch_parse_problem = 0;
+
+  if ( defined $error_code && is_quarantinable( $error_code ) ) {
+    my $problem_dir = $self->_problem_torrent_dir;
+
+    if ( defined $problem_dir && _path_is_within( $path, $problem_dir ) ) {
+      $squelch_parse_problem = 1;
+    } elsif ( defined $problem_dir ) {
+      my $move_result = _move_to_problem_torrents(
+                                                   path        => $path,
+                                                   destination => $problem_dir, );
+
+      if ( !$move_result->{ok} ) {
+        push @$problem,
+            "problem torrent move failed for $path: $move_result->{problem}";
+
+        return {
+                stored        => 0,
+                parsed        => 0,
+                parse_problem => 0,};
+      }
+
+      $path = $move_result->{path};
+
+    }
+  }
+
   my $result = eval {
     $db->S_LOC_torrents_upsert(
                                 $dbh,
@@ -420,10 +463,8 @@ sub _store_torrent_path ( $self, %arg ) {
             parse_problem => 0,};
   }
 
-  my $parse = $self->parser->parse_file( $path );
-
   my $parse_result = eval {
-    $db->S_local_torrent_parse_update(
+    $db->S_LOC_torrent_parse_update(
                             $dbh,
                             {
                              path               => $path,
@@ -479,9 +520,72 @@ sub _store_torrent_path ( $self, %arg ) {
                                problems => $problem, );
 
   return {
-          stored        => 1,
-          parsed        => $parse->{ok} ? 1 : 0,
-          parse_problem => $parse->{ok} ? 0 : 1,};
+    stored        => 1,
+    parsed        => $parse->{ok} ? 1 : 0,
+    parse_problem => $parse->{ok} || $squelch_parse_problem ? 0 : 1,
+
+    parse_problem_detail => $parse->{ok} || $squelch_parse_problem
+    ? undef
+    : {
+       path       => $path,
+       error_code => $error_code,
+       problem    => $parse->{problem} // 'unknown parse failure',
+    },};
+}
+
+sub _problem_torrent_dir ( $self ) {
+  my $root = $self->{install_root};
+
+  return if !defined $root || $root eq '';
+
+  return File::Spec->catdir( $root, 'problem_torrents' );
+}
+
+sub _move_to_problem_torrents ( %arg ) {
+  my $path        = $arg{path};
+  my $destination = $arg{destination};
+
+  eval { make_path( $destination ) if !-d $destination; 1 }
+      or return {
+                  ok      => 0,
+                  problem => "could not create $destination: $@",};
+
+  my $name   = basename( $path );
+  my $target = File::Spec->catfile( $destination, $name );
+  my $suffix = 1;
+
+  while ( -e $target ) {
+    my ( $stem, $extension ) = $name =~ /\A(.*?)([.]torrent)\z/
+        ? ( $1, $2 )
+        : ( $name, '' );
+
+    $target = File::Spec->catfile(
+                                   $destination,
+                                   "$stem.$suffix$extension", );
+    $suffix++;
+  }
+
+  return {
+          ok      => 0,
+          problem => "$!",}
+      if !move( $path, $target );
+
+  return {
+          ok   => 1,
+          path => $target,};
+}
+
+sub _path_is_within ( $path, $directory ) {
+  return 0 if !defined $path || !defined $directory;
+
+  my $canonical_path = File::Spec->canonpath( File::Spec->rel2abs( $path ) );
+  my $canonical_dir  = File::Spec->canonpath( File::Spec->rel2abs( $directory ) );
+
+  return 1 if $canonical_path eq $canonical_dir;
+
+  my $prefix = File::Spec->catdir( $canonical_dir, '' );
+
+  return index( $canonical_path, $prefix ) == 0 ? 1 : 0;
 }
 
 sub _store_observed_keys ( $self, %arg ) {
@@ -513,23 +617,15 @@ sub _store_observed_keys ( $self, %arg ) {
          value_type => $value_type,};
   }
 
-  my $stored = eval {
-    $db->upsert_hash_values(
-                             $dbh,
-                             hash   => $parse->{hash},
-                             values => \@observed, );
-  };
-
-  if ( $@ ) {
+  eval {
+    $db->S_LOC_hash_values(
+                            $dbh,
+                            hash   => $parse->{hash},
+                            values => \@observed, );
+    1;
+  } or do {
     push @$problem, "$label key store failed for $path: $@";
-    return;
-  }
-
-  if ( !$stored->{ok} ) {
-    push @$problem,
-        "$label key store failed for $path: "
-        . ( $stored->{error} // 'unknown hash value store error' );
-  }
+  };
 
   return;
 }

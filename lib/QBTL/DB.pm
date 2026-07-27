@@ -692,7 +692,7 @@ SQL
           path => $row->{path},};
 }
 
-sub S_local_torrent_parse_update ( $self, $dbh, $row ) {
+sub S_LOC_torrent_parse_update ( $self, $dbh, $row ) {
   die 'dbh is required'
       if !$dbh;
 
@@ -809,6 +809,84 @@ SQL
   }
 
   return $result;
+}
+
+sub S_LOC_hash_values ( $self, $dbh, %arg ) {
+  my $hash   = $arg{hash};
+  my $values = $arg{values} // [];
+
+  die 'hash is required'
+      if !defined $hash || $hash eq '';
+
+  die 'values must be an array reference'
+      if ref $values ne 'ARRAY';
+
+  my $sth = $dbh->prepare_cached( <<'SQL');
+INSERT INTO LOC_hash_values (
+    hash,
+    key,
+    value,
+    value_type
+)
+VALUES (?, ?, ?, ?)
+ON CONFLICT (
+    hash,
+    key,
+    value,
+    value_type
+)
+DO NOTHING
+SQL
+
+  for my $item ( @$values ) {
+    die 'LOC hash value must be a hash reference'
+        if ref $item ne 'HASH';
+
+    $sth->execute( $hash, $item->{key}, $item->{value}, $item->{value_type}, );
+  }
+
+  return scalar @$values;
+}
+
+sub S_LOC_torrents_fastresume ( $self, $dbh, %arg ) {
+  my $path    = $arg{path};
+  my $size    = $arg{size};
+  my $mtime   = $arg{mtime};
+  my $backend = $arg{backend};
+
+  die 'path is required'
+      if !defined $path || $path eq '';
+
+  die 'backend is required'
+      if !defined $backend || $backend eq '';
+
+  my $sth = $dbh->prepare_cached(<<'SQL');
+INSERT INTO LOC_torrents_fastresume (
+    path,
+    size,
+    mtime,
+    backend,
+    seen
+)
+VALUES (?, ?, ?, ?, 1)
+ON CONFLICT (path)
+DO UPDATE SET
+    size    = excluded.size,
+    mtime   = excluded.mtime,
+    backend = excluded.backend,
+    seen    = 1
+SQL
+
+  $sth->execute(
+    $path,
+    $size,
+    $mtime,
+    $backend,
+  );
+
+  return {
+    ok => 1,
+  };
 }
 
 1;
