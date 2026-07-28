@@ -15,8 +15,10 @@ use QBTL::Local::Parser;
 use QBTL::Local::Scanner;
 use QBTL::Process::WithDB;
 use QBTL::Process::Errors qw(
-    classify_torrent_parse_error
-    is_quarantinable
+    ERR_TORRENT_BDECODE_FAILED
+    begin_error_run
+    has_error
+    error_run_summary
 );
 
 sub new ( $class, %arg ) {
@@ -81,6 +83,8 @@ sub scan ( $self, %arg ) {
 }
 
 sub _scan_common ( $self, %arg ) {
+  begin_error_run();
+
   my $started      = time;
   my $threshold    = $arg{threshold} // 20;
   my $refresh_only = $arg{refresh_only} ? 1 : 0;
@@ -245,6 +249,14 @@ sub _scan_common ( $self, %arg ) {
           . ( $scan->{types}{fastresume}{count} // 0 ) . "\n";
       warn "fastresume excluded: $fastresume_skipped_excluded\n";
 
+      for my $error ( @{ error_run_summary() } ) {
+        warn sprintf(
+          "This error appeared %d times: %s\n",
+          $error->{count},
+          $error->{signature},
+        );
+      }
+
       return {
         ok              => @problem      ? 0               : 1,
         action          => $refresh_only ? 'local_refresh' : 'local_scan',
@@ -260,6 +272,7 @@ sub _scan_common ( $self, %arg ) {
         parsed                => $parsed,
         parse_problems        => $parse_problem,
         parse_problem_details => \@parse_problem_detail,
+        parse_problem_summary => _parse_problem_summary( \@parse_problem_detail ),
         skipped_known         => $skipped_known,
         skipped_excluded      => $skipped_excluded,
         fastresume_seen       => $scan->{types}{fastresume}{count} // 0,
@@ -321,7 +334,13 @@ sub _store_fastresume_path ( $self, %arg ) {
   };
 
   if ( $@ ) {
-    push @$problem, __LINE__ . ": LOC_torrents_fastresume $path: $@";
+    my $error = has_error(
+      source  => __FILE__,
+      line    => __LINE__,
+      message => $@,
+      path    => $path,
+    );
+    push @$problem, $error->{message} if $error->{first};
     return {stored => 0, parsed => 0, parse_problem => 0,};
   }
 
@@ -356,7 +375,13 @@ sub _store_fastresume_path ( $self, %arg ) {
   };
 
   if ( $@ ) {
-    push @$problem, ": fastresume parse store failed for $path: $@";
+    my $error = has_error(
+      source  => __FILE__,
+      line    => __LINE__,
+      message => $@,
+      path    => $path,
+    );
+    push @$problem, $error->{message} if $error->{first};
     return {stored => 1, parsed => 0, parse_problem => 0,};
   }
 
@@ -400,18 +425,21 @@ sub _store_torrent_path ( $self, %arg ) {
             parse_problem => 0,};
   }
 
-  my $parse      = $self->parser->parse_file( $path );
-  my $error_code = $parse->{ok}
+  my $parse = $self->parser->parse_file( $path );
+  my $error = $parse->{ok}
       ? undef
-      : classify_torrent_parse_error( $parse->{problem} );
-  my $squelch_parse_problem = 0;
+      : has_error(
+          source  => __FILE__,
+          line    => __LINE__,
+          message => $parse->{problem},
+          path    => $path,
+        );
+  my $error_code = $error ? $error->{code} : undef;
 
-  if ( defined $error_code && is_quarantinable( $error_code ) ) {
+  if ( $error && $error->{quarantinable} ) {
     my $problem_dir = $self->_problem_torrent_dir;
 
-    if ( defined $problem_dir && _path_is_within( $path, $problem_dir ) ) {
-      $squelch_parse_problem = 1;
-    } elsif ( defined $problem_dir ) {
+    if ( defined $problem_dir && !_path_is_within( $path, $problem_dir ) ) {
       my $move_result = _move_to_problem_torrents(
                                                    path        => $path,
                                                    destination => $problem_dir, );
@@ -443,8 +471,13 @@ sub _store_torrent_path ( $self, %arg ) {
   my $upsert_error = $@;
 
   if ( $upsert_error ) {
-    warn "UPSERT EXCEPTION for $path:\n$upsert_error\n";
-    push @$problem, "store failed for $path: $upsert_error";
+    my $error = has_error(
+      source  => __FILE__,
+      line    => __LINE__,
+      message => $upsert_error,
+      path    => $path,
+    );
+    push @$problem, $error->{message} if $error->{first};
 
     return {
             stored        => 0,
@@ -490,8 +523,13 @@ sub _store_torrent_path ( $self, %arg ) {
   my $parse_store_error = $@;
 
   if ( $parse_store_error ) {
-    warn "PARSE STORE EXCEPTION for $path:\n$parse_store_error\n";
-    push @$problem, "parse store failed for $path: $parse_store_error";
+    my $error = has_error(
+      source  => __FILE__,
+      line    => __LINE__,
+      message => $parse_store_error,
+      path    => $path,
+    );
+    push @$problem, $error->{message} if $error->{first};
 
     return {
             stored        => 1,
@@ -522,15 +560,47 @@ sub _store_torrent_path ( $self, %arg ) {
   return {
     stored        => 1,
     parsed        => $parse->{ok} ? 1 : 0,
-    parse_problem => $parse->{ok} || $squelch_parse_problem ? 0 : 1,
+    parse_problem => $parse->{ok} ? 0 : 1,
 
-    parse_problem_detail => $parse->{ok} || $squelch_parse_problem
+    parse_problem_detail => $parse->{ok}
     ? undef
     : {
-       path       => $path,
-       error_code => $error_code,
-       problem    => $parse->{problem} // 'unknown parse failure',
+       path           => $path,
+       error_code     => $error_code,
+       problem        => $parse->{problem} // 'unknown parse failure',
+       problem_source => $parse->{problem_source},
+       problem_line   => $parse->{problem_line},
     },};
+}
+
+
+sub _parse_problem_summary ( $details ) {
+  my %summary;
+
+  for my $detail ( @{$details // []} ) {
+    my $code    = $detail->{error_code};
+    my $problem = $detail->{problem} // 'unknown parse failure';
+
+    if ( defined $code && $code == ERR_TORRENT_BDECODE_FAILED ) {
+      $problem =~ s/\s+at\s+\d+\z//;
+    }
+
+    my $key = join "\0", defined $code ? $code : '', $problem;
+    my $row = $summary{$key} //= {
+      error_code => $code,
+      problem    => $problem,
+      count      => 0,
+    };
+
+    $row->{count}++;
+  }
+
+  return [
+    sort {
+         ( $a->{error_code} // 0 ) <=> ( $b->{error_code} // 0 )
+      || $a->{problem} cmp $b->{problem}
+    } values %summary
+  ];
 }
 
 sub _problem_torrent_dir ( $self ) {

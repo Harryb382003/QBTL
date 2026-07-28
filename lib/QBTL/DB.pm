@@ -821,14 +821,29 @@ sub S_LOC_hash_values ( $self, $dbh, %arg ) {
   die 'values must be an array reference'
       if ref $values ne 'ARRAY';
 
-  my $sth = $dbh->prepare_cached( <<'SQL');
+  return 0 if !@$values;
+
+  my $chunk_size = 100;
+  my $stored     = 0;
+
+  while ( @$values ) {
+    my @chunk = splice @$values, 0, $chunk_size;
+
+    for my $item ( @chunk ) {
+      die 'LOC hash value must be a hash reference'
+          if ref $item ne 'HASH';
+    }
+
+    my $placeholders = join ', ', ( '(?, ?, ?, ?)' ) x @chunk;
+
+    my $sql = <<"SQL";
 INSERT INTO LOC_hash_values (
     hash,
     key,
     value,
     value_type
 )
-VALUES (?, ?, ?, ?)
+VALUES $placeholders
 ON CONFLICT (
     hash,
     key,
@@ -838,14 +853,17 @@ ON CONFLICT (
 DO NOTHING
 SQL
 
-  for my $item ( @$values ) {
-    die 'LOC hash value must be a hash reference'
-        if ref $item ne 'HASH';
+    my @bind;
 
-    $sth->execute( $hash, $item->{key}, $item->{value}, $item->{value_type}, );
+    for my $item ( @chunk ) {
+      push @bind, $hash, $item->{key}, $item->{value}, $item->{value_type};
+    }
+
+    $dbh->do( $sql, undef, @bind );
+    $stored += @chunk;
   }
 
-  return scalar @$values;
+  return $stored;
 }
 
 sub S_LOC_torrents_fastresume ( $self, $dbh, %arg ) {
@@ -860,7 +878,7 @@ sub S_LOC_torrents_fastresume ( $self, $dbh, %arg ) {
   die 'backend is required'
       if !defined $backend || $backend eq '';
 
-  my $sth = $dbh->prepare_cached(<<'SQL');
+  my $sth = $dbh->prepare_cached( <<'SQL');
 INSERT INTO LOC_torrents_fastresume (
     path,
     size,
@@ -877,16 +895,9 @@ DO UPDATE SET
     seen    = 1
 SQL
 
-  $sth->execute(
-    $path,
-    $size,
-    $mtime,
-    $backend,
-  );
+  $sth->execute( $path, $size, $mtime, $backend, );
 
-  return {
-    ok => 1,
-  };
+  return {ok => 1,};
 }
 
 1;

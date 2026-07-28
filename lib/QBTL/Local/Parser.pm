@@ -442,9 +442,20 @@ sub parse_file ( $self, $path ) {
     my $problem = $decode_error || 'decoded value is not a dictionary';
     $problem =~ s/\s+\z//;
 
+    my $problem_source;
+    my $problem_line;
+
+    if ( $problem =~ s/\s+at\s+(.+?)\s+line\s+(\d+)\.?\z// ) {
+      $problem_source = $1;
+      $problem_line   = 0 + $2;
+    }
+
     return {
-            ok      => 0,
-            problem => "bdecode failed for $path: $problem",};
+      ok             => 0,
+      problem        => "bdecode failed: $problem",
+      problem_source => $problem_source,
+      problem_line   => $problem_line,
+    };
   }
 
   my $hash;

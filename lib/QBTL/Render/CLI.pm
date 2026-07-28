@@ -5,6 +5,7 @@ use common::sense;
 use feature qw( signatures );
 
 use parent 'QBTL::Render::Base';
+use File::Basename qw( basename );
 use QBTL::Util qw( epoch_time human_bytes human_duration);
 
 binmode STDOUT, ':encoding(UTF-8)';
@@ -234,10 +235,15 @@ sub init ( $self, $result ) {
     say {$out} '  torrent stored:   ' . ( $scan->{stored} // 0 );
     say {$out} '  torrent parsed:   ' . ( $scan->{parsed} // 0 );
 
-    for my $detail ( @{ $scan->{parse_problem_details} // [] } ) {
-      say {$out} '    path:    ' . ( $detail->{path} // '(unknown)' );
+    for my $summary ( @{ $scan->{parse_problem_summary} // [] } ) {
+      my $code = defined $summary->{error_code}
+          ? $summary->{error_code}
+          : 'unknown';
+
       say {$out} '    problem: '
-        . ( $detail->{problem} // 'unknown parse failure' );
+        . ( $summary->{problem} // 'unknown parse failure' )
+        . " ($code): "
+        . ( $summary->{count} // 0 );
     }
 
     say {$out} '  torrent total:    ' . ( $scan->{total} // 0 );
