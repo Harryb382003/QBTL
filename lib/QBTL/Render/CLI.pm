@@ -19,6 +19,39 @@ sub new ( $class, %arg ) {
   return bless \%arg, $class;
 }
 
+sub break_point ( %arg ) {
+  my $name    = $arg{name}    // '';
+  my $message = $arg{message} // 'QBTL cannot continue.';
+
+  if ( $name ne 'qbt_unavailable' ) {
+    return {
+      ok       => 0,
+      decision => 'quit',
+      code     => 'XXXX',
+      error    => "Unsupported break point: $name",
+      detail   => 'we should have died here',
+    };
+  }
+
+  print STDERR "\n$message\n";
+  print STDERR "Start or restart qBittorrent.\n";
+  print STDERR "Press Enter to retry, or Q to quit QBTL: ";
+
+  my $input = <STDIN>;
+
+  return {
+    ok       => 1,
+    decision => 'quit',
+  } if !defined $input;
+
+  chomp $input;
+
+  return {
+    ok       => 1,
+    decision => $input =~ /\Aq\z/i ? 'quit' : 'retry',
+  };
+}
+
 sub _db_error ( $self, $result ) {
   return $self->setup(
     {
