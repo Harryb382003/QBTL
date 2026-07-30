@@ -252,11 +252,11 @@ sub _scan_common ( $self, %arg ) {
         }
       }
 
-      warn "torrent seen: " . ( $scan->{types}{torrent}{count} // 0 ) . "\n";
-      warn "excluded: $skipped_excluded\n";
-      warn "fastresume seen: "
-          . ( $scan->{types}{fastresume}{count} // 0 ) . "\n";
-      warn "fastresume excluded: $fastresume_skipped_excluded\n";
+ #       warn "torrent seen: " . ( $scan->{types}{torrent}{count} // 0 ) . "\n";
+ #       warn "excluded: $skipped_excluded\n";
+ #       warn "fastresume seen: "
+ #           . ( $scan->{types}{fastresume}{count} // 0 ) . "\n";
+ #       warn "fastresume excluded: $fastresume_skipped_excluded\n";
 
       return {
         ok              => @problem      ? 0               : 1,

@@ -246,11 +246,11 @@ sub init ( $self, $result ) {
   if ( my $qbt = $result->{qbt_refresh} ) {
     say {$out} '';
     say {$out} 'qBT inventory:';
-    say {$out} '  refreshed';
-    say {$out} '  loaded:              ' . ( $qbt->{torrents}           // 0 );
-    say {$out} '  info stored:         ' . ( $qbt->{info_stored}        // 0 );
-    say {$out} '  properties stored:   ' . ( $qbt->{properties_stored}  // 0 );
-    say {$out} '  file lists stored:   ' . ( $qbt->{files_stored}       // 0 );
+    say {$out} '  Refreshed';
+    say {$out} '  Loaded:              ' . ( $qbt->{torrents}           // 0 );
+    say {$out} '  Torrent info:         ' . ( $qbt->{info_stored}        // 0 );
+    say {$out} '  Extended info:   ' . ( $qbt->{properties_stored}  // 0 );
+    say {$out} '  Payload locations:   ' . ( $qbt->{files_stored}       // 0 );
     say {$out} '  trackers stored:     ' . ( $qbt->{trackers_stored}    // 0 );
     say {$out} '  trackers skipped:    ' . ( $qbt->{trackers_skipped}   // 0 );
     say {$out} '  metadata preserved:  ' . ( $qbt->{preserved_existing} // 0 );
