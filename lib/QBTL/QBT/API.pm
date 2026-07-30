@@ -114,14 +114,27 @@ sub endpoint_spec ($self, $name) {
 sub execute_request ( $self, $request ) {
   if ( !$self->{ua} ) {
     return {
-            ok      => 0,
-            status  => 'no_user_agent',
-            request => $request,
-            error   => 'No user agent configured',
+      ok      => 0,
+      status  => 'no_user_agent',
+      request => $request,
+      error   => 'No user agent configured',
     };
   }
 
-  return $self->_execute_lwp_request( $request );
+  while ( 1 ) {
+    my $result = $self->_execute_lwp_request( $request );
+
+    return $result
+        if ( $result->{status} // '' ) ne 'qbt_unavailable';
+
+    my $decision = $self->break_point(
+      type    => 'qbt_unavailable',
+      message => $result->{error},
+    );
+
+    return $result
+        if ( $decision // '' ) eq 'quit';
+  }
 }
 
 sub _execute_lwp_request ( $self, $request ) {
@@ -137,52 +150,132 @@ sub _execute_lwp_request ( $self, $request ) {
 
     my $res = $self->{ua}->get( $uri );
 
-    return {
-            ok      => $res->is_success ? 1 : 0,
-            status  => $res->status_line,
-            code    => $res->code,
-            request => $request,
-            url     => "$uri",
-            body    => $res->decoded_content // '',
-    };
+    return $self->_lwp_result( $res, $request, "$uri" );
   }
 
   if ( $method eq 'POST' ) {
     if ( $request->{form_data} ) {
       my $res = $self->{ua}->post(
-                                   $url,
-                                   Content_Type => 'form-data',
-                                   Content      => $request->{form_data},
+        $url,
+        Content_Type => 'form-data',
+        Content      => $request->{form_data},
       );
 
-      return {
-              ok      => $res->is_success ? 1 : 0,
-              status  => $res->status_line,
-              code    => $res->code,
-              request => $request,
-              url     => $url,
-              body    => $res->decoded_content // '',
-      };
+      return $self->_lwp_result( $res, $request, $url );
     }
 
-    my $res = $self->{ua}->post( $url, $request->{params} // {} );
+    my $res = $self->{ua}->post(
+      $url,
+      $request->{params} // {},
+    );
 
-    return {
-            ok      => $res->is_success ? 1 : 0,
-            status  => $res->status_line,
-            code    => $res->code,
-            request => $request,
-            url     => $url,
-            body    => $res->decoded_content // '',
-    };
+    return $self->_lwp_result( $res, $request, $url );
   }
 
   return {
-          ok      => 0,
-          status  => 'unsupported_method',
-          request => $request,
-          error   => "Unsupported method: $method",
+    ok      => 0,
+    status  => 'unsupported_method',
+    request => $request,
+    error   => "Unsupported method: $method",
   };
+}
+
+# sub _execute_lwp_request ( $self, $request ) {
+# say "###############################   _execute_lwp_request";
+#   my $method = $request->{method} // '';
+#   my $url    = $request->{url}    // '';
+#
+#   if ( $method eq 'GET' ) {
+#     my $uri = URI->new( $url );
+#
+#     if ( %{ $request->{params} // {} } ) {
+#       $uri->query_form( %{ $request->{params} } );
+#     }
+#
+#     my $res = $self->{ua}->get( $uri );
+#
+#     return {
+#             ok      => $res->is_success ? 1 : 0,
+#             status  => $res->status_line,
+#             code    => $res->code,
+#             request => $request,
+#             url     => "$uri",
+#             body    => $res->decoded_content // '',
+#     };
+#   }
+#
+#   if ( $method eq 'POST' ) {
+#     if ( $request->{form_data} ) {
+#       my $res = $self->{ua}->post(
+#                                    $url,
+#                                    Content_Type => 'form-data',
+#                                    Content      => $request->{form_data},
+#       );
+#
+#       return {
+#               ok      => $res->is_success ? 1 : 0,
+#               status  => $res->status_line,
+#               code    => $res->code,
+#               request => $request,
+#               url     => $url,
+#               body    => $res->decoded_content // '',
+#       };
+#     }
+#
+#     my $res = $self->{ua}->post( $url, $request->{params} // {} );
+#
+#     return {
+#             ok      => $res->is_success ? 1 : 0,
+#             status  => $res->status_line,
+#             code    => $res->code,
+#             request => $request,
+#             url     => $url,
+#             body    => $res->decoded_content // '',
+#     };
+#   }
+#
+#   return {
+#           ok      => 0,
+#           status  => 'unsupported_method',
+#           request => $request,
+#           error   => "Unsupported method: $method",
+#   };
+# }
+
+sub _lwp_result ( $self, $res, $request, $url ) {
+  my $result = {
+    ok      => $res->is_success ? 1 : 0,
+    status  => $res->status_line,
+    code    => $res->code,
+    request => $request,
+    url     => "$url",
+    body    => $res->decoded_content // '',
+  };
+  if ( _qbt_unavailable( $res ) ) {
+    $result->{status} = 'qbt_unavailable';
+    $result->{error} =  'qBittorrent is not running or its Web API is unavailable';
+    $result->{breakpoint} = 'qbt_unavailable';
+  }
+
+  return $result;
+}
+
+sub _qbt_unavailable ( $res ) {
+
+  return 0 if !$res;
+  return 0 if $res->is_success;
+
+  my $status = $res->status_line // '';
+say "$status";
+  return 1 if $status =~ /connection\s+refused
+    | connect\s+failed
+    | connection\s+timed\s+out
+    | timeout
+    | name\s+or\s+service\s+not\s+known
+    | no\s+route\s+to\s+host
+  /ix;
+
+  return 0;
 }
 
 sub request ($self, $name, %arg) {
