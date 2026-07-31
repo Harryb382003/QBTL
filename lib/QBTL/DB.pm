@@ -937,4 +937,146 @@ SQL
   return {ok => 1,};
 }
 
+
+#--------------------------------------------------------------------------
+# Installation registry
+#--------------------------------------------------------------------------
+
+sub installation_get ( $self, $dbh, $key ) {
+  die 'installation key is required'
+      if !defined $key || $key eq '';
+
+  return $dbh->selectrow_array(
+    q{SELECT value FROM installation WHERE key = ?},
+    undef,
+    $key,
+  );
+}
+
+sub installation_row ( $self, $dbh, $key ) {
+  die 'installation key is required'
+      if !defined $key || $key eq '';
+
+  return $dbh->selectrow_hashref(
+    q{SELECT key, value, source, updated_on FROM installation WHERE key = ?},
+    undef,
+    $key,
+  );
+}
+
+sub installation_all ( $self, $dbh ) {
+  return $dbh->selectall_arrayref(
+    q{SELECT key, value, source, updated_on FROM installation ORDER BY key},
+    { Slice => {} },
+  );
+}
+
+sub installation_set ( $self, $dbh, %arg ) {
+  my $key    = $arg{key};
+  my $value  = $arg{value};
+  my $source = $arg{source} // 'runtime';
+  my $now    = $arg{updated_on} // time;
+
+  die 'installation key is required'
+      if !defined $key || $key eq '';
+  die "installation value is required for $key"
+      if !defined $value;
+  die "installation source is required for $key"
+      if !defined $source || $source eq '';
+
+  $dbh->do(
+    q{
+      INSERT INTO installation (key, value, source, updated_on)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+          value      = excluded.value,
+          source     = excluded.source,
+          updated_on = excluded.updated_on
+    },
+    undef,
+    $key,
+    "$value",
+    $source,
+    $now,
+  );
+
+  return $self->installation_row( $dbh, $key );
+}
+
+sub installation_prime ( $self, $dbh, %arg ) {
+  my $configured = $arg{configured} // {};
+  my $derived    = $arg{derived}    // {};
+
+  die 'configured installation values must be a hash reference'
+      if ref($configured) ne 'HASH';
+  die 'derived installation values must be a hash reference'
+      if ref($derived) ne 'HASH';
+
+  my $owns_transaction = $dbh->{AutoCommit} ? 1 : 0;
+  my $result = eval {
+    $dbh->begin_work if $owns_transaction;
+
+    for my $key ( sort keys %{$configured} ) {
+      next if !defined $configured->{$key};
+      $self->installation_set(
+        $dbh,
+        key    => $key,
+        value  => $configured->{$key},
+        source => 'config',
+      );
+    }
+
+    for my $key ( sort keys %{$derived} ) {
+      next if !defined $derived->{$key};
+      $self->installation_set(
+        $dbh,
+        key    => $key,
+        value  => $derived->{$key},
+        source => 'derived',
+      );
+    }
+
+    $dbh->commit if $owns_transaction;
+    1;
+  };
+
+  if ( !$result ) {
+    my $error = $@ || 'installation prime failed';
+    eval { $dbh->rollback if $owns_transaction && !$dbh->{AutoCommit}; };
+    die $error;
+  }
+
+  return $self->installation_all($dbh);
+}
+
+sub installation_sync_status ( $self, $dbh, $configured ) {
+  die 'configured installation values must be a hash reference'
+      if ref($configured) ne 'HASH';
+
+  my @difference;
+
+  for my $key ( sort keys %{$configured} ) {
+    my $config_value = $configured->{$key};
+    my $row = $self->installation_row( $dbh, $key );
+    my $db_value = $row ? $row->{value} : undef;
+
+    next if !defined($config_value) && !defined($db_value);
+    next if defined($config_value)
+         && defined($db_value)
+         && "$config_value" eq "$db_value";
+
+    push @difference, {
+      key          => $key,
+      config_value => $config_value,
+      db_value     => $db_value,
+      db_source    => $row ? $row->{source} : undef,
+    };
+  }
+
+  return {
+    ok          => @difference ? 0 : 1,
+    differences => \@difference,
+  };
+}
+
 1;

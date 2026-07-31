@@ -22,6 +22,8 @@ use QBTL::Process::Search;
 use QBTL::Render::CLI;
 use QBTL::Util qw( epoch_time human_duration );
 
+use QBTL::Installation;
+
 sub new ( $class, %arg ) {
   $arg{config} //= QBTL::Config->new;
   $arg{renderer} //=
@@ -815,6 +817,25 @@ installation.';
           created    => $queue_dirs->{created},
           existing   => $queue_dirs->{existing},
           queue_dirs => $queue_dirs,};
+}
+
+
+sub _installation_registry ( $self, $db, $dbh ) {
+  return QBTL::Installation->new(
+    db     => $db,
+    dbh    => $dbh,
+    config => $self->{config},
+  );
+}
+
+sub _prime_installation_registry ( $self, $db, $dbh ) {
+  my $installation = $self->_installation_registry( $db, $dbh );
+  $ENV{QBTL_INSTALLATION_ROOT} = $self->{config}->installation_root;
+  return $installation->prime;
+}
+
+sub _installation_exit_check ( $self, $db, $dbh ) {
+  return $self->_installation_registry( $db, $dbh )->exit_check;
 }
 
 1;

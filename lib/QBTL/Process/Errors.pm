@@ -6,6 +6,7 @@ use feature qw( signatures );
 
 use Exporter qw( import );
 use Fcntl qw( :flock );
+use File::Spec;
 use Cwd qw( abs_path );
 
 # 1000–1099  local torrent parsing
@@ -71,7 +72,7 @@ sub begin_error_run () {
 }
 
 sub has_error ( %arg ) {
-  _append_error_log( $arg{message} );
+  _append_error_log( %arg );
 
   my $message = _one_line( $arg{message} );
   my ( $source, $line ) = _exception_origin(
@@ -148,6 +149,50 @@ sub has_error ( %arg ) {
   };
 }
 
+sub _error_log_file () {
+  my $log_dir = $ENV{QBTL_LOG_DIR};
+
+  if ( !defined $log_dir || $log_dir eq '' ) {
+    my $home = $ENV{HOME} // '';
+    return if $home eq '';
+
+    $log_dir = "$home/QBTL/logs";
+  }
+
+  return "$log_dir/errors.log";
+}
+
+sub _append_error_log ( %arg ) {
+  my $message = $arg{message};
+
+  return if !defined $message || $message eq '';
+
+  my $file = _error_log_file();
+  return if !defined $file || $file eq '';
+
+  open my $fh, '>>', $file or do {
+    warn "could not append error log $file: $!\n";
+    return;
+  };
+
+  flock( $fh, LOCK_EX ) or do {
+    warn "could not lock error log $file: $!\n";
+    close $fh;
+    return;
+  };
+
+  my $path = $arg{path} // '<no path>';
+
+  print {$fh} "\n" . localtime() . "\n";
+  print {$fh} $message;
+  print {$fh} "\n" if $message !~ /\R\z/;
+  print {$fh} "path: $path\n";
+
+  close $fh;
+
+  return;
+}
+
 sub error_run_summary () {
   my @summary;
 
@@ -170,31 +215,8 @@ sub error_run_summary () {
 }
 
 
-sub _append_error_log ( $message ) {
-  return if !defined $message || $message eq '';
 
-  my $home = $ENV{HOME} // '';
-  return if $home eq '';
 
-  my $file = "$home/QBTL/errors.log";
-
-  open my $fh, '>>', $file or do {
-    warn "could not append error log $file: $!\n";
-    return;
-  };
-
-  flock( $fh, LOCK_EX ) or do {
-    warn "could not lock error log $file: $!\n";
-    close $fh;
-    return;
-  };
-
-  print {$fh} $message;
-  print {$fh} "\n" if $message !~ /\R\z/;
-  close $fh;
-
-  return;
-}
 
 sub _classify ( $message ) {
   for my $error ( @ERRORS ) {

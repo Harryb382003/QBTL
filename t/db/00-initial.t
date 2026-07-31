@@ -41,7 +41,7 @@ is( $dbh->selectrow_array( 'PRAGMA foreign_keys' ),
 
 my @migration_files = $db->migration_files;
 
-is( scalar @migration_files, 13, 'Thirteen migrations discovered', );
+is( scalar @migration_files, 16, 'Sixteen migrations discovered', );
 
 like( $migration_files[0], qr{001_initial[.]sql\z},
       'initial migration discovered first', );
@@ -80,12 +80,14 @@ like( $migration_files[12],
       'LOC torrents info index migration discovered thirteenth', );
 like( $migration_files[13],
       qr{014_LOC_hash_values[.]sql\z},
-      'LOC torrents info index migration discovered foourteenth', );
+      'LOC hash values migration discovered fourteenth', );
 like( $migration_files[14],
       qr{015_LOC_torrents_fastresume[.]sql\z},
-      'LOC torrents info index migration discovered fifteenth', );
+      'LOC torrents fastresume migration discovered fifteenth', );
+like( $migration_files[15], qr{016_installation[.]sql\z},
+      'installation migration discovered Sixteenth', );
 
-is( $db->migrate( $dbh ), 15, 'Fourteen migrations executed', );
+is( $db->migrate( $dbh ), 16, 'Sixteen migrations executed', );
 
 my $table_name = $dbh->selectrow_array(
   q{
@@ -105,7 +107,7 @@ my $migration_count = $dbh->selectrow_array(
   }
 );
 
-is( $migration_count, 15, 'migrations recorded exactly once', );
+is( $migration_count, 16, 'migrations recorded exactly once', );
 
 is( $db->migrate( $dbh ), 0, 'all migrations skipped after application', );
 
@@ -169,7 +171,7 @@ my $recorded_versions = $dbh->selectcol_arrayref(
 );
 
 is( $recorded_versions,
-    [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 ],
+    [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 ],
     'applied migration versions recorded in order', );
 
 $dbh->disconnect;
