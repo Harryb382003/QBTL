@@ -251,8 +251,15 @@ sub init ( $self, $result ) {
     say {$out} '  Torrent info:         ' . ( $qbt->{info_stored}        // 0 );
     say {$out} '  Extended info:   ' . ( $qbt->{properties_stored}  // 0 );
     say {$out} '  Payload locations:   ' . ( $qbt->{files_stored}       // 0 );
-    say {$out} '  trackers stored:     ' . ( $qbt->{trackers_stored}    // 0 );
-    say {$out} '  trackers skipped:    ' . ( $qbt->{trackers_skipped}   // 0 );
+    say {$out} '';
+    say {$out} '  Trackers:';
+    say {$out} '    Unique:             ' . ( $qbt->{trackers_unique}  // 0 );
+    say {$out} '    Public:             ' . ( $qbt->{trackers_public}  // 0 );
+    say {$out} '    Private:            ' . ( $qbt->{trackers_private} // 0 );
+    say {$out} '';
+    say {$out} '  Torrent classification:';
+    say {$out} '    Public:             ' . ( $qbt->{torrents_public}  // 0 );
+    say {$out} '    Private:            ' . ( $qbt->{torrents_private} // 0 );
     say {$out} '  metadata preserved:  ' . ( $qbt->{preserved_existing} // 0 );
     say {$out} '  problems:            '
         . scalar( @{ $qbt->{problems} // [] } );
@@ -263,10 +270,26 @@ sub init ( $self, $result ) {
 
     say {$out} '';
     say {$out} 'Local scan:';
-    say {$out} '  backend:          ' . ( $scan->{backend} // '' );
-    say {$out} '  seen:             ' . ( $scan->{seen} // 0 );
-    say {$out} '  torrent stored:   ' . ( $scan->{stored} // 0 );
-    say {$out} '  torrent parsed:   ' . ( $scan->{parsed} // 0 );
+    say {$out} '  backend:                    ' . ( $scan->{backend} // '' );
+    say {$out} '  seen:                       ' . ( $scan->{seen} // 0 );
+    say {$out} '';
+    say {$out} '  torrent classified:         '
+      . ( $scan->{torrent_classified} // $scan->{torrent_seen} // 0 );
+    say {$out} '  Culled:';
+    say {$out} '    presumed duplicate:       '
+      . ( $scan->{torrent_culled}{presumed_duplicate} // 0 );
+    say {$out} '    previously catalogued:      '
+      . ( $scan->{torrent_culled}{previously_catalogued} // 0 );
+    say {$out} '    preclassified for deletion: '
+      . ( $scan->{torrent_culled}{preclassified_for_deletion} // 0 );
+    say {$out} '    qBT BT_backup:             '
+      . ( $scan->{torrent_culled}{qbt_bt_backup} // 0 );
+    say {$out} '  content inspection attempted: '
+      . ( $scan->{torrent_content_attempted} // 0 );
+    say {$out} '  metadata extracted this run:  '
+      . ( $scan->{torrent_metadata_extracted} // $scan->{parsed} // 0 );
+    say {$out} '  metadata extraction problems: '
+      . ( $scan->{parse_problems} // 0 );
 
     for my $summary ( @{ $scan->{parse_problem_summary} // [] } ) {
       my $code = defined $summary->{error_code}
@@ -279,20 +302,24 @@ sub init ( $self, $result ) {
         . ( $summary->{count} // 0 );
     }
 
-    say {$out} '  torrent total:    ' . ( $scan->{total} // 0 );
+    say {$out} '  inventory with metadata:     '
+      . ( $scan->{torrent_metadata_total} // 0 );
+    say {$out} '  torrent inventory total:      ' . ( $scan->{total} // 0 );
     say {$out} '';
-    say {$out} '  fastres classified: ' . ( $scan->{fastresume_seen} // 0 );
-    say {$out} '  fastres excluded:   '
-              . ( $scan->{fastresume_skipped_excluded} // 0 );
-    say {$out} '  fastres stored:   ' . ( $scan->{fastresume_stored} // 0 );
-    say {$out} '  fastres parsed:   ' . ( $scan->{fastresume_parsed} // 0 );
-    say {$out} '  fastres problems: '
+    say {$out} '  fastres classified:         ' . ( $scan->{fastresume_seen} // 0 );
+    say {$out} '  fastres recorded:           ' . ( $scan->{fastresume_stored} // 0 );
+    say {$out} '  Content decode skipped:';
+    say {$out} '    preclassified for deletion: '
+      . ( $scan->{fastresume_decode_skipped}{preclassified_for_deletion} // 0 );
+    say {$out} '    qBT BT_backup:             '
+      . ( $scan->{fastresume_decode_skipped}{qbt_bt_backup} // 0 );
+    say {$out} '  fastres decoded:            ' . ( $scan->{fastresume_parsed} // 0 );
+    say {$out} '  fastres decode problems:    '
       . ( $scan->{fastresume_parse_problems} // 0 );
-    say {$out} '  fastres total:    ' . ( $scan->{fastresume_total} // 0 );
 
-  my $operational_problems = $scan->{problems} // [];
-  say {$out} '  operational problems: ' . scalar @$operational_problems;
-  say {$out} "    $_" for @$operational_problems;
+    my $operational_problems = $scan->{problems} // [];
+    say {$out} '  operational problems:       ' . scalar @$operational_problems;
+    say {$out} "    $_" for @$operational_problems;
 
   }
   say {$out} '';
@@ -391,24 +418,42 @@ sub local_scan ( $self, $result ) {
   }
   say {$out} '  scanner backend:  ' . ( $result->{scanner_backend} //
 $result->{backend} // 'unknown' );
-  say {$out} '  seen:             ' . ( $result->{seen} // 0 );
-  say {$out} '  torrent stored:   ' . ( $result->{stored} // 0 );
-  say {$out} '  torrent parsed:   ' . ( $result->{parsed} // 0 );
-  say {$out} '  torrent skipped:  ' . ( $result->{skipped_known} // 0 );
-  say {$out} '  path excluded:    ' . ( $result->{skipped_excluded} // 0 );
-  say {$out} '  torrent problems: ' . ( $result->{parse_problems} // 0 );
-  say {$out} '  torrent total:    ' . ( $result->{total} // 0 );
+  say {$out} '  seen:                       ' . ( $result->{seen} // 0 );
+  say {$out} '  torrent classified:         '
+    . ( $result->{torrent_classified} // $result->{torrent_seen} // 0 );
+  say {$out} '  Culled:';
+  say {$out} '    presumed duplicate:       '
+    . ( $result->{torrent_culled}{presumed_duplicate} // 0 );
+  say {$out} '    previously catalogued:      '
+    . ( $result->{torrent_culled}{previously_catalogued} // 0 );
+  say {$out} '    preclassified for deletion: '
+    . ( $result->{torrent_culled}{preclassified_for_deletion} // 0 );
+  say {$out} '    qBT BT_backup:             '
+    . ( $result->{torrent_culled}{qbt_bt_backup} // 0 );
+  say {$out} '  content inspection attempted: '
+    . ( $result->{torrent_content_attempted} // 0 );
+  say {$out} '  metadata extracted this run:  '
+    . ( $result->{torrent_metadata_extracted} // $result->{parsed} // 0 );
+  say {$out} '  metadata extraction problems: '
+    . ( $result->{parse_problems} // 0 );
+  say {$out} '  inventory with metadata:     '
+    . ( $result->{torrent_metadata_total} // 0 );
+  say {$out} '  torrent inventory total:      ' . ( $result->{total} // 0 );
 
   say {$out} '';
-  say {$out} '  fastres stored:   '
+  say {$out} '  fastres classified:         '
+    . ( $result->{fastresume_seen} // 0 );
+  say {$out} '  fastres recorded:           '
     . ( $result->{fastresume_stored} // 0 );
-  say {$out} '  fastres parsed:   '
+  say {$out} '  Content decode skipped:';
+  say {$out} '    preclassified for deletion: '
+    . ( $result->{fastresume_decode_skipped}{preclassified_for_deletion} // 0 );
+  say {$out} '    qBT BT_backup:             '
+    . ( $result->{fastresume_decode_skipped}{qbt_bt_backup} // 0 );
+  say {$out} '  fastres decoded:            '
     . ( $result->{fastresume_parsed} // 0 );
-  say {$out} '  fastres skipped:  '
-    . ( $result->{fastresume_skipped_known} // 0 );
-  say {$out} '  fastres problems: '
+  say {$out} '  fastres decode problems:    '
     . ( $result->{fastresume_parse_problems} // 0 );
-  say {$out} '  fastres total:    ' . ( $result->{fastresume_total} // 0 );
 
   if ( $result->{bt_backup_exists} ) {
     say {$out} '';
@@ -1231,8 +1276,15 @@ sub qbt_refresh ( $self, $result ) {
   say {$out} "  info stored:        " . ( $result->{info_stored}        // 0 );
   say {$out} "  properties stored:  " . ( $result->{properties_stored}  // 0 );
   say {$out} "  files stored:       " . ( $result->{files_stored}       // 0 );
-  say {$out} "  trackers stored:    " . ( $result->{trackers_stored}    // 0 );
-  say {$out} "  trackers skipped:   " . ( $result->{trackers_skipped}   // 0 );
+  say {$out} '';
+  say {$out} '  Trackers:';
+  say {$out} '    Unique:            ' . ( $result->{trackers_unique}  // 0 );
+  say {$out} '    Public:            ' . ( $result->{trackers_public}  // 0 );
+  say {$out} '    Private:           ' . ( $result->{trackers_private} // 0 );
+  say {$out} '';
+  say {$out} '  Torrent classification:';
+  say {$out} '    Public:            ' . ( $result->{torrents_public}  // 0 );
+  say {$out} '    Private:           ' . ( $result->{torrents_private} // 0 );
   say {$out} "  existing preserved: " . ( $result->{preserved_existing} // 0 );
   say {$out} "  problems:           " . scalar @{ $result->{problems} // [] };
 

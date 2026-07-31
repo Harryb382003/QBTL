@@ -6,6 +6,7 @@ use feature qw( signatures );
 
 use Exporter qw( import );
 use Fcntl qw( :flock );
+use Cwd qw( abs_path );
 
 # 1000–1099  local torrent parsing
 # 1100–1199  local fastresume parsing
@@ -44,9 +45,24 @@ my @ERRORS = (
 my @UNHANDLED_ERRORS = (
 
   # QBTL-UNHANDLED-ERRORS
+
+
+  # open failed: Permission denied
+  {
+    signature => 'open failed: Permission denied',
+    message   => 'open failed: Permission denied',
+    source    => 'lib/QBTL/Process/Local.pm',
+    line      => 708,
+    path      =>
+'/Users/harrybennett/Desktop/CODING/PYTHON/deluge-2.0.3/deluge/tests/data/
+unicode_file.torrent',
+  },
+
 );
 
 my %SEEN_THIS_RUN;
+
+my $ERRORS_SOURCE_FILE = abs_path( __FILE__ ) // __FILE__;
 
 sub begin_error_run () {
   %SEEN_THIS_RUN = ();
@@ -56,6 +72,10 @@ sub begin_error_run () {
 
 sub has_error ( %arg ) {
   my $message = _one_line( $arg{message} );
+  my ( $source, $line ) = _exception_origin(
+                                              $message,
+                                              $arg{source},
+                                              $arg{line}, );
 
   return {
     has_error => 0,
@@ -78,12 +98,17 @@ sub has_error ( %arg ) {
     };
   }
 
-  my $signature = _signature( $message );
-  my $seen      = $SEEN_THIS_RUN{$signature} //= {
+  my ( $signature, $unhandled_message ) = _unhandled_identity(
+    $message,
+    $arg{path},
+    $source,
+    $line,
+  );
+  my $seen = $SEEN_THIS_RUN{$signature} //= {
     count   => 0,
-    message => $message,
-    source  => $arg{source},
-    line    => $arg{line},
+    message => $unhandled_message,
+    source  => $source,
+    line    => $line,
     path    => $arg{path},
   };
 
@@ -96,14 +121,18 @@ sub has_error ( %arg ) {
 
     warn "$subject failed: $message\n";
 
-    _ensure_unhandled_entry(
-      signature => $signature,
-      message   => $message,
-      source    => $arg{source},
-      line      => $arg{line},
-      path      => $arg{path},
-    );
   }
+
+  # Run-level warning suppression and source-file generation are separate.
+  # A concise signature such as "open failed" may be seen more than once,
+  # while the source file still has no matching generated entry.
+  _ensure_unhandled_entry(
+    signature => $signature,
+    message   => $unhandled_message,
+    source    => $source,
+    line      => $line,
+    path      => $arg{path},
+  );
 
   return {
     has_error => 1,
@@ -158,6 +187,29 @@ sub _signature ( $message ) {
   return _one_line( $message );
 }
 
+sub _exception_origin ( $message, $fallback_source, $fallback_line ) {
+  if ( $message =~ /\sat\s+(.+?)\s+line\s+(\d+)\.?\z/ ) {
+    return ( $1, 0 + $2 );
+  }
+
+  return ( $fallback_source, $fallback_line );
+}
+
+sub _unhandled_identity ( $message, $path, $source, $line ) {
+  my $detail = $message;
+
+  if ( defined $source && $source ne '' && defined $line ) {
+    $detail =~ s/\s+at\s+\Q$source\E\s+line\s+\Q$line\E\.?\z//;
+  }
+
+  if ( defined $path && $path ne ''
+    && $detail =~ /\A(.+?)\s+for\s+\Q$path\E:\s*(.+)\z/ ) {
+    return ( _one_line( $1 ), _one_line( $2 ) );
+  }
+
+  return ( _signature( $detail ), _one_line( $detail ) );
+}
+
 sub _one_line ( $value ) {
   return '' if !defined $value;
 
@@ -177,7 +229,7 @@ sub _perl_single_quote ( $value ) {
 }
 
 sub _ensure_unhandled_entry ( %arg ) {
-  my $file      = __FILE__;
+  my $file      = $arg{_file} // $ERRORS_SOURCE_FILE;
   my $signature = _one_line( $arg{signature} );
 
   return if $signature eq '';

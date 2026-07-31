@@ -220,12 +220,34 @@ sub refresh_API_torrents_metadata ( $self, %arg ) {
     properties_stored  => 0,
     trackers_stored    => 0,
     trackers_skipped   => 0,
+    trackers_unique    => 0,
+    trackers_public    => 0,
+    trackers_private   => 0,
+    torrents_public    => 0,
+    torrents_private   => 0,
     preserved_existing => 0,
     problems           => [],
   };
 
+  my %tracker;
+  my %public_tracker;
+  my %private_tracker;
+
   for my $row ( $info->{rows}->@* ) {
     my $hash = ref( $row ) eq 'HASH' ? $row->{hash} : undef;
+
+    if ( ref( $row ) eq 'HASH' && $row->{private} ) {
+      $summary->{torrents_private}++;
+
+      my $url = $row->{tracker};
+
+      if ( defined $url && $url =~ /\A[a-z][a-z0-9+.-]*:\/\//i ) {
+        $tracker{$url}         = 1;
+        $private_tracker{$url} = 1;
+      }
+    } else {
+      $summary->{torrents_public}++;
+    }
 
     if ( !defined $hash || $hash eq '' ) {
       $summary->{ok} = 0;
@@ -306,7 +328,29 @@ sub refresh_API_torrents_metadata ( $self, %arg ) {
     }
 
     $summary->{trackers_stored} += $store->{stored} // 0;
+
+    for my $tracker_row ( $fetch->{rows}->@* ) {
+      next if ref( $tracker_row ) ne 'HASH';
+
+      my $url = $tracker_row->{url};
+
+      next
+          if !defined $url
+          || $url !~ /\A[a-z][a-z0-9+.-]*:\/\//i;
+
+      $tracker{$url}        = 1;
+      $public_tracker{$url} = 1;
+    }
   }
+
+  # The same exact announce URL can appear on both public and private
+  # torrents. Classify that URL as private so these report categories are
+  # mutually exclusive and Public + Private equals Unique.
+  delete @public_tracker{ keys %private_tracker };
+
+  $summary->{trackers_unique}  = scalar keys %tracker;
+  $summary->{trackers_public}  = scalar keys %public_tracker;
+  $summary->{trackers_private} = scalar keys %private_tracker;
 
   return $summary;
 }

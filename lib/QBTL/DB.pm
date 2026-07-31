@@ -166,6 +166,43 @@ sub C_LOC_torrents_count ( $self, $dbh ) {
   return $count // 0;
 }
 
+sub C_LOC_torrent_parse_state ( $self, $dbh, $paths ) {
+  return {} if !$paths || !@$paths;
+
+  my %state;
+  my @remaining = @$paths;
+  my $chunk_size = 500;
+
+  while ( @remaining ) {
+    my @chunk = splice @remaining, 0, $chunk_size;
+    my $placeholders = join q{,}, ( q{?} ) x @chunk;
+    my $rows = $dbh->selectall_arrayref(
+      qq{
+        SELECT path, parse_ok, parse_problem
+          FROM LOC_torrents_info_index
+         WHERE path IN ($placeholders)
+      },
+      { Slice => {} },
+      @chunk,
+    );
+
+    $state{ $_->{path} } = {
+      parse_ok      => $_->{parse_ok} ? 1 : 0,
+      parse_problem => $_->{parse_problem},
+    } for @$rows;
+  }
+
+  return \%state;
+}
+
+sub C_LOC_torrent_metadata_count ( $self, $dbh ) {
+  my ( $count ) = $dbh->selectrow_array(
+    'SELECT COUNT(*) FROM LOC_torrents_info_index WHERE parse_ok = 1'
+  );
+
+  return $count // 0;
+}
+
 sub C_LOC_fastresume_file_count ( $self, $dbh ) {
   my ( $count ) =
       $dbh->selectrow_array( 'SELECT COUNT(*) FROM local_fastresume_files' );

@@ -91,6 +91,7 @@ subtest 'stores complete metadata and skips private tracker lists' => sub {
                              {
                               hash    => $private,
                               private => 1,
+                              tracker => 'udp://one',
                              },
                              {
                               hash    => $public,
@@ -109,7 +110,12 @@ subtest 'stores complete metadata and skips private tracker lists' => sub {
           trackers => {
                        $public => {
                           ok   => 1,
-                          rows => [ {url => 'udp://one'}, {url => 'udp://two'} ]
+                          rows => [
+                            {url => 'udp://one'},
+                            {url => 'udp://two'},
+                            {url => 'udp://one'},
+                            {url => '** [DHT] **'},
+                          ]
                        },
           },
         }, );
@@ -130,8 +136,13 @@ subtest 'stores complete metadata and skips private tracker lists' => sub {
       field info_stored        => 2;
       field properties_stored  => 2;
       field files_stored       => 3;
-      field trackers_stored    => 2;
+      field trackers_stored    => 4;
       field trackers_skipped   => 1;
+      field trackers_unique    => 2;
+      field trackers_public    => 1;
+      field trackers_private   => 1;
+      field torrents_public    => 1;
+      field torrents_private   => 1;
       field preserved_existing => 0;
       field problems           => [];
       etc;

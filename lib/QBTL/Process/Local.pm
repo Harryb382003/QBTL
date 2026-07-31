@@ -9,6 +9,7 @@ use File::Basename qw( basename );
 use File::Copy     qw( move );
 use File::Path     qw( make_path );
 use File::Spec;
+use Digest::MD5 ();
 
 use QBTL::DB;
 use QBTL::Local::Parser;
@@ -105,6 +106,16 @@ sub _scan_common ( $self, %arg ) {
       my $fastresume_parsed        = 0;
       my $fastresume_parse_problem = 0;
       my $skipped_excluded         = 0;
+      my %torrent_culled           = (
+        presumed_duplicate         => 0,
+        previously_catalogued      => 0,
+        preclassified_for_deletion => 0,
+        qbt_bt_backup              => 0,
+      );
+      my %fastresume_decode_skipped = (
+        preclassified_for_deletion => 0,
+        qbt_bt_backup              => 0,
+      );
       my $stored                   = 0;
       my $parsed                   = 0;
       my $parse_problem            = 0;
@@ -136,7 +147,9 @@ sub _scan_common ( $self, %arg ) {
             }
           }
 
-          my $excluded = $broad_scan && _is_broad_excluded_path( $path );
+          my $excluded_reason =
+              $broad_scan ? _broad_excluded_reason( $path ) : undef;
+          my $excluded = defined $excluded_reason ? 1 : 0;
 
           if ( $type eq 'fastresume' ) {
             my $stored_one =
@@ -152,6 +165,7 @@ sub _scan_common ( $self, %arg ) {
 
             if ( $excluded ) {
               $fastresume_skipped_excluded++;
+              $fastresume_decode_skipped{$excluded_reason}++;
             } else {
               $fastresume_parsed++ if $stored_one->{parsed};
 
@@ -164,6 +178,7 @@ sub _scan_common ( $self, %arg ) {
 
           if ( $excluded ) {
             $skipped_excluded++;
+            $torrent_culled{$excluded_reason}++;
             next;
           }
 
@@ -190,12 +205,34 @@ sub _scan_common ( $self, %arg ) {
         }
       }
 
-      my $unculled_torrents =
+      my $pre_cull =
           $self->_pre_cull(
                             db       => $db,
                             dbh      => $dbh,
                             torrents => \@stored_torrents,
                             problems => \@problem, );
+
+      for my $reason ( keys %{ $pre_cull->{culled} // {} } ) {
+        $torrent_culled{$reason} += $pre_cull->{culled}{$reason} // 0;
+      }
+
+      my $unculled_torrents = $pre_cull->{retained} // [];
+
+      my $torrent_disposition_total = scalar @$unculled_torrents;
+      $torrent_disposition_total += $_ for values %torrent_culled;
+
+      my $torrent_classified = $scan->{types}{torrent}{count} // 0;
+
+      if ( $torrent_disposition_total != $torrent_classified ) {
+        my $error = has_error(
+          source  => __FILE__,
+          line    => __LINE__,
+          message => 'local torrent accounting mismatch',
+          classified => $torrent_classified,
+          accounted  => $torrent_disposition_total,
+        );
+        push @problem, $error->{message} if $error->{first};
+      }
 
       for my $torrent ( @$unculled_torrents ) {
         my $stored_contents =
@@ -213,6 +250,19 @@ sub _scan_common ( $self, %arg ) {
           push @parse_problem_detail, $stored_contents->{parse_problem_detail}
               if $stored_contents->{parse_problem_detail};
         }
+      }
+
+      my $torrent_content_attempted = $parsed + $parse_problem;
+
+      if ( $torrent_content_attempted != scalar @$unculled_torrents ) {
+        my $error = has_error(
+          source  => __FILE__,
+          line    => __LINE__,
+          message => 'local torrent decode accounting mismatch',
+          retained => scalar @$unculled_torrents,
+          accounted => $torrent_content_attempted,
+        );
+        push @problem, $error->{message} if $error->{first};
       }
 
       #       my $metadata_candidates =
@@ -258,6 +308,9 @@ sub _scan_common ( $self, %arg ) {
  #           . ( $scan->{types}{fastresume}{count} // 0 ) . "\n";
  #       warn "fastresume excluded: $fastresume_skipped_excluded\n";
 
+      my $torrent_metadata_total =
+          $db->C_LOC_torrent_metadata_count( $dbh );
+
       return {
         ok              => @problem      ? 0               : 1,
         action          => $refresh_only ? 'local_refresh' : 'local_scan',
@@ -267,11 +320,18 @@ sub _scan_common ( $self, %arg ) {
         search_tool     => $scan->{search_tool},
         seen            => $scan->{count},
 
-        torrent_seen => $scan->{types}{torrent}{count} // 0,
+        torrent_seen       => $scan->{types}{torrent}{count} // 0,
+        torrent_classified => $scan->{types}{torrent}{count} // 0,
+        torrent_retained          => scalar @$unculled_torrents,
+        torrent_content_attempted => $torrent_content_attempted,
+        torrent_metadata_extracted => $parsed,
+        torrent_metadata_total     => $torrent_metadata_total,
+        torrent_culled     => \%torrent_culled,
 
         stored           => $stored,
         parsed           => $parsed,
-        parse_problems   => $parse_problem,
+        parse_problems       => $parse_problem,
+        parse_problem_summary => _parse_problem_summary( \@parse_problem_detail ),
         skipped_known    => $skipped_known,
         skipped_excluded => $skipped_excluded,
         fastresume_seen  => $scan->{types}{fastresume}{count} // 0,
@@ -286,6 +346,7 @@ sub _scan_common ( $self, %arg ) {
         fastresume_parse_problems   => $fastresume_parse_problem,
         fastresume_skipped_known    => $fastresume_skipped_known,
         fastresume_skipped_excluded => $fastresume_skipped_excluded,
+        fastresume_decode_skipped   => \%fastresume_decode_skipped,
 
        #         fastresume_total => $db->C_local_fastresume_file_count( $dbh ),
         fastresume_total => undef,    # no LOC_fastresume inventory exists yet
@@ -462,22 +523,119 @@ sub _store_torrent_path ( $self, %arg ) {
           backend => $backend,};
 }
 
+sub _whole_file_md5 ( $path ) {
+  open my $fh, '<:raw', $path
+      or die "open failed for $path: $!";
+
+  my $digest = Digest::MD5->new;
+  $digest->addfile( $fh );
+  close $fh
+      or die "close failed for $path: $!";
+
+  return $digest->hexdigest;
+}
+
 sub _pre_cull ( $self, %arg ) {
   my $db       = $arg{db};
   my $dbh      = $arg{dbh};
   my $torrents = $arg{torrents};
   my $problem  = $arg{problems};
 
-  # This is deliberately a pass-through for the structural split.
-  #
-  # Whole-file MD5 grouping, excluded-path vetoes, quarantine
-  # validation, and duplicate movement belong here once added.
-  #
-  # Return a new array reference so this routine can later filter
-  # or replace entries without altering its caller's collection.
+  my @candidates =
+      grep { $_->{stored} && defined $_->{path} && length $_->{path} }
+      @$torrents;
 
-  return [ grep { $_->{stored} && defined $_->{path} && length $_->{path} }
-           @$torrents ];
+  # Only files sharing a byte size can be whole-file duplicates. Hash those
+  # groups and retain one deterministic path for content inspection.
+  my %by_size;
+  push @{ $by_size{ $_->{size} // -1 } }, $_ for @candidates;
+
+  my @deduplicated;
+  my $presumed_duplicate = 0;
+
+  for my $size ( sort { $a <=> $b } keys %by_size ) {
+    my @group = sort { $a->{path} cmp $b->{path} } @{ $by_size{$size} };
+
+    if ( $size < 0 || @group < 2 ) {
+      push @deduplicated, @group;
+      next;
+    }
+
+    my %digest_keeper;
+
+    for my $torrent ( @group ) {
+      my $digest = eval { _whole_file_md5( $torrent->{path} ) };
+
+      if ( my $error = $@ ) {
+        my $reported = has_error(
+          source  => __FILE__,
+          line    => __LINE__,
+          message => $error,
+          path    => $torrent->{path},
+        );
+        push @$problem, $reported->{message} if $reported->{first};
+        push @deduplicated, $torrent;
+        next;
+      }
+
+      if ( $digest_keeper{$digest} ) {
+        $presumed_duplicate++;
+        next;
+      }
+
+      $digest_keeper{$digest} = $torrent->{path};
+      push @deduplicated, $torrent;
+    }
+  }
+
+  my $state = eval {
+    $db->C_LOC_torrent_parse_state(
+      $dbh,
+      [ map { $_->{path} } @deduplicated ],
+    );
+  };
+
+  if ( my $error = $@ ) {
+    my $reported = has_error(
+      source  => __FILE__,
+      line    => __LINE__,
+      message => $error,
+    );
+    push @$problem, $reported->{message} if $reported->{first};
+
+    return {
+      retained => \@deduplicated,
+      culled   => {
+        presumed_duplicate    => $presumed_duplicate,
+        previously_catalogued => 0,
+      },
+    };
+  }
+
+  my @retained;
+  my $previously_catalogued = 0;
+
+  for my $torrent ( @deduplicated ) {
+    my $prior = $state->{ $torrent->{path} };
+
+    # Successful prior extraction is sufficient to avoid reopening and
+    # bdecoding an already catalogued path. Prior failures are retained so
+    # permission changes or repaired files are retried on a full scan.
+    if ( $prior && $prior->{parse_ok} ) {
+      $previously_catalogued++;
+      next;
+    }
+
+    push @retained, $torrent;
+  }
+
+  return {
+    retained => \@retained,
+    culled   => {
+      presumed_duplicate    => $presumed_duplicate,
+      previously_catalogued => $previously_catalogued,
+    },
+  };
 }
 
 sub _store_torrent_contents ( $self, %arg ) {
@@ -543,6 +701,17 @@ sub _store_torrent_contents ( $self, %arg ) {
                                parse    => $parse,
                                label    => 'metadata',
                                problems => $problem, );
+
+  if ( !$parse->{ok} ) {
+    my $error = has_error(
+                           source  => __FILE__,
+                           line    => __LINE__,
+                           message => $parse->{problem},
+                           path    => $path, );
+
+    push @$problem, $error->{message}
+        if !$error->{handled} && $error->{first};
+  }
 
   return {
     parsed        => $parse->{ok} ? 1 : 0,
@@ -680,13 +849,20 @@ sub _store_observed_keys ( $self, %arg ) {
   return;
 }
 
+sub _broad_excluded_reason ( $path ) {
+  return if !defined $path || $path eq '';
+
+  return 'qbt_bt_backup'
+      if $path =~ m{(?:\A|/)BT_backup(?:/|\z)};
+
+  return 'preclassified_for_deletion'
+      if $path =~ m{(?:\A|/)queued_for_deletion(?:/|\z)};
+
+  return;
+}
+
 sub _is_broad_excluded_path ( $path ) {
-  return 0 if !defined $path || $path eq '';
-
-  return 1 if $path =~ m{(?:\A|/)BT_backup(?:/|\z)};
-  return 1 if $path =~ m{(?:\A|/)queued_for_deletion(?:/|\z)};
-
-  return 0;
+  return defined _broad_excluded_reason( $path ) ? 1 : 0;
 }
 
 sub summary ( $self ) {
