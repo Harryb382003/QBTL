@@ -71,6 +71,8 @@ sub begin_error_run () {
 }
 
 sub has_error ( %arg ) {
+  _append_error_log( $arg{message} );
+
   my $message = _one_line( $arg{message} );
   my ( $source, $line ) = _exception_origin(
                                               $message,
@@ -165,6 +167,33 @@ sub error_run_summary () {
   }
 
   return \@summary;
+}
+
+
+sub _append_error_log ( $message ) {
+  return if !defined $message || $message eq '';
+
+  my $home = $ENV{HOME} // '';
+  return if $home eq '';
+
+  my $file = "$home/QBTL/errors.log";
+
+  open my $fh, '>>', $file or do {
+    warn "could not append error log $file: $!\n";
+    return;
+  };
+
+  flock( $fh, LOCK_EX ) or do {
+    warn "could not lock error log $file: $!\n";
+    close $fh;
+    return;
+  };
+
+  print {$fh} $message;
+  print {$fh} "\n" if $message !~ /\R\z/;
+  close $fh;
+
+  return;
 }
 
 sub _classify ( $message ) {
